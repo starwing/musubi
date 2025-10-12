@@ -861,10 +861,12 @@ end
 -- render_report assembles the formatted diagnostic into a single string buffer by walking
 -- each source group, drawing the margin, inline highlights, arrow lines, and trailing
 -- help/note sections. It mirrors the Rust formatter closely so we can diff behaviour.
+-- render_report mirrors ariadne's Rust formatter so snapshot comparisons line up.
 local function render_report(report, source)
 	local config = report.config
 	local draw = CHARACTERS[config:get_option("char_set")]
 
+	-- Stage labels by source file; Rust keeps identical structure for deterministic output.
 	local groups = compute_source_groups(report, source)
 
 	local buffer, result = string_builder()
@@ -894,6 +896,7 @@ local function render_report(report, source)
 			buffer[#buffer + 1] = string.format("%s%s\n", prefix, draw.vbar)
 		end
 
+		-- multi_labels hold every span that stretches over multiple lines so we can render gutter guides.
 		local multi_labels = {}
 		local multi_with_message = {}
 
@@ -924,6 +927,7 @@ local function render_report(report, source)
 
 			local line_text = trim_end(source:get_line_text(line))
 
+			-- Collect inline spans and multi-span endpoints that touch this line.
 			local line_labels = {}
 
 			for _, label in ipairs(group.labels) do
@@ -973,6 +977,7 @@ local function render_report(report, source)
 					end
 				end
 				if within_multiline then
+					-- Rust prints ':' rows between multi-line label edges when interior lines are omitted.
 					draw_margin(buffer, draw, config, line_no_width, { line_index = line_index, is_line = false, is_ellipsis = true })
 					buffer[#buffer + 1] = ":\n"
 					is_ellipsis = true
@@ -998,12 +1003,14 @@ local function render_report(report, source)
 				return span_length(a.label.char_span) < span_length(b.label.char_span)
 			end)
 
+			-- pointer_data mirrors Rust's "LineLabel" margin pointer that precedes multi-line arrows.
 			local pointer_data
 			for _, ll in ipairs(line_labels) do
 				if ll.multi then
 					local col = math.max(ll.col, 0)
 					pointer_data = {
 						col = col,
+						-- Matches Rust's glyph selection: use vertical pipe for end rows, elbow for starts.
 						arrow = (ll.draw_message and draw.vbar or draw.ltop) .. draw.hbar .. draw.rarrow .. " ",
 					}
 					break
@@ -1014,6 +1021,7 @@ local function render_report(report, source)
 
 			local text_row = line_text
 			if pointer_data then
+				-- Insert the multi-line pointer arrow into the rendered text, padding to the insertion column.
 				local col = pointer_data.col
 				local text_prefix, suffix = split_at_column(line_text, col)
 				local prefix_len = safe_utf8_len(text_prefix)
@@ -1025,6 +1033,7 @@ local function render_report(report, source)
 
 			buffer[#buffer + 1] = text_row .. "\n"
 			local rendered_line_width = safe_utf8_len(text_row)
+			-- arrow_labels filters to spans that actually emit arrow messages on this line.
 			local arrow_labels = {}
 			for _, line_label in ipairs(line_labels) do
 				if line_label.label.display.message and (not line_label.multi or line_label.draw_message) then
@@ -1032,6 +1041,7 @@ local function render_report(report, source)
 				end
 			end
 
+			-- Track the highest-priority highlight per column so multiple inline labels can overlap.
 			local highlight_cells = {}
 			local highlight_meta = {}
 			local function better_highlight(existing, candidate)
@@ -1095,6 +1105,7 @@ local function render_report(report, source)
 				buffer[#buffer + 1] = table.concat(highlight_chars) .. "\n"
 			end
 
+			-- Rust reserves a trailing gap so text after the arrow stays readable.
 			local arrow_end_space = config:get_option("compact") and 1 or 2
 			local arrow_span_width = 0
 			for _, ll in ipairs(line_labels) do
@@ -1107,12 +1118,14 @@ local function render_report(report, source)
 			end
 			local pointer_width = 0
 			if pointer_data then
+				-- Include the pointer glyph width just like Rust's char_width-driven measurement.
 				pointer_width = pointer_data.col + safe_utf8_len(pointer_data.arrow)
 			end
 			local effective_line_width = (pointer_data and rendered_line_width) or 0
 			local line_arrow_width = math.max(arrow_span_width, pointer_width, effective_line_width) + arrow_end_space
 
 			for arrow_index, line_label in ipairs(arrow_labels) do
+				-- Pre-arrow connector rows keep vertical guides alive above zero-length spans or pointer joins.
 				local span_len = span_length(line_label.label.char_span)
 				local needs_pre_connectors = not config:get_option("compact") and (span_len == 0 or pointer_data ~= nil)
 				if needs_pre_connectors then
@@ -1160,6 +1173,7 @@ local function render_report(report, source)
 				end
 				buffer[#buffer + 1] = "\n"
 
+				-- Post-arrow connectors ensure pending arrows line up in subsequent rows.
 				if not config:get_option("compact") and arrow_index < #arrow_labels then
 					draw_margin(buffer, draw, config, line_no_width, { line_index = line_index, is_line = false, is_ellipsis = false })
 					local connectors = {}
@@ -1193,6 +1207,7 @@ local function render_report(report, source)
 
 		if group_index == #groups then
 			for help_index, help_text in ipairs(report.helps) do
+				-- Match Rust by inserting blank spacer rows when not compact.
 				if not config:get_option("compact") then
 					draw_margin(buffer, draw, config, line_no_width, { line_index = 0, is_line = false, is_ellipsis = false })
 					buffer[#buffer + 1] = "\n"
