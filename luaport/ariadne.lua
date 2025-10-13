@@ -133,18 +133,19 @@ local function compute_lines(text)
 	if text == "" then
 		return {
 			{
-				offset = 0,
+				offset = 1,
 				char_len = 0,
 				byte_offset = 0,
 				byte_len = 0,
 				text = "",
+				has_utf8 = false,
 			},
 		}
 	end
 
 	local lines = {}
 	local total_chars = 0
-	local total_bytes = 0
+	local total_bytes = 1
 	local start_byte = 1
 	local length = #text
 
@@ -162,11 +163,12 @@ local function compute_lines(text)
 		local byte_len = #line_text
 
 		lines[#lines + 1] = {
-			offset = total_chars,
+			offset = total_chars + 1,
 			char_len = char_len,
 			byte_offset = total_bytes,
 			byte_len = byte_len,
 			text = line_text,
+			has_utf8 = not line_text:find("^[\0-\x7f]*$"),
 		}
 
 		total_chars = total_chars + char_len
@@ -207,9 +209,9 @@ function Source:with_display_line_offset(offset)
 	return self
 end
 
-	-- line retrieves the raw line record at a zero-based index.
+	-- line retrieves the raw line record at a 1-based index.
 function Source:line(index)
-	return self.lines[index + 1]
+	return self.lines[index]
 end
 
 	-- get_line_text unwraps the line struct to expose the stored text.
@@ -218,70 +220,58 @@ function Source:get_line_text(line)
 	return line.text
 end
 
-	-- binary_search locates the greatest line index whose key is <= target.
+-- binary_search locates the greatest line index whose key is <= target.
 local function binary_search(lines, target, key)
-	local low = 1
-	local high = #lines
-	while low <= high do
-		local mid = (low + high) // 2
-		if target < lines[mid][key] then
-			high = mid - 1
+	local l, u = 1, #lines
+	while l <= u do
+		local mid = l + (u - l + 1) // 2
+		if lines[mid][key] <= target then
+			l = mid + 1
 		else
-			low = mid + 1
+			u = mid - 1
 		end
 	end
-	if high < 1 then
-		high = 1
-	elseif high > #lines then
-		high = #lines
-	end
-	return high - 1
+	return l - 1
 end
 
--- line_index_for_offset finds the line containing the char offset (0-based).
+-- line_index_for_offset finds the line containing the char offset (1-based).
 function Source:line_index_for_offset(offset)
-	if offset <= 0 then
-		return 0
-	end
+	if offset <= 0 then return 0 end
 	return binary_search(self.lines, offset, "offset")
 end
 
--- line_index_for_byte finds the line containing the byte offset (0-based).
+-- line_index_for_byte finds the line containing the byte offset (1-based).
 function Source:line_index_for_byte(byte_offset)
-	if byte_offset <= 0 then
-		return 0
-	end
+	if byte_offset <= 0 then return 0 end
 	return binary_search(self.lines, byte_offset, "byte_offset")
 end
 
--- get_offset_line returns the line record, index, and relative char column for a char offset.
+-- get_offset_line returns the line record, index, and relative char column.
 function Source:get_offset_line(offset)
-	if offset > self.char_len then
-		return nil
-	end
+	if offset > self.char_len + 1 then return nil end
 	local idx = self:line_index_for_offset(offset)
-	local line = self.lines[idx + 1]
-	if not line then
-		return nil
-	end
-	return line, idx, offset - line.offset
+	local line = self.lines[idx]
+	if not line then return nil end
+	return line, idx, offset - line.offset + 1
 end
 
 -- char_count_for_prefix converts a byte prefix into a character length.
-local function char_count_for_prefix(text, byte_count)
+local function char_count_for_prefix(line, byte_count)
 	if byte_count <= 0 then
 		return 0
 	end
-	local prefix = text:sub(1, byte_count)
-	return utf8.len(prefix)
+	if line.has_utf8 then
+		return utf8.len(line.text, 1, byte_count)
+	end
+	return byte_count
 end
 
 -- split_at_column divides text into the prefix and suffix around the given char column.
 local function split_at_column(text, column)
-	if column <= 0 then
+	if column <= 1 then
 		return "", text
 	end
-	local byte_index = utf8.offset(text, column + 1)
+	local byte_index = utf8.offset(text, column)
 	if not byte_index then
 		return text, ""
 	end
@@ -290,15 +280,11 @@ end
 
 -- get_byte_line returns the line record, index, and relative byte column for a byte offset.
 function Source:get_byte_line(byte_offset)
-	if byte_offset > self.byte_len then
-		return nil
-	end
+	if byte_offset > self.byte_len then return nil end
 	local idx = self:line_index_for_byte(byte_offset)
-	local line = self.lines[idx + 1]
-	if not line then
-		return nil
-	end
-	return line, idx, byte_offset - line.byte_offset
+	local line = self.lines[idx]
+	if not line then return nil end
+	return line, idx, byte_offset - line.byte_offset + 1
 end
 
 -- get_line_range converts an overall span into the first/last line indexes we must print.
@@ -311,7 +297,7 @@ function Source:get_line_range(span)
 
 	local start_line = self:line_index_for_offset(start_offset)
 	local end_lookup = math.max(finish_offset - 1, start_offset)
-	local end_line = self:line_index_for_offset(end_lookup) + 1
+	local end_line = self:line_index_for_offset(end_lookup)
 
 	return { start = start_line, finish = end_line }
 end
@@ -322,26 +308,18 @@ Span helpers
 
 -- make_span normalises the provided start/finish positions into a table.
 local function make_span(start_pos, finish_pos)
-	if start_pos > finish_pos then
-		error("span start must be <= end", 2)
-	end
-	return {
-		start = start_pos,
-		finish = finish_pos,
-	}
+	assert(finish_pos >= start_pos-1, "span finish must be >= start-1")
+	return { start = start_pos, finish = finish_pos }
 end
 
 -- span_length returns the non-negative length of the span.
 local function span_length(span)
-	return math.max(span.finish - span.start, 0)
+	return math.max(span.finish - span.start + 1, 0)
 end
 
 -- span_last_offset gives the greatest in-range offset for inclusive comparisons.
 local function span_last_offset(span)
-	if span.finish <= span.start then
-		return span.start
-	end
-	return span.finish - 1
+	return span.start <= span.finish and span.finish or span.start
 end
 
 --[[
@@ -475,7 +453,7 @@ local function index_to_char_offset(source, config, offset)
 	if not line then
 		return offset
 	end
-	local chars_before = char_count_for_prefix(line.text, byte_column)
+	local chars_before = char_count_for_prefix(line, byte_column - 1)
 	return line.offset + chars_before
 end
 
@@ -483,55 +461,38 @@ end
 local function index_range_to_char_span(source, config, span)
 	if get_index_type(config) == "char" then
 		local start_line, start_idx = source:get_offset_line(span.start)
-		if not start_line then
-			return nil
-		end
-		local char_span_start = span.start
-
-		local end_line
-		local char_span_end
-		if span.start >= span.finish then
-			end_line = start_idx
-			char_span_end = char_span_start
+		if not start_line then return nil end
+		local char_start = span.start
+		local end_line, char_end
+		if span.start > span.finish then
+			end_line, char_end = start_idx, char_start-1
 		else
-			local lookup = span.finish - 1
-			local _, end_idx = source:get_offset_line(lookup)
-			if not end_idx then
-				return nil
-			end
-			end_line = end_idx
-			char_span_end = span.finish
+			local _, end_idx = source:get_offset_line(span.finish)
+			if not end_idx then return nil end
+			end_line, char_end = end_idx, span.finish
 		end
-
 		return {
-			start = char_span_start,
-			finish = char_span_end,
+			start = char_start,
+			finish = char_end,
 			start_line = start_idx,
 			end_line = end_line,
 		}
 	end
 
 	local start_line, start_idx, start_byte_col = source:get_byte_line(span.start)
-	if not start_line then
-		return nil
-	end
-	local start_chars = char_count_for_prefix(start_line.text, start_byte_col)
+	if not start_line then return nil end
+	local start_chars = char_count_for_prefix(start_line, start_byte_col - 1)
 	local char_start = start_line.offset + start_chars
 
-	local char_end
-	local end_line_idx
-	if span.start >= span.finish then
-		char_end = char_start
-		end_line_idx = start_idx
+	local char_end, end_line_idx
+	if span.start > span.finish then
+        end_line_idx, char_end = start_idx, char_start-1
 	else
-		local end_pos = span.finish - 1
+		local end_pos = span.finish
 		local end_line, end_idx, end_byte_col = source:get_byte_line(end_pos)
-		if not end_line then
-			return nil
-		end
-		local chars_until_end = char_count_for_prefix(end_line.text, end_byte_col + 1)
-		char_end = end_line.offset + chars_until_end
-		end_line_idx = end_idx
+		if not end_line then return nil end
+		local chars_until_end = char_count_for_prefix(end_line, end_byte_col)
+		char_end, end_line_idx = end_line.offset + chars_until_end - 1, end_idx
 	end
 
 	return {
@@ -544,11 +505,9 @@ end
 
 -- make_label_info decorates a label with computed span metadata for rendering.
 local function make_label_info(label, char_span)
-	local kind
+	local kind = "multiline"
 	if char_span.start_line == char_span.end_line then
 		kind = "inline"
-	else
-		kind = "multiline"
 	end
 	return {
 		kind = kind,
@@ -625,8 +584,8 @@ local function make_location(source, config, span)
 		}
 	end
 	return {
-		line = tostring((idx or 0) + 1 + source.display_line_offset),
-		column = tostring((column or 0) + 1),
+		line = tostring((idx or 1) + source.display_line_offset),
+		column = tostring(column or 1),
 	}
 end
 
@@ -634,7 +593,7 @@ end
 local function draw_margin(b, config, line_no_width, line_index, bar)
 	b[#b+1] = " "
 	if line_index then
-		local line_no = tostring(line_index + 1)
+		local line_no = tostring(line_index)
 		b[#b+1] = repeat_char(" ", line_no_width - #line_no)
 		b[#b+1] = line_no
 		b[#b+1] = " "
@@ -676,7 +635,7 @@ local function render_report(report, source)
 		group.line_range = range
 		group.source_name = "<unknown>"
 		group.primary_location = make_location(source, config, report.span)
-		line_no_width = math.max(line_no_width, digits(range.finish))
+		line_no_width = math.max(line_no_width, digits(range.finish + source.display_line_offset))
 	end
 
 	for group_index, group in ipairs(groups) do
@@ -719,7 +678,7 @@ local function render_report(report, source)
 
 		local is_ellipsis = false
 
-		for line_index = range.start, range.finish - 1 do
+		for line_index = range.start, range.finish do
 			local line = source:line(line_index)
 			if not line then
 				goto continue_line
@@ -739,10 +698,10 @@ local function render_report(report, source)
 					elseif config_attach == "end" then
 						attach = label_last_offset(label)
 					else
-						attach = (label.char_span.start + label.char_span.finish) // 2
+						attach = (label.char_span.start + label.char_span.finish + 1) // 2
 					end
 					line_labels[#line_labels + 1] = {
-						col = attach - line.offset,
+						col = attach - line.offset + 1,
 						label = label,
 						multi = false,
 						draw_message = true,
@@ -756,9 +715,9 @@ local function render_report(report, source)
 				if is_start or is_end then
 					local col
 					if is_start then
-						col = label.char_span.start - line.offset
+						col = label.char_span.start - line.offset + 1
 					else
-						col = math.max(label.char_span.start - line.offset, 0)
+						col = math.max(label.char_span.start - line.offset + 1, 1)
 					end
 					line_labels[#line_labels + 1] = {
 						col = col,
@@ -808,7 +767,7 @@ local function render_report(report, source)
 			local pointer_data
 			for _, ll in ipairs(line_labels) do
 				if ll.multi then
-					local col = math.max(ll.col, 0)
+					local col = math.max(ll.col, 1)
 					pointer_data = {
 						col = col,
 						-- Matches Rust's glyph selection: use vertical pipe for end rows, elbow for starts.
@@ -818,7 +777,8 @@ local function render_report(report, source)
 				end
 			end
 
-			draw_margin(buffer, config, line_no_width, line_index, draw.vbar)
+			local display_line_no = line_index + source.display_line_offset
+			draw_margin(buffer, config, line_no_width, display_line_no, draw.vbar)
 
 			local text_row = line_text
 			if pointer_data then
@@ -826,7 +786,7 @@ local function render_report(report, source)
 				local col = pointer_data.col
 				local text_prefix, suffix = split_at_column(line_text, col)
 				local prefix_len = utf8.len(text_prefix)
-				if prefix_len < col then
+				if prefix_len < col-1 then
 					text_prefix = text_prefix .. repeat_char(" ", col - prefix_len)
 				end
 				text_row = text_prefix .. pointer_data.arrow .. suffix
@@ -844,70 +804,72 @@ local function render_report(report, source)
 			end
 
 			-- Track the highest-priority highlight per column so multiple inline labels can overlap.
-			local highlight_meta = {}
-			local function better_highlight(existing, candidate)
-				if not existing then
-					return true
+			if not config.compact then
+				local highlight_meta = {}
+				local function better_highlight(existing, candidate)
+					if not existing then
+						return true
+					end
+					if candidate.priority ~= existing.priority then
+						return candidate.priority > existing.priority
+					end
+					return candidate.span_len < existing.span_len
 				end
-				if candidate.priority ~= existing.priority then
-					return candidate.priority > existing.priority
-				end
-				return candidate.span_len < existing.span_len
-			end
 
-			for _, line_label in ipairs(line_labels) do
-				local display = line_label.label.display
-				if not display.message then
-					goto continue_label_highlight
-				end
-				if line_label.multi then
-					goto continue_label_highlight
-				end
-				local span_start = math.max(line_label.label.char_span.start, line.offset)
-				local span_finish = math.min(line_label.label.char_span.finish, line.offset + line.char_len)
-				local start_col = math.max(span_start - line.offset, 0)
-				local end_col = math.max(span_finish - line.offset, start_col)
-				local candidate = {
-					priority = display.priority or 0,
-					span_len = span_length(line_label.label.char_span),
-				}
-				for col = start_col, end_col - 1 do
-					if col >= 0 then
-						if better_highlight(highlight_meta[col], candidate) then
-							candidate.cell = draw.underline
-                            highlight_meta[col] = candidate
+				for _, line_label in ipairs(line_labels) do
+					local display = line_label.label.display
+					if not display.message then
+						goto continue_label_highlight
+					end
+					if line_label.multi then
+						goto continue_label_highlight
+					end
+					local span_start = math.max(line_label.label.char_span.start, line.offset)
+					local span_finish = math.min(line_label.label.char_span.finish, line.offset + line.char_len)
+					local start_col = math.max(span_start - line.offset + 1, 1)
+					local end_col = math.max(span_finish - line.offset + 1, start_col-1)
+					local candidate = {
+						priority = display.priority or 0,
+						span_len = span_length(line_label.label.char_span),
+					}
+					for col = start_col, end_col do
+						if col >= 1 then
+							if better_highlight(highlight_meta[col], candidate) then
+								candidate.cell = draw.underline
+								highlight_meta[col] = candidate
+							end
 						end
 					end
+					local attach_col = line_label.col
+					if attach_col >= 1 and attach_col <= line.char_len then
+						local attach_candidate = {
+							priority = candidate.priority,
+							span_len = 0,
+							cell = draw.underbar,
+						}
+						if better_highlight(highlight_meta[attach_col], attach_candidate) then
+							highlight_meta[attach_col] = attach_candidate
+						end
+					end
+					::continue_label_highlight::
 				end
-				local attach_col = line_label.col
-				if attach_col >= 0 and attach_col < line.char_len then
-                    local attach_candidate = {
-						priority = candidate.priority,
-						span_len = 0,
-						cell = draw.underbar,
-					}
-					if better_highlight(highlight_meta[attach_col], attach_candidate) then
-						highlight_meta[attach_col] = attach_candidate
+
+				local has_highlight = false
+				local highlight_chars = {}
+				for col = 1, line.char_len + 1 do
+					local ch = highlight_meta[col] and highlight_meta[col].cell or " "
+					highlight_chars[#highlight_chars + 1] = ch
+					if ch ~= " " then
+						has_highlight = true
 					end
 				end
-				::continue_label_highlight::
-			end
-
-			local has_highlight = false
-			local highlight_chars = {}
-			for col = 0, line.char_len - 1 do
-				local ch = highlight_meta[col] and highlight_meta[col].cell or " "
-				highlight_chars[#highlight_chars + 1] = ch
-				if ch ~= " " then
-					has_highlight = true
+				if has_highlight then
+					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
+					for _, c in ipairs(highlight_chars) do
+						buffer[#buffer+1] = c
+					end
+					buffer[#buffer + 1] = "\n"
 				end
-			end
-			if has_highlight then
-				draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-				for _, c in ipairs(highlight_chars) do
-					buffer[#buffer+1] = c
-				end
-				buffer[#buffer + 1] = "\n"
 			end
 
 			-- Rust reserves a trailing gap so text after the arrow stays readable.
@@ -917,14 +879,14 @@ local function render_report(report, source)
 				if ll.multi then
 					arrow_span_width = math.max(arrow_span_width, line.char_len)
 				else
-					local span_end = math.max(ll.label.char_span.finish - line.offset, 0)
+					local span_end = math.max(ll.label.char_span.finish - line.offset + 1, 0)
 					arrow_span_width = math.max(arrow_span_width, span_end)
 				end
 			end
 			local pointer_width = 0
 			if pointer_data then
 				-- Include the pointer glyph width
-				pointer_width = pointer_data.col + utf8.len(pointer_data.arrow)
+				pointer_width = pointer_data.col + utf8.len(pointer_data.arrow) - 1
 			end
 			local effective_line_width = (pointer_data and rendered_line_width) or 0
 			local line_arrow_width = math.max(arrow_span_width, pointer_width, effective_line_width) + arrow_end_space
@@ -935,8 +897,7 @@ local function render_report(report, source)
 				local needs_pre_connectors = not config.compact and (span_len == 0 or pointer_data ~= nil)
 				if needs_pre_connectors then
 					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					local connectors = {}
-					for col = 0, line_arrow_width - 1 do
+					for col = 1, line_arrow_width do
 						local draw_connector = false
 						if pointer_data and col == pointer_data.col then
 							draw_connector = true
@@ -944,33 +905,43 @@ local function render_report(report, source)
 							draw_connector = true
 						end
 						if draw_connector then
-							connectors[#connectors + 1] = draw.vbar
+							buffer[#buffer + 1] = draw.vbar
+							break
 						else
-							connectors[#connectors + 1] = " "
+							buffer[#buffer + 1] = " "
 						end
 					end
-					buffer[#buffer + 1] = trim_end(table.concat(connectors))
 					buffer[#buffer + 1] = "\n"
 				end
 
 				draw_margin(buffer, config, line_no_width, nil, draw.vbar)
 
-				local arrow_line = {}
-				for col = 0, line_arrow_width - 1 do
+				for col = 1, line_arrow_width do
 					if col == line_label.col then
 						local corner = draw.lbot
 						if line_label.multi and not line_label.draw_message then
 							corner = draw.rbot
 						end
-						arrow_line[#arrow_line + 1] = corner
+						buffer[#buffer + 1] = corner
 					elseif col > line_label.col then
-						arrow_line[#arrow_line + 1] = draw.hbar
+						buffer[#buffer + 1] = draw.hbar
 					else
-						arrow_line[#arrow_line + 1] = " "
+						local cell = " "
+						if pointer_data and col == pointer_data.col then
+							cell = draw.vbar
+						else
+							for pending = arrow_index + 1, #arrow_labels do
+								local pending_col = arrow_labels[pending].col
+								if pending_col >= 1 and pending_col == col then
+									cell = draw.vbar
+									break
+								end
+							end
+						end
+						buffer[#buffer + 1] = cell
 					end
 				end
 
-				buffer[#buffer + 1] = trim_end(table.concat(arrow_line))
 				if line_label.draw_message then
 					buffer[#buffer + 1] = " "
 					buffer[#buffer + 1] = line_label.label.display.message or nil
@@ -981,14 +952,14 @@ local function render_report(report, source)
 				if not config.compact and arrow_index < #arrow_labels then
 					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
 					local connectors = {}
-					for col = 0, line_arrow_width - 1 do
+					for col = 1, line_arrow_width do
 						local draw_connector = false
 						if pointer_data and col == pointer_data.col then
 							draw_connector = true
 						else
 							for pending = arrow_index + 1, #arrow_labels do
 								local pending_col = arrow_labels[pending].col
-								if pending_col >= 0 and pending_col == col then
+								if pending_col >= 1 and pending_col == col then
 									draw_connector = true
 									break
 								end
@@ -1027,9 +998,6 @@ local function render_report(report, source)
 					else
 						content = repeat_char(" ", help_prefix_len + 2) .. line_text
 					end
-					if config.compact then
-						buffer[#buffer + 1] = " "
-					end
 					buffer[#buffer + 1] = content
 					buffer[#buffer + 1] = "\n"
 				end
@@ -1050,9 +1018,6 @@ local function render_report(report, source)
 						content = string.format("%s: %s", note_prefix, line_text)
 					else
 						content = repeat_char(" ", note_prefix_len + 2) .. line_text
-					end
-					if config.compact then
-						buffer[#buffer + 1] = " "
 					end
 					buffer[#buffer + 1] = content
 					buffer[#buffer + 1] = "\n"
