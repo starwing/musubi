@@ -28,10 +28,12 @@ local function remove_trailing(text)
 	return table.concat(out)
 end
 
-local function no_color_ascii()
-	return ariadne.config()
-		:color(false)
-		:char_set("ascii")
+local function no_color_ascii(index_type)
+    return ariadne.config {
+		color = false,
+		char_set = ariadne.ascii,
+		index_type = index_type,
+	}
 end
 
 local function source(text)
@@ -42,7 +44,7 @@ local TestWrite = {}
 
 function TestWrite.test_one_message()
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:finish()
@@ -57,7 +59,7 @@ end
 function TestWrite.test_two_labels_without_messages()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 5))
@@ -78,7 +80,7 @@ end
 function TestWrite.test_two_labels_with_messages()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 5):message("This is an apple"))
@@ -103,8 +105,8 @@ end
 function TestWrite.test_multi_byte_chars()
 	local text = "äpplë == örängë;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
-			:config(no_color_ascii():index_type("char"))
+		ariadne.error(ariadne.span(0, 0))
+			:config(no_color_ascii "char")
 			:message("can't compare äpplës with örängës")
 			:label(ariadne.label(0, 5):message("This is an äpplë"))
 			:label(ariadne.label(9, 15):message("This is an örängë"))
@@ -128,8 +130,8 @@ end
 function TestWrite.test_byte_label()
 	local text = "äpplë == örängë;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
-			:config(no_color_ascii():index_type("byte"))
+		ariadne.error(ariadne.span(0, 0))
+			:config(no_color_ascii "byte")
 			:message("can't compare äpplës with örängës")
 			:label(ariadne.label(0, 7):message("This is an äpplë"))
 			:label(ariadne.label(11, 20):message("This is an örängë"))
@@ -153,8 +155,8 @@ end
 function TestWrite.test_byte_column()
 	local text = "äpplë == örängë;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(11, 11))
-			:config(no_color_ascii():index_type("byte"))
+		ariadne.error(ariadne.span(11, 11))
+			:config(no_color_ascii "byte")
 			:message("can't compare äpplës with örängës")
 			:label(ariadne.label(0, 7):message("This is an äpplë"))
 			:label(ariadne.label(11, 20):message("This is an örängë"))
@@ -178,7 +180,7 @@ end
 function TestWrite.test_label_at_end_of_long_line()
 	local text = string.rep("apple == ", 100) .. "orange"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(#text - 5, #text):message("This is an orange"))
@@ -200,8 +202,8 @@ end
 function TestWrite.test_label_of_width_zero_at_end_of_line()
 	local text = "apple ==\n"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
-			:config(no_color_ascii():index_type("byte"))
+		ariadne.error(ariadne.span(0, 0))
+			:config(no_color_ascii "byte")
 			:message("unexpected end of file")
 			:label(ariadne.label(9, 9):message("Unexpected end of file"))
 			:finish()
@@ -222,7 +224,7 @@ end
 function TestWrite.test_empty_input()
 	local text = ""
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("unexpected end of file")
 			:label(ariadne.label(0, 0):message("No more fruit!"))
@@ -244,7 +246,7 @@ end
 function TestWrite.test_empty_input_help()
 	local text = ""
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("unexpected end of file")
 			:label(ariadne.label(0, 0):message("No more fruit!"))
@@ -269,7 +271,7 @@ end
 function TestWrite.test_empty_input_note()
 	local text = ""
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("unexpected end of file")
 			:label(ariadne.label(0, 0):message("No more fruit!"))
@@ -294,7 +296,7 @@ end
 function TestWrite.test_empty_input_help_note()
 	local text = ""
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("unexpected end of file")
 			:label(ariadne.label(0, 0):message("No more fruit!"))
@@ -325,8 +327,8 @@ function TestWrite.test_byte_spans_never_crash()
 	for i = 0, #text do
 		for j = i, #text do
 			local ok, result = pcall(function()
-				return ariadne.report("error", ariadne.span(0, 0))
-					:config(no_color_ascii():index_type("byte"))
+				return ariadne.error(ariadne.span(0, 0))
+					:config(no_color_ascii "byte")
 					:message("Label")
 					:label(ariadne.label(i, j):message("Label"))
 					:finish()
@@ -341,7 +343,7 @@ end
 function TestWrite.test_multiline_label()
 	local text = "apple\n==\norange"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:label(ariadne.label(0, #text):message("illegal comparison"))
 			:finish()
@@ -365,7 +367,7 @@ function TestWrite.test_partially_overlapping_labels()
 	local text = "https://example.com/"
 	local colon_start = assert(text:find(":", 1, true)) - 1
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:label(ariadne.label(0, #text):message("URL"))
 			:label(ariadne.label(0, colon_start):message("scheme"))
@@ -389,7 +391,7 @@ end
 function TestWrite.test_multiple_labels_same_span()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 5):message("This is an apple"))
@@ -426,7 +428,7 @@ end
 function TestWrite.test_note()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 5):message("This is an apple"))
@@ -454,7 +456,7 @@ end
 function TestWrite.test_help()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 5):message("This is an apple"))
@@ -482,7 +484,7 @@ end
 function TestWrite.test_help_and_note()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 5):message("This is an apple"))
@@ -513,7 +515,7 @@ end
 function TestWrite.test_single_note_single_line()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 15):message("This is a strange comparison"))
@@ -538,7 +540,7 @@ end
 function TestWrite.test_multi_notes_single_lines()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 15):message("This is a strange comparison"))
@@ -566,7 +568,7 @@ end
 function TestWrite.test_multi_notes_multi_lines()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 15):message("This is a strange comparison"))
@@ -595,7 +597,7 @@ end
 function TestWrite.test_multi_helps_multi_lines()
 	local text = "apple == orange;"
 	local msg = remove_trailing(
-		ariadne.report("error", ariadne.span(0, 0))
+		ariadne.error(ariadne.span(0, 0))
 			:config(no_color_ascii())
 			:message("can't compare apples with oranges")
 			:label(ariadne.label(0, 15):message("This is a strange comparison"))
