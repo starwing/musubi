@@ -38,8 +38,8 @@ local function no_color_ascii(index_type, compact)
 	}
 end
 
-local function source(text)
-	return ariadne.source(text)
+local function source(text, name)
+	return ariadne.source(text, name)
 end
 
 local TestWrite = {}
@@ -977,6 +977,48 @@ Error: pointer and connectors
    | |  `------- inline
 ---'
 ]=]))
+end
+
+function TestWrite.test_demo()
+	local text = [[
+def five = match () in {
+	() => 5,
+	() => "5",
+}
+
+def six =
+	five
+	+ 1
+]]
+
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(13, 12))
+			:config(no_color_ascii())
+			:code(3)
+			:message("Incompatible types")
+			:label(ariadne.label(33, 33):message("This is of type Nat"))
+			:label(ariadne.label(43, 45):message("This is of type Str"))
+			:label(ariadne.label(12, 48):message("This values are outputs of this match expression"))
+			:note("Outputs of match expressions must coerce to the same type")
+			:finish()
+			:write_to_string(source(text, "sample.tao"))
+	)
+
+	luaunit.assertEquals(msg, [=[
+[3] Error: Incompatible types
+   ,-[ sample.tao:1:13 ]
+   |
+ 1 | def five = ,-> match () in {
+ 2 | 	() => 5,
+   |        |
+   |        `-- This is of type Nat
+ 3 | 	() => "5",
+   |        ^|^
+   |         `--- This is of type Str
+   |
+   | Note: Outputs of match expressions must coerce to the same type
+---'
+]=])
 end
 
 

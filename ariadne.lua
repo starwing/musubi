@@ -184,7 +184,7 @@ local function compute_lines(text)
 	return lines
 end
 
-local function new_source(text)
+local function new_source(text, name)
 	local lines = compute_lines(text)
 	local total_characters = 0
 	local total_bytes = 0
@@ -195,6 +195,7 @@ local function new_source(text)
 	end
 
 	return setmetatable({
+		name = name,
 		text = text,
 		lines = lines,
 		char_len = total_characters,
@@ -203,18 +204,18 @@ local function new_source(text)
 	}, Source)
 end
 
-	-- with_display_line_offset enables external callers to shift the printed line numbers.
+-- with_display_line_offset enables external callers to shift the printed line numbers.
 function Source:with_display_line_offset(offset)
 	self.display_line_offset = offset
 	return self
 end
 
-	-- line retrieves the raw line record at a 1-based index.
+-- line retrieves the raw line record at a 1-based index.
 function Source:line(index)
 	return self.lines[index]
 end
 
-	-- get_line_text unwraps the line struct to expose the stored text.
+-- get_line_text unwraps the line struct to expose the stored text.
 function Source:get_line_text(line)
 	local _ = self
 	return line.text
@@ -633,7 +634,7 @@ local function render_report(report, source)
 	for _, group in ipairs(groups) do
 		local range = source:get_line_range(group.char_span)
 		group.line_range = range
-		group.source_name = "<unknown>"
+		group.source_name = source.name or "<unknown>"
 		group.primary_location = make_location(source, config, report.span)
 		line_no_width = math.max(line_no_width, digits(range.finish + source.display_line_offset))
 	end
@@ -1039,8 +1040,8 @@ function ariadne.config(base)
 	return make_config(base)
 end
 
-function ariadne.source(text)
-	return new_source(text)
+function ariadne.source(text, name)
+	return new_source(text, name)
 end
 
 function ariadne.span(start_pos, finish_pos)
