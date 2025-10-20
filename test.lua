@@ -895,6 +895,90 @@ Error: invalid label
 ]=]))
 end
 
+-- Additional coverage-focused tests (expected outputs intentionally left blank)
+function TestWrite.test_oob_location_with_label_byte()
+	local text = "hi"
+	local cfg = no_color_ascii("byte")
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(100, 100))
+			:config(cfg)
+			:message("oob location with label")
+			:label(ariadne.label(1, 1):message("label"))
+			:finish()
+			:write_to_string(source(text))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: oob location with label
+   ,-[ <unknown>:?:? ]
+   |
+ 1 | hi
+   | |
+   | `-- label
+---'
+]=]))
+end
+
+function TestWrite.test_multiline_sort_and_padding()
+	-- First line has trailing spaces to exercise split_at_column padding; two
+	-- multiline labels with messages ensure sorting comparators run.
+	local text = "abc   \nmid\nxyz"
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(1, 1))
+			:config(no_color_ascii())
+			:message("multiline sort & padding")
+			:label(ariadne.label(5, 13):message("outer"))  -- from trailing spaces into last line
+			:label(ariadne.label(9, 12):message("inner"))  -- spans mid->x
+			:finish()
+			:write_to_string(source(text))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: multiline sort & padding
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | abc  ,->
+ 2 | m,-> id
+ 3 | |-> xyz
+   | |
+   | `-------- inner
+   | |
+   | |
+   | `-------- outer
+---'
+]=]))
+end
+
+function TestWrite.test_pointer_and_connectors()
+	-- On the second line we have both a multiline end and an inline label with
+	-- messages, which drives connector rows and vbar cells.
+	local text = "abcde\nfghij\n"
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(1, 1))
+			:config(no_color_ascii())
+			:message("pointer and connectors")
+			:label(ariadne.label(2, 8):message("multi")) -- multi spanning line1->line2
+			:label(ariadne.label(9, 10):message("inline"))
+			:finish()
+			:write_to_string(source(text))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: pointer and connectors
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | a,-> bcde
+ 2 | |-> fghij
+   |   ^|
+   | |
+   | `---------- multi
+   | |  |
+   | |
+   | |  `------- inline
+---'
+]=]))
+end
+
 
 local TestDraw = {}
 

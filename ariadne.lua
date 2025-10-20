@@ -918,11 +918,7 @@ local function render_report(report, source)
 
 				for col = 1, line_arrow_width do
 					if col == line_label.col then
-						local corner = draw.lbot
-						if line_label.multi and not line_label.draw_message then
-							corner = draw.rbot
-						end
-						buffer[#buffer + 1] = corner
+						buffer[#buffer + 1] = draw.lbot
 					elseif col > line_label.col then
 						buffer[#buffer + 1] = draw.hbar
 					else
