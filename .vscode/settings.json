@@ -1,0 +1,4 @@
+{
+    "Lua.diagnostics.ignoredFiles": "Disable",
+    "Lua.diagnostics.libraryFiles": "Disable"
+}
