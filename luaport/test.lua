@@ -79,8 +79,10 @@ Error: can't compare apples with oranges
 ]=]))
 end
 
-function TestWrite.test_two_labels_with_messages()
-	local text = "apple == orange;"
+function TestWrite.test_label_attach_start_with_blank_line()
+	local text = "alpha\nbravo\ncharlie\n"
+	local cfg = no_color_ascii()
+	cfg.label_attach = "start"
 	local msg = remove_trailing(
 		ariadne.error(ariadne.span(1, 1))
 			:config(no_color_ascii())
@@ -95,11 +97,13 @@ function TestWrite.test_two_labels_with_messages()
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
- 1 | apple == orange;
-   | ^^|^^    ^^^|^^
-   |   `-------------- This is an apple
-   |             |
-   |             `---- This is an orange
+ 1 | alpha
+   | ^^|^^
+   |   `---- This is an apple
+ 2 | bra,-> vo
+ 3 | |-> charlie
+   | |
+   | `------------ This is an orange
 ---'
 ]=]))
 end
@@ -716,17 +720,190 @@ Error: ordered labels
 ]=]))
 end
 
+function TestWrite.test_split_labels()
+	local text = "alpha\nbravo\ncharlie\n"
+	local cfg = no_color_ascii()
+	cfg.label_attach = "start"
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(1, 15))
+			:config(cfg)
+			:message("gaps between labels")
+			:label(ariadne.label(1, 5):message("first"))
+			:label(ariadne.label(13, 19):message("third"))
+			:finish()
+			:write_to_string(source(text))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: gaps between labels
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | alpha
+   | |^^^^
+   | `------ first
+   |
+ 3 | charlie
+   | |^^^^^^
+   | `-------- third
+---'
+]=]))
+end
+
+function TestWrite.test_zero_length_span()
+	local text = "delta"
+	local cfg = no_color_ascii()
+	cfg.label_attach = "end"
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(3, 2))
+			:config(cfg)
+			:message("zero length span")
+			:label(ariadne.label(3, 2):message("point"))
+			:finish()
+			:write_to_string(source(text))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: zero length span
+   ,-[ <unknown>:1:3 ]
+   |
+ 1 | delta
+   |   |
+   |   |
+   |   `- point
+---'
+]=]))
+end
+
+function TestWrite.test_priority_highlight_and_color()
+	local text = "klmnop"
+	local strong = ariadne.label(2, 5):message("strong"):priority(10):color("cyan")
+	local weak = ariadne.label(1, 4):message("weak")
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(1, 1))
+			:config(no_color_ascii())
+			:message("overlap priorities")
+			:label(weak)
+			:label(strong)
+			:finish()
+			:write_to_string(source(text))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: overlap priorities
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | klmnop
+   | ^^^|^
+   |   `---- weak
+   |    |
+   |    `--- strong
+---'
+]=]))
+end
+
+function TestWrite.test_multiple_arrow_connectors()
+	local text = "qrstuvwx"
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(1, 1))
+			:config(no_color_ascii())
+			:message("stacked arrows")
+			:label(ariadne.label(1, 3):message("left"))
+			:label(ariadne.label(5, 8):message("right"))
+			:finish()
+			:write_to_string(source(text))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: stacked arrows
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | qrstuvwx
+   | ^|^ ^^|^
+   |  `-------- left
+   |       |
+   |       `--- right
+---'
+]=]))
+end
+
+function TestWrite.test_custom_report_with_code()
+	local msg = remove_trailing(
+		ariadne.report("Notice", ariadne.span(1, 1))
+			:config(no_color_ascii())
+			:code("E100")
+			:message("custom kind")
+			:finish()
+			:write_to_string(source("x"))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+[E100] Notice: custom kind
+]=]))
+end
+
+function TestWrite.test_warning_and_advice()
+	local warning = remove_trailing(
+		ariadne.warning(ariadne.span(1, 1))
+			:config(no_color_ascii())
+			:message("careful")
+			:finish()
+			:write_to_string(source("w"))
+	)
+	local advice = remove_trailing(
+		ariadne.advice(ariadne.span(1, 1))
+			:config(no_color_ascii())
+			:message("consider")
+			:finish()
+			:write_to_string(source("a"))
+	)
+
+	luaunit.assertEquals(warning, ([=[
+Warning: careful
+]=]))
+	luaunit.assertEquals(advice, ([=[
+Advice: consider
+]=]))
+end
+
+function TestWrite.test_byte_index_out_of_bounds()
+	local cfg = no_color_ascii("byte")
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(100, 100))
+			:config(cfg)
+			:message("unknown position")
+			:finish()
+			:write_to_string(source("hi"))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: unknown position
+]=]))
+end
+
+function TestWrite.test_invalid_label_skipped()
+	local msg = remove_trailing(
+		ariadne.error(ariadne.span(1, 1))
+			:config(no_color_ascii())
+			:message("invalid label")
+			:label(ariadne.label(999, 1000):message("ignored"))
+			:finish()
+			:write_to_string(source("short"))
+	)
+
+	luaunit.assertEquals(msg, ([=[
+Error: invalid label
+]=]))
+end
+
+
 local TestDraw = {}
 
-function TestDraw.test_const_colors()
+function TestDraw.test_color_generator()
 	local gen = ariadne.color_generator()
-	local first = gen:next()
-	local second = gen:next()
-	local third = gen:next()
-
-	luaunit.assertNotEquals(first, second)
-	luaunit.assertNotEquals(second, third)
-	luaunit.assertNotEquals(third, first)
+	local a, b, c = gen:next(), gen:next(), gen:next()
+	luaunit.assertEquals(a, 161)
+	luaunit.assertEquals(b, 1)
+	luaunit.assertEquals(c, 161)
 end
 
 local TestSource = {}
@@ -738,7 +915,7 @@ function TestSource.test_line_range_clamps_finish()
 end
 
 _G.TestWrite = TestWrite
--- _G.TestDraw = TestDraw
+_G.TestDraw = TestDraw
 _G.TestSource = TestSource
 
 os.exit(luaunit.LuaUnit.run())
