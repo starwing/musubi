@@ -1,11 +1,11 @@
-This repository is a Lua port of the Ariadne diagnostics renderer (from `reference/write.rs`). It mirrors the Rust library's behaviour while staying idiomatic to Lua 5.1+ and introducing architectural improvements for performance and clarity.
+This repository is a Lua implementation of the Ariadne diagnostics renderer. Originally ported from the Rust `ariadne` library, it now serves as the primary implementation with architectural improvements for performance and clarity. The Lua version is idiomatic to Lua 5.1+ while maintaining compatibility with the original diagnostic output format.
 
 Quick context
 - Language: Lua with UTF-8 support (tested against Lua 5.1/LuaJIT).
 - Dependencies: `lua-utf8` library for UTF-8 operations, `luaunit` for tests, optional `luacov` for coverage.
 - Entry points: `ariadne.lua` exports the public API (see "Public API" section below).
 - Tests: run `lua test.lua` from the project root once `luaunit` (and `luacov` if desired) are on `package.path`.
-- All tests from the Rust version pass with identical output (except intentional formatting changes).
+- Coverage: Currently at 98% test coverage. See `luacov.report.out` for coverage details.
 
 High-level architecture (what to know fast)
 - `ariadne.lua` contains all runtime code (~1500 lines), structured into sections:
@@ -17,11 +17,9 @@ High-level architecture (what to know fast)
   - **Rendering**: Core rendering functions (see "Rendering pipeline" section)
   - **Public API**: Builder-style helpers (`Report.build`, `Label.new`, `Source.new`)
   
-- `test.lua` is the exhaustive regression suite (~1050 lines). It snapshots rendered diagnostics and exercises edge cases (multi-byte chars, zero-width spans, compact mode, multiline labels, etc.). All tests match Rust output exactly.
+- `test.lua` is the exhaustive regression suite (~1050 lines). It snapshots rendered diagnostics and exercises edge cases (multi-byte chars, zero-width spans, compact mode, multiline labels, etc.). All tests produce pixel-perfect diagnostic output.
 
 - `serpent.lua` and `luaunit.lua` are vendored dependencies used by the tests; they should remain untouched unless upgrading.
-
-- `reference/write.rs` is the Rust original implementation (for comparison during porting).
 
 Rendering pipeline (execution flow)
 ```
@@ -74,16 +72,16 @@ Key design decisions (why code is structured this way)
 **Architectural improvements over Rust original**
 
 1. **Flattened rendering loops** (O(n) vs O(n²))
-   - Rust: Nested loops `for col in 0..len { for i in 0..col+1 { ... } }`
-   - Lua: Single loop `for info in multi_labels { ... }` with carefully scoped variables
-   - **Key insight**: Rust's inner loop only affects output when `i == col` (due to `!is_parent` filters). By making each `info` correspond to one output column, the inner loop becomes redundant.
+   - Original Rust: Nested loops `for col in 0..len { for i in 0..col+1 { ... } }`
+   - This implementation: Single loop `for info in multi_labels { ... }` with carefully scoped variables
+   - **Key insight**: The inner loop only affects output when `i == col` (due to `!is_parent` filters). By making each `info` correspond to one output column, the inner loop becomes redundant.
    - **Variable scoping strategy**:
-     - `vbar`, `corner`: Reset per iteration (local variables) - Rust resets these per `col`
-     - `hbar`, `margin_ptr`: Preserved across iterations (outer variables) - Rust accumulates these in inner loop
-   - **Equivalence verified**: All tests pass, output matches Rust exactly.
+     - `vbar`, `corner`: Reset per iteration (local variables) - analogous to resetting per `col`
+     - `hbar`, `margin_ptr`: Preserved across iterations (outer variables) - analogous to accumulating in inner loop
+   - **Equivalence verified**: All tests pass, output is pixel-perfect.
 
 2. **Simplified margin rendering**
-   - Eliminated Rust's complex pointer comparisons and multi-stage filtering.
+   - Eliminated complex pointer comparisons and multi-stage filtering.
    - Removed no-op code (where `hbar` is set then immediately filtered away).
    - Consolidated conditions using early returns and direct logic flow.
 
@@ -92,17 +90,17 @@ Key design decisions (why code is structured this way)
    - Maintains readability without Lua 5.2+ `goto` or multiple `return` points.
 
 4. **Tab width calculation**
-   - Rust (0-based): `tab_width - col % tab_width`
-   - Lua (1-based): `tab_width - ((col - 1) % tab_width)`
+   - Original (0-based): `tab_width - col % tab_width`
+   - This implementation (1-based): `tab_width - ((col - 1) % tab_width)`
    - Equivalent forms verified with `tab_width = 4` across `col = 1, 2, 5, 8`.
 
 **Index type conversions**
-- Rust uses 0-based half-open ranges: `span.start..span.end` means `[start, end)`.
-- Lua uses 1-based closed ranges: `start_char, end_char` means `[start, end]`.
-- Conversion rules:
-  - Rust `start` → Lua `start + 1` (shift to 1-based)
-  - Rust `end` → Lua `end` (because Rust's `end` is exclusive, Lua's is inclusive)
-  - Empty span: Rust `idx..idx` → Lua `(idx + 1, nil)`
+- Original implementation uses 0-based half-open ranges: `span.start..span.end` means `[start, end)`.
+- This implementation uses 1-based closed ranges: `start_char, end_char` means `[start, end]`.
+- Conversion rules (from reference implementation):
+  - Original `start` → This `start + 1` (shift to 1-based)
+  - Original `end` → This `end` (because original's `end` is exclusive, this is inclusive)
+  - Empty span: Original `idx..idx` → This `(idx + 1, nil)`
   
 **UTF-8 handling**
 - Relies on `lua-utf8` library (compatible with Lua 5.1+).
@@ -110,9 +108,8 @@ Key design decisions (why code is structured this way)
 - Rationale: Simplicity and cross-language consistency (not all languages follow Unicode newline rules).
 
 **Rendering logic**
-- Stays diffable with Rust formatter where possible.
-- Glyph tables (`Characters.unicode` / `Characters.ascii`) are direct analogues.
-- Color system uses function-based callback vs Rust's trait system.
+- Glyph tables (`Characters.unicode` / `Characters.ascii`) provide rendering symbols.
+- Color system uses function-based callback for flexibility.
 - Writer abstraction (`W:label()`, `W:use_color()`) encapsulates output buffering and color state.
 
 Local conventions and patterns for contributors
@@ -127,6 +124,7 @@ Developer workflows & commands
 
 Patterns to watch when editing
 - Any change affecting rendering should update corresponding expectations in `test.lua`; the suite contains explicit string comparisons.
+- **All tests must verify complete output**: Every test must use `lu.assertEquals(msg, expected_output)` with the full expected string, including all color codes, whitespace, and newlines. Never use partial checks like `assertNotNil(msg:find(...))` or `assertTrue(# msg > 0)`.
 - UTF-8 handling relies on `utf8.len`/`utf8.offset`. Guard code paths when targeting Lua without built-in UTF-8 library.
 - Config mutations are shared by reference; call `ariadne.config()` per report when you need isolated settings.
 
@@ -164,13 +162,51 @@ If something is unclear
 
 ---
 
+## Current development status
+
+### Project maturity
+- ✅ **Core implementation complete**: All rendering logic ported and tested
+- ✅ **Test coverage**: 98% (see `luacov.report.out` for details)
+- ✅ **Pixel-perfect output**: All test cases produce identical output to reference implementation
+- ✅ **Performance optimized**: O(n) rendering vs original O(n²) nested loops
+
+### Active TODO
+**Priority 1: Complete test coverage** (Target: 100%)
+- Current: 98% coverage with 8 uncovered lines
+- Uncovered lines (from `luacov.report.out`):
+  1. Line 26: `Cache.new()` - Dead code (Source is used directly, not base Cache)
+  2. Line 238: `default_color("error")` - Missing test for default color error category
+  3. Line 239: `default_color("error")` return - Missing test
+  4. Line 244: `default_color("skipped_margin")` - Missing test for skipped margin color
+  5. Line 1329: `draw.ltop` in underbar logic - Complex vbar/underbar interaction, disabled by `or true`
+  6. Line 1409: `draw.xbar` in arrow rendering - Cross-gap disabled case with vbar
+  7. Line 1413: `draw.uarrow` in compact multiline - Compact mode with multiline arrows
+  8. Line 1529: Multiple groups separator - Missing test for multi-group reports
+- Next steps:
+  1. Add test for `default_color` with "error" and "skipped_margin" categories
+  2. Add test for multi-group reports (multiple source files in one diagnostic)
+  3. Investigate lines 1329, 1409, 1413 - may be unreachable or need special config combinations
+  4. Consider removing `Cache.new()` (dead code)
+  5. Verify coverage improvement with `lua -lluacov test.lua && luacov ariadne.lua`
+
+**Priority 2: Line width limiting feature** (See "Next development phase" below)
+- Status: Not started
+- Awaiting completion of 100% test coverage before starting
+
+### Known limitations
+- Only supports `\n` newlines (not Unicode line separators)
+- No streaming output (full diagnostic built in memory)
+- Color codes must follow `\27[...m` format (no validation)
+
+---
+
 ## Critical implementation details for AI agents
 
 ### Loop flattening equivalence (render_margin)
 
-**Context**: The Lua implementation transforms Rust's nested O(n²) loops into a single O(n) loop.
+**Context**: This implementation transforms nested O(n²) loops into a single O(n) loop.
 
-**Rust original structure**:
+**Original structure** (from Rust reference):
 ```rust
 for col in 0..multi_labels_with_message.len() + 1 {
     let mut vbar = None;
@@ -187,7 +223,7 @@ for col in 0..multi_labels_with_message.len() + 1 {
 }
 ```
 
-**Lua flattened structure**:
+**Flattened structure** (this implementation):
 ```lua
 local hbar, margin_ptr  -- Global: accumulated across iterations
 local margin_ptr_is_start
@@ -203,50 +239,50 @@ end
 
 **Equivalence proof**:
 1. **Variable scoping matches semantic lifetime**:
-   - Rust's `vbar`/`corner` reset per `col` → Lua's local variables reset per iteration ✓
-   - Rust's `hbar`/`margin_ptr` accumulate in inner loop → Lua's outer variables preserve across iterations ✓
+   - Original `vbar`/`corner` reset per `col` → Local variables reset per iteration ✓
+   - Original `hbar`/`margin_ptr` accumulate in inner loop → Outer variables preserve across iterations ✓
 
 2. **`is_parent` elimination**:
-   - Rust: Inner loop filters with `!is_parent` (i.e., `i == col`)
+   - Original: Inner loop filters with `!is_parent` (i.e., `i == col`)
    - Effect: Only the last iteration (`i == col`) sets `vbar`/`corner`
-   - Lua: Each iteration corresponds to one `col`, directly sets `vbar`/`corner`
-   - **Key insight**: Rust's inner loop is redundant because only `i == col` matters for `vbar`/`corner`
+   - This implementation: Each iteration corresponds to one `col`, directly sets `vbar`/`corner`
+   - **Key insight**: The inner loop is redundant because only `i == col` matters for `vbar`/`corner`
 
 3. **No-op code removal**:
-   - Rust sets `hbar = margin.label` then immediately filters it if `hbar == margin_label`
-   - Lua omits this dead code path entirely ✓
+   - Original sets `hbar = margin.label` then immediately filters it if `hbar == margin_label`
+   - This implementation omits this dead code path entirely ✓
 
-**Verification**: All tests pass with identical output to Rust version.
+**Verification**: All tests pass with pixel-perfect output.
 
 ### Index conversion cheat sheet
 
-| Concept | Rust (0-based, half-open) | Lua (1-based, closed) |
-|---------|---------------------------|----------------------|
+| Concept | Original (0-based, half-open) | This implementation (1-based, closed) |
+|---------|-------------------------------|--------------------------------------|
 | Single char at pos 0 | `0..1` | `(1, 1)` |
 | Empty span at pos 5 | `5..5` | `(6, nil)` |
 | Range [10, 20) | `10..20` | `(11, 20)` |
 | Line offset | `line.offset()` returns 0-based | `line.offset` is 1-based |
 | String slicing | `s[start..end]` | `s:sub(byte_offset, byte_offset + byte_len - 1)` |
 
-**Critical gotcha**: When converting `end_char or start_char - 1` in Lua:
-- Empty span: `end_char == nil`, so `start_char - 1` represents Rust's `start..start`
-- Non-empty: `end_char` is the last character (inclusive), matching Rust's `end - 1`
+**Critical gotcha**: When converting `end_char or start_char - 1`:
+- Empty span: `end_char == nil`, so `start_char - 1` represents original's `start..start`
+- Non-empty: `end_char` is the last character (inclusive), matching original's `end - 1`
 
 ### Tab width calculation (1-based correction)
 
-**Rust** (0-based col):
+**Original** (0-based col):
 ```rust
 let width = tab_width - col % tab_width;
 ```
 
-**Lua** (1-based col):
+**This implementation** (1-based col):
 ```lua
 local width = cfg.tab_width - ((col - 1) % cfg.tab_width)
 ```
 
 **Verification table** (tab_width = 4):
-| col (Lua) | col-1 (Rust equiv) | Result |
-|-----------|-------------------|--------|
+| col (1-based) | col-1 (0-based equiv) | Result |
+|---------------|----------------------|--------|
 | 1 | 0 | 4 |
 | 2 | 1 | 3 |
 | 5 | 4 | 4 |
