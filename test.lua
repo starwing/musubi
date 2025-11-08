@@ -1,7 +1,8 @@
 local lu = require "luaunit"
 local ariadne = require "ariadne"
 
-local TestSource = {} do
+local TestSource = {}
+do
     local function get_line_text(src, line)
         return src.text:sub(line:byte_span())
     end
@@ -12,8 +13,8 @@ local TestSource = {} do
         lu.assertEquals(#src, #lines)
         local chars, bytes = 0, 0
         for i, line in ipairs(lines) do
-            lu.assertEquals(src[i].offset, chars+1)
-            lu.assertEquals(src[i].byte_offset, bytes+1)
+            lu.assertEquals(src[i].offset, chars + 1)
+            lu.assertEquals(src[i].byte_offset, bytes + 1)
             lu.assertEquals(src[i].len, utf8.len(line))
             lu.assertEquals(src[i].byte_len, #line)
             lu.assertEquals(get_line_text(src, src[i]), line)
@@ -65,20 +66,22 @@ local TestSource = {} do
     end
 end
 
-local TestColor = {} do
+local TestColor = {}
+do
     function TestColor.test_colors()
         local gen = ariadne.ColorGenerator.new()
         local colors = {}
-        colors[#colors+1] = gen:next()
-        colors[#colors+1] = gen:next()
-        colors[#colors+1] = gen:next()
+        colors[#colors + 1] = gen:next()
+        colors[#colors + 1] = gen:next()
+        colors[#colors + 1] = gen:next()
         lu.assertNotEquals(colors[1], colors[2])
         lu.assertNotEquals(colors[2], colors[3])
         lu.assertNotEquals(colors[1], colors[3])
     end
 end
 
-local TestWrite = {} do
+local TestWrite = {}
+do
     ---@param text string
     ---@return string
     local function remove_trailing(text)
@@ -1047,6 +1050,172 @@ def six =
    | Note: Outputs of match expressions must coerce to the same type
 ---'
 ]=])
+    end
+
+    -- Test 1: Multi-source groups (line 1529)
+    function TestWrite.test_multi_source_groups()
+        local src1 = ariadne.Source.new("apple", "file1.lua")
+        local src2 = ariadne.Source.new("orange", "file2.lua")
+        local cache = ariadne.Cache.new()
+        cache["file1.lua"] = src1
+        cache["file2.lua"] = src2
+
+        local msg = remove_trailing(ariadne.Report.build("Error", 1, 5, "file1.lua")
+            :with_config(no_color_ascii())
+            :set_message("cross-file error")
+            :add_label(ariadne.Label.new(1, 5, "file1.lua"))
+            :add_label(ariadne.Label.new(1, 6, "file2.lua"))
+            :render(cache))
+        lu.assertEquals(msg, [[
+Error: cross-file error
+   ,-[ file1.lua:1:1 ]
+   |
+ 1 | apple
+   |
+   |-[ file2.lua:1:1 ]
+   |
+ 1 | orange
+---'
+]])
+    end
+
+    -- Test 2: Compact mode with multiline arrows (line 1413)
+    function TestWrite.test_compact_multiline_arrows()
+        local cfg = no_color_ascii()
+        cfg.compact = true
+        cfg.multiline_arrows = true
+        local src = ariadne.Source.new("apple\norange\nbanana")
+        local msg = ariadne.Report.build("Error", 1, 12)
+            :with_config(cfg)
+            :set_message("multiline span")
+            :add_label(ariadne.Label.new(1, 12):with_message("crosses lines"))
+            :render(src)
+        lu.assertEquals(msg, [=[
+Error: multiline span
+   ,-[ <unknown>:1:1 ]
+ 1 |,>apple
+ 2 ||>orange
+   |`--------- crosses lines
+]=])
+    end
+
+    -- Test 3: cross_gap disabled (line 1409)
+    function TestWrite.test_cross_gap_disabled()
+        local cfg = no_color_ascii()
+        cfg.cross_gap = false
+        local src = ariadne.Source.new("apple\norange\nbanana\ngrape")
+        local msg = ariadne.Report.build("Error", 1, 19)
+            :with_config(cfg)
+            :set_message("test cross_gap")
+            :add_label(ariadne.Label.new(1, 19):with_message("span 1"))
+            :add_label(ariadne.Label.new(21, 25):with_message("span 2"))
+            :render(src)
+        lu.assertEquals(msg, "Error: test cross_gap\
+   ,-[ <unknown>:1:1 ]\
+   |\
+ 1 | ,-> apple\
+   : :   \
+ 3 | |-> banana\
+   | |            \
+   | `------------ span 1\
+ 4 |     grape\
+   |     ^^|^^  \
+   |       `---- span 2\
+---'\
+")
+    end
+
+    -- Test 4: default_color for "error" and "skipped_margin" (lines 238-244)
+    function TestWrite.test_default_color_categories()
+        local cfg = ariadne.Config.new {
+            char_set = ariadne.Characters.ascii,
+        }
+        local src = ariadne.Source.new("apple\n\n\norange")
+        local msg = ariadne.Report.build("Error", 1, 6)
+            :with_config(cfg)
+            :set_message("test default colors")
+            :add_label(ariadne.Label.new(1, 6):with_message("spans multiple lines"))
+            :add_note("note with default colors")
+            :render(src)
+        -- Expected: "Error:" in red, skipped margin ":" in dim gray
+        msg = ("%q"):format(msg)
+        lu.assertEquals(msg, [[
+"\27[31mError:\27[0m test default colors\
+   \27[38;5;246m,-[\27[0m <unknown>:1:1 \27[38;5;246m]\27[0m\
+   \27[38;5;246m|\27[0m\
+ \27[38;5;246m1 |\27[0m \27[38;5;249mapple\27[0m\
+   \27[38;5;240m| \27[0m\27[39m^^^|^^\27[0m  \
+   \27[38;5;240m| \27[0m   \27[39m`----\27[0m spans multiple lines\
+   \27[38;5;240m| \
+   | \27[0m\27[38;5;115mNote: note with default colors\
+\27[0m\27[38;5;246m---'\27[0m\
+"]])
+
+        msg = ("%q"):format(remove_trailing(
+            ariadne.Report.build("Advice", 1, 6)
+            :with_config(cfg)
+            :set_message("test default colors")
+            :render(src)
+        ))
+        lu.assertEquals(msg, [[
+"\27[38;5;147mAdvice:\27[0m test default colors\
+"]])
+
+        msg = ("%q"):format(remove_trailing(
+            ariadne.Report.build("Warning", 1, 6)
+            :with_config(cfg)
+            :set_message("test default colors")
+            :render(src)
+        ))
+        lu.assertEquals(msg, [[
+"\27[33mWarning:\27[0m test default colors\
+"]])
+    end -- Test 2: Compact mode with multiline arrows (line 1413)
+
+    function TestWrite.test_compact_multiline_arrows()
+        local cfg = no_color_ascii()
+        cfg.compact = true
+        cfg.multiline_arrows = true
+        local src = ariadne.Source.new("apple\norange\nbanana")
+        local msg = ariadne.Report.build("Error", 1, 12)
+            :with_config(cfg)
+            :set_message("multiline span")
+            :add_label(ariadne.Label.new(1, 12):with_message("crosses lines"))
+            :render(src)
+        lu.assertEquals(msg, [=[
+Error: multiline span
+   ,-[ <unknown>:1:1 ]
+ 1 |,>apple
+ 2 ||>orange
+   |`--------- crosses lines
+]=])
+    end
+
+    -- Test 3: cross_gap disabled (line 1409)
+    function TestWrite.test_cross_gap_disabled()
+        local cfg = no_color_ascii()
+        cfg.cross_gap = false
+        local src = ariadne.Source.new("apple\norange\nbanana\ngrape")
+        local msg = remove_trailing(ariadne.Report.build("Error", 1, 19)
+            :with_config(cfg)
+            :set_message("test cross_gap")
+            :add_label(ariadne.Label.new(1, 19):with_message("span 1"))
+            :add_label(ariadne.Label.new(21, 25):with_message("span 2"))
+            :render(src))
+        lu.assertEquals(msg, [[
+Error: test cross_gap
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ,-> apple
+   : :
+ 3 | |-> banana
+   | |
+   | `------------ span 1
+ 4 |     grape
+   |     ^^|^^
+   |       `---- span 2
+---'
+]])
     end
 end
 

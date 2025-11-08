@@ -1290,10 +1290,10 @@ do -- report Rendering
                             local a = draw.underbar
                             if vbar_len <= 1 or true then
                                 a = draw.underbar
-                            elseif line.offset + col - 1 == vbar.info.start_char then
-                                a = draw.ltop
-                            elseif line.offset + col - 1 == vbar.info.end_char then
-                                a = draw.rtop
+                                -- elseif line.offset + col - 1 == vbar.info.start_char then
+                                --     a = draw.ltop
+                                -- elseif line.offset + col - 1 == vbar.info.end_char then
+                                --     a = draw.rtop
                             end
                             W:use_color(vbar.info.label.color):label(a)
                             W:padding(width - 1, draw.underline)
@@ -1481,6 +1481,7 @@ end
 
 ---@class (exact) Ariadne
 return {
+    Cache = Cache,
     Source = Source,
     ColorGenerator = ColorGenerator,
     Characters = Characters,
