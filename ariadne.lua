@@ -1,1092 +1,1490 @@
-local ariadne = {}
+---@class utf8
+---@field len fun(s: string, i?: integer, j?: integer): integer?
+---@field offset fun(s: string, n: integer, i?: integer): integer?, integer?
+---@field width fun(s: integer|string, ambi_is_single: boolean?, fallback: integer?): integer
+---@field codepoint fun(s: string, i?: integer, j?: integer, lax?: boolean): integer
+local utf8 = require "lua-utf8"
 
---[[
-Utility helpers
-]]
-
-local utf8 = utf8
-
--- repeat_char mirrors string.rep but guards against negative counts.
-local function repeat_char(ch, count)
-	return count >= 0 and string.rep(ch, count) or ""
+--- Creates a new class
+---@generic T
+---@param name string
+---@param t T?
+---@return T
+local function class(name, t)
+    t = t or {}
+    t.__name = name
+    t.__index = t
+    return t
 end
 
--- digits counts base-10 digits used when printing line numbers.
-local function digits(value)
-	local n = 0
-	repeat
-		n = n + 1
-		value = value // 10
-	until value == 0
-	return n
+--- @class Cache
+local Cache = class "Cache"
+do
+    ---@return Cache
+    function Cache.new()
+        return setmetatable({}, Cache)
+    end
+
+    --- @param id string
+    --- @return Source?
+    function Cache:fetch(id)
+        return self[id]
+    end
 end
 
--- trim_end removes trailing whitespace and returns a single string value.
-local function trim_end(text)
-	return text:gsub("%s+$", "")
+--- @class Line
+--- @field offset       integer offset of this line in the original [`Source`]
+--- @field len          integer character length of this line
+--- @field byte_offset  integer byte offset of this line in the original [`Source`]
+--- @field byte_len     integer byte length of this line in the original [`Source`]
+--- @field newline      boolean whether this line ends with a newline
+local Line = class "Line"
+do
+    --- creates a new Line
+    ---@param offset integer
+    ---@param len integer
+    ---@param byte_offset integer
+    ---@param byte_len integer
+    ---@param newline boolean
+    ---@return Line
+    function Line.new(offset, len, byte_offset, byte_len, newline)
+        return setmetatable({
+            offset = offset,
+            len = len,
+            byte_offset = byte_offset,
+            byte_len = byte_len,
+            newline = newline,
+        }, Line)
+    end
+
+    --- returns the character span of this line in the original [`Source`]
+    ---@return integer first
+    ---@return integer last
+    function Line:span()
+        return self.offset, self.offset + self.len - 1
+    end
+
+    --- checks if a position is within the span of this line
+    ---@param pos integer
+    ---@return boolean
+    function Line:span_contains(pos)
+        return pos >= self.offset and pos < self.offset + self.len
+    end
+
+    --- returns the byte span of this line in the original [`Source`]
+    ---@return integer first
+    ---@return integer last
+    function Line:byte_span()
+        return self.byte_offset, self.byte_offset + self.byte_len - 1
+    end
 end
 
-local function split_lines(text)
-	local lines = {}
-	for line in (text .. "\n" or "\n"):gmatch "(.-)\n" do
-		lines[#lines + 1] = line
-	end
-	return lines
+--- @class Source : Cache
+--- @field id                string
+--- @field len               integer character length of the entire source
+--- @field byte_len          integer byte length of the entire source
+--- @field text              string the original source text
+--- @field display_line_offset integer
+--- @field [integer] Line
+local Source = class "Source"
+do
+    --- Splits the source code into lines
+    ---@param code string
+    ---@return Line[]
+    ---@return integer total_chars
+    ---@return integer total_bytes
+    local function split_code(code)
+        if #code == 0 then
+            return { Line.new(1, 0, 1, 0, false), }, 0, 0
+        end
+        local lines = {}
+        local chars, bytes = 0, 0
+        for ends in code:gmatch "()\n" do
+            local chars_len = assert(utf8.len(code, bytes + 1, ends - 1))
+            local bytes_len = ends - bytes - 1
+            lines[#lines + 1] = Line.new(chars + 1, chars_len,
+                bytes + 1, bytes_len, true)
+            chars = chars + chars_len + 1
+            bytes = ends --[[@as integer]]
+        end
+        local chars_len = assert(utf8.len(code, bytes + 1, #code))
+        local bytes_len = #code - bytes
+        lines[#lines + 1] = Line.new(chars + 1, chars_len, bytes + 1, bytes_len, false)
+        return lines, chars + chars_len, bytes + bytes_len
+    end
+
+    --- creates a new Source
+    ---@param code string
+    ---@param name? string
+    ---@param offset? integer
+    ---@return Source
+    function Source.new(code, name, offset)
+        ---@type Source
+        local src, chars, bytes = split_code(code)
+        src.text = code
+        src.id = name or "<unknown>"
+        src.len = chars
+        src.byte_len = bytes
+        src.display_line_offset = offset or 0
+        return setmetatable(src, Source)
+    end
+
+    --- implements [`Cache:fetch`]
+    ---@param _ string
+    ---@return Source?
+    function Source:fetch(_)
+        return self
+    end
+
+    --- binary_search locates the greatest line index whose key is <= target.
+    ---@param lines Line[]
+    ---@param target integer
+    ---@param key string
+    ---@return integer
+    local function binary_search(lines, target, key)
+        local l, u = 1, #lines
+        while l <= u do
+            local mid = l + (u - l + 1) // 2
+            if lines[mid][key] <= target then
+                l = mid + 1
+            else
+                u = mid - 1
+            end
+        end
+        return l - 1
+    end
+
+    --- returns the line, its index, and the character position
+    --- within the line for a given offset
+    ---@param offset integer
+    ---@return integer index
+    function Source:get_offset_line(offset)
+        return binary_search(self, offset, "offset")
+    end
+
+    --- returns the line and index, by the bytes position
+    ---@param byte_offset integer
+    ---@return integer index
+    function Source:get_byte_line(byte_offset)
+        return binary_search(self, byte_offset, "byte_offset")
+    end
 end
 
---[[
-Characters (draw set)
-]]
+--- @class (exact) CharSet
+--- @field hbar        string
+--- @field vbar        string
+--- @field xbar        string
+--- @field vbar_break  string
+--- @field vbar_gap    string
+--- @field uarrow      string
+--- @field rarrow      string
+--- @field ltop        string
+--- @field mtop        string
+--- @field rtop        string
+--- @field lbot        string
+--- @field mbot        string
+--- @field rbot        string
+--- @field lbox        string
+--- @field rbox        string
+--- @field lcross      string
+--- @field rcross      string
+--- @field underbar    string
+--- @field underline   string
 
-ariadne.unicode = {
-	hbar = "─",
-	vbar = "│",
-	xbar = "┼",
-	vbar_break = "┆",
-	vbar_gap = "┆",
-	uarrow = "▲",
-	rarrow = "▶",
-	ltop = "╭",
-	mtop = "┬",
-	rtop = "╮",
-	lbot = "╰",
-	rbot = "╯",
-	mbot = "┴",
-	lbox = "[",
-	rbox = "]",
-	lcross = "├",
-	rcross = "┤",
-	underbar = "┬",
-	underline = "─",
+---@type table
+local Characters = {}
+do
+    ---@type CharSet
+    Characters.unicode = setmetatable({
+        hbar = '─',
+        vbar = '│',
+        xbar = '┼',
+        vbar_break = '┆',
+        vbar_gap = '┆',
+        uarrow = '▲',
+        rarrow = '▶',
+        ltop = '╭',
+        mtop = '┬',
+        rtop = '╮',
+        lbot = '╰',
+        mbot = '┴',
+        rbot = '╯',
+        lbox = '[',
+        rbox = ']',
+        lcross = '├',
+        rcross = '┤',
+        underbar = '┬',
+        underline = '─',
+    }, Characters)
+
+    ---@type CharSet
+    Characters.ascii = setmetatable({
+        hbar = '-',
+        vbar = '|',
+        xbar = '+',
+        vbar_break = '*',
+        vbar_gap = ':',
+        uarrow = '^',
+        rarrow = '>',
+        ltop = ',',
+        mtop = 'v',
+        rtop = '.',
+        lbot = '`',
+        mbot = '^',
+        rbot = '\'',
+        lbox = '[',
+        rbox = ']',
+        lcross = '|',
+        rcross = '|',
+        underbar = '|',
+        underline = '^',
+    }, Characters)
+end
+
+--- Color is a function that returns a rendered color string.  - It takes a
+--- category. The category indicates what part of the report is being colored,
+--- such as "kind", "margin", "note", etc.
+--- "reset" is a special category that indicates resetting to default color.
+--- @alias Color fun(category: ColorCategory): string?
+
+--- @alias ColorCategory
+--- | "reset"
+--- | "error"
+--- | "warning"
+--- | "kind"
+--- | "margin"
+--- | "skipped_margin"
+--- | "unimportant"
+--- | "note"
+--- | "label"
+
+--- @class ColorGenerator
+--- @field state integer[]
+--- @field min_brightness number
+local ColorGenerator = class "ColorGenerator"
+do
+    --- creates a new ColorGenerator
+    ---@return ColorGenerator
+    function ColorGenerator.new()
+        return setmetatable({
+            state = { 30000, 15000, 35000 },
+            min_brightness = 0.5,
+        }, ColorGenerator)
+    end
+
+    --- returns the next color code
+    ---@return integer
+    function ColorGenerator:next()
+        for i = 1, #self.state do
+            self.state[i] = self.state[i] + 40503 * (i * 4 + 1130)
+            self.state[i] = self.state[i] % 65536
+        end
+        return 16 + ((self.state[3] / 65535 * (1 - self.min_brightness)
+                + self.min_brightness) * 5.0)
+            + ((self.state[2] / 65535 * (1 - self.min_brightness)
+                + self.min_brightness) * 30.0)
+            + ((self.state[1] / 65535 * (1 - self.min_brightness)
+                + self.min_brightness) * 180.0)
+    end
+end
+
+--- @class Config
+--- @field default Config
+--- @field cross_gap       boolean
+--- @field label_attach    "start" | "end" | "middle"
+--- @field compact          boolean
+--- @field underlines       boolean
+--- @field multiline_arrows boolean
+--- @field color            Color
+--- @field tab_width        integer
+--- @field char_set         CharSet
+--- @field index_type      "byte" | "char"
+local Config = class "Config"
+do
+    ---@type Color
+    local function default_color(category)
+        if category == "reset" then
+            return "\x1b[0m"
+        elseif category == "error" then
+            return "\x1b[31m"       -- red
+        elseif category == "warning" then
+            return "\x1b[33m"       -- yellow
+        elseif category == "kind" then
+            return "\x1b[38;5;147m" -- fixed color
+        elseif category == "margin" then
+            return "\x1b[38;5;246m" -- fixed color
+        elseif category == "skipped_margin" then
+            return "\x1b[38;5;240m" -- fixed color
+        elseif category == "unimportant" then
+            return "\x1b[38;5;249m" -- fixed color
+        elseif category == "note" then
+            return "\x1b[38;5;115m" -- fixed color
+        else
+            return "\x1b[39m"       -- default
+        end
+    end
+
+    Config.default = setmetatable({
+        cross_gap = true,
+        label_attach = "middle",
+        compact = false,
+        underlines = true,
+        multiline_arrows = true,
+        color = default_color,
+        tab_width = 4,
+        char_set = Characters.unicode,
+        index_type = "char",
+    }, Config)
+
+    --- creates a new Config
+    ---@param options table
+    ---@return Config
+    function Config.new(options)
+        options = options or {}
+        for k, v in pairs(Config.default) do
+            if options[k] == nil then
+                options[k] = v
+            end
+        end
+        return setmetatable(options, Config)
+    end
+end
+
+--- @class (exact) Label
+--- @field new fun(start_pos: integer, end_pos?: integer, source_id?: string,
+---              message?: string, color?: Color, order?: integer, priority?: integer): Label
+--- @field start_pos  integer
+--- @field end_pos?   integer
+--- @field source_id? string
+--- @field message?   string
+--- @field color?     Color
+--- @field order      integer
+--- @field priority   integer
+local Label = class "Label"
+do
+    --- creates a new Label
+    ---@param start_pos integer start offset (bytes or chars)
+    ---@param end_pos? integer end offset (bytes or chars)
+    ---@param source_id? string source identifier
+    ---@param message? string label message
+    ---@param color? Color label color
+    ---@param order? integer label order
+    ---@param priority? integer label priority
+    ---@return Label
+    function Label.new(start_pos, end_pos, source_id, message, color, order, priority)
+        return setmetatable({
+            start_pos = start_pos,
+            end_pos = end_pos,
+            source_id = source_id,
+            message = message,
+            color = color,
+            order = order or 0,
+            priority = priority or 0,
+        }, Label)
+    end
+
+    --- returns the byte span of this label
+    ---@return integer
+    ---@return integer?
+    function Label:span()
+        return self.start_pos, self.end_pos
+    end
+
+    ---@param msg string
+    ---@return Label
+    function Label:with_message(msg)
+        self.message = msg
+        return self
+    end
+
+    ---@param color Color
+    ---@return Label
+    function Label:with_color(color)
+        self.color = color
+        return self
+    end
+
+    ---@param order integer
+    ---@return Label
+    function Label:with_order(order)
+        self.order = order
+        return self
+    end
+
+    ---@param priority integer
+    ---@return Label
+    function Label:with_priority(priority)
+        self.priority = priority
+        return self
+    end
+end
+
+---@class (exact) Writer
+---@field config Config
+---@field cur_color Color?
+---@field cur_color_code string?
+---@field new fun(config: Config): Writer
+---@field reset fun(self: Writer, s?: any): Writer
+---@field error fun(self: Writer, s?: any): Writer
+---@field warning fun(self: Writer, s?: any): Writer
+---@field kind fun(self: Writer, s?: any): Writer
+---@field margin fun(self: Writer, s?: any): Writer
+---@field skipped_margin fun(self: Writer, s?: any): Writer
+---@field unimportant fun(self: Writer, s?: any): Writer
+---@field note fun(self: Writer, s?: any): Writer
+---@field label fun(self: Writer, s?: any): Writer
+---@field tostring fun(self: Writer): string
+---@operator call(string): Writer
+local Writer = class "Write"
+do
+    --- creates a new Writer
+    ---@param config Config
+    ---@return Writer
+    function Writer.new(config)
+        return setmetatable({ config = config }, Writer)
+    end
+
+    ---@param s any
+    ---@return Writer
+    function Writer:__call(s)
+        self[#self + 1] = s
+        return self
+    end
+
+    ---@param color Color?
+    ---@return Writer
+    function Writer:use_color(color)
+        color = color or self.config.color
+        if self.cur_color_code and color ~= self.cur_color then
+            self:reset()
+        end
+        self.cur_color = color
+        return self
+    end
+
+    for _, category in ipairs {
+        "error",
+        "warning",
+        "kind",
+        "margin",
+        "skipped_margin",
+        "unimportant",
+        "note",
+        "label",
+        "default",
+    } do
+        ---@param self Writer
+        ---@param s any
+        ---@return Writer
+        Writer[category] = function(self, s)
+            local color = self.cur_color or self.config.color
+            if color then
+                local color_code = color(category)
+                if self.cur_color_code and self.cur_color_code ~= color_code then
+                    self[#self + 1] = color "reset"
+                end
+                if not self.cur_color_code or self.cur_color_code ~= color_code then
+                    self[#self + 1] = color_code
+                end
+                self.cur_color = color
+                self.cur_color_code = color_code
+            end
+            self[#self + 1] = s
+            return self
+        end
+    end
+
+    ---@param s any
+    ---@return Writer
+    function Writer:reset(s)
+        local color = self.cur_color or self.config.color
+        if color then
+            if self.cur_color_code then
+                self[#self + 1] = color "reset"
+            end
+            self.cur_color = nil
+            self.cur_color_code = nil
+        end
+        self[#self + 1] = s
+        return self
+    end
+
+    --- Adds padding to the writer
+    ---@param count integer
+    ---@param s any
+    ---@return Writer
+    function Writer:padding(count, s)
+        if count > 0 then
+            self[#self + 1] = (s or ' '):rep(count)
+        end
+        return self
+    end
+
+    --- Write s when not in compact mode
+    ---@param s any
+    ---@return Writer
+    function Writer:compact(s)
+        if not self.config.compact then
+            self[#self + 1] = s
+        end
+        return self
+    end
+
+    ---@param cur_color Color?
+    ---@param s any
+    ---@return Writer
+    function Writer:label_or_unimportant(cur_color, s)
+        if cur_color then
+            return self:use_color(cur_color):label(s)
+        end
+        return self:unimportant(s)
+    end
+
+    ---@return string
+    function Writer:tostring()
+        return table.concat(self)
+    end
+end
+
+--- @class (exact) Report
+--- @field build fun(kind: string, start_pos: integer,
+---                  end_pos?: integer, source_id?: string): Report
+--- @field kind string
+--- @field code? string
+--- @field message? string
+--- @field notes string[]
+--- @field help string[]
+--- @field start_pos integer
+--- @field end_pos? integer
+--- @field source_id? string
+--- @field labels Label[]
+--- @field config Config
+local Report = class "Report"
+do
+    --- creates a new Report
+    ---@param kind string
+    ---@param start_pos integer
+    ---@param end_pos? integer
+    ---@param source_id? string
+    ---@return Report
+    function Report.build(kind, start_pos, end_pos, source_id)
+        return setmetatable({
+            kind = kind,
+            code = nil,
+            message = nil,
+            notes = {},
+            help = {},
+            start_pos = start_pos,
+            end_pos = end_pos,
+            source_id = source_id,
+            labels = {},
+            config = Config.default,
+        }, Report)
+    end
+
+    ---@param code string
+    ---@return Report
+    function Report:with_code(code)
+        self.code = code
+        return self
+    end
+
+    ---@param message string
+    ---@return Report
+    function Report:set_message(message)
+        self.message = message
+        return self
+    end
+
+    ---@param note string
+    ---@return Report
+    function Report:add_note(note)
+        self.notes[#self.notes + 1] = note
+        return self
+    end
+
+    ---@param help string
+    ---@return Report
+    function Report:add_help(help)
+        self.help[#self.help + 1] = help
+        return self
+    end
+
+    ---@param label Label
+    ---@return Report
+    function Report:add_label(label)
+        self.labels[#self.labels + 1] = label
+        return self
+    end
+
+    ---@param config Config
+    ---@return Report
+    function Report:with_config(config)
+        self.config = config
+        return self
+    end
+end
+
+do -- report Rendering
+    ---@class LabelInfo
+    ---@field multi boolean
+    ---@field start_char integer
+    ---@field end_char? integer
+    ---@field label Label
+
+    ---@class SourceGroup
+    ---@field source_id string
+    ---@field start_char integer
+    ---@field end_char? integer
+    ---@field labels LabelInfo[]
+
+    --- @class LineLabel
+    --- @field col integer
+    --- @field info LabelInfo
+    --- @field draw_msg boolean
+
+    --- Group labels by their source
+    ---@param labels Label[]
+    ---@param cache Cache
+    ---@param index_type "byte" | "char"
+    ---@param source_id string
+    ---@return SourceGroup[]
+    local function get_source_groups(labels, cache, index_type, source_id)
+        ---@type SourceGroup[]
+        local groups = {}
+
+        for _, label in ipairs(labels) do
+            local src = assert(cache:fetch(label.source_id), "source not found")
+
+            -- find label line and character positions
+            local given_start, given_end = label:span()
+            ---@type integer, integer?, Line, Line
+            local label_start_char, label_end_char, start_line, end_line
+            if index_type == "char" then
+                start_line = assert(src[src:get_offset_line(given_start)],
+                    "label start position out of range")
+                label_start_char = given_start
+                if given_end and given_start <= given_end then
+                    end_line = assert(src[src:get_offset_line(given_end)])
+                    label_end_char = given_end
+                else
+                    end_line = start_line
+                end
+            else
+                local line_no = src:get_byte_line(given_start)
+                start_line = assert(src[line_no], "start byte offset out of range")
+                label_start_char = start_line.offset +
+                    assert(utf8.len(src.text, start_line.byte_offset, given_start - 1))
+                if given_end and given_start <= given_end then
+                    line_no = src:get_byte_line(given_end)
+                    end_line = assert(src[line_no], "end byte offset out of range")
+                    label_end_char = end_line.offset +
+                        assert(utf8.len(src.text, end_line.byte_offset, given_end)) - 1
+                else
+                    end_line = start_line
+                end
+            end
+
+            if label_start_char <= start_line.offset + start_line.len then
+                --- @type LabelInfo
+                local label_info = {
+                    multi = start_line ~= end_line,
+                    start_char = label_start_char,
+                    end_char = label_end_char,
+                    label = label,
+                }
+
+                local group = groups[label.source_id or source_id]
+                if not group then
+                    --- @type SourceGroup
+                    group = {
+                        source_id = label.source_id,
+                        start_char = label_start_char,
+                        end_char = label_end_char,
+                        labels = { label_info },
+                    }
+                    groups[#groups + 1] = group
+                    groups[label.source_id or source_id] = group
+                else
+                    if label_start_char < group.start_char then
+                        group.start_char = label_start_char
+                    end
+                    if label_end_char and (not group.end_char
+                            or label_end_char > group.end_char) then
+                        group.end_char = label_end_char
+                    end
+                    group.labels[#group.labels + 1] = label_info
+                end
+            end
+        end
+
+        return groups
+    end
+
+    --- Render the header for a report
+    ---@param W Writer
+    ---@param kind string
+    ---@param code string?
+    ---@param message string?
+    local function render_header(W, kind, code, message)
+        local lkind = kind:lower()
+        if lkind == "error" then
+            W:error()
+        elseif lkind == "warning" then
+            W:warning()
+        else
+            W:kind()
+        end
+        if code then
+            W "[" (code) "] "
+        end
+        W(kind) ":":reset " " (message) "\n"
+    end
+
+    --- Calculate the maximum width of line numbers in all source groups
+    ---@param cache Cache
+    ---@param groups SourceGroup[]
+    ---@return integer
+    local function calc_line_no_width(cache, groups)
+        local width = 0
+        for _, group in ipairs(groups) do
+            local src = assert(cache:fetch(group.source_id), "source not found")
+            local line_no = src:get_offset_line(group.end_char or group.start_char)
+                + src.display_line_offset
+            if line_no then
+                local cur_width, max_line_no = 1, 1
+                while cur_width * 10 <= line_no do
+                    cur_width, max_line_no = cur_width + 1, max_line_no * 10
+                end
+                if width < cur_width then
+                    width = cur_width
+                end
+            end
+        end
+        return width
+    end
+
+    --- Render the reference line for a source group
+    ---@param W Writer
+    ---@param report Report
+    ---@param line_no_width integer
+    ---@param group_idx integer
+    ---@param group SourceGroup
+    ---@param src Source
+    local function render_reference(W, report, line_no_width, group_idx, group, src)
+        local cfg = report.config
+        local draw = cfg.char_set
+
+        ---@type Line?, integer?, integer?
+        local line, line_no, col_no
+        if group.source_id == report.source_id then
+            if cfg.index_type == "byte" then
+                line_no = src:get_byte_line(report.start_pos)
+                line = assert(src[line_no], "byte offset out of range")
+                if line and report.start_pos <= line.byte_offset + line.byte_len - 1 then
+                    col_no = assert(utf8.len(src.text, line.byte_offset,
+                        report.start_pos - 1)) + 1
+                else
+                    line_no = nil
+                end
+            else
+                line_no = src:get_offset_line(report.start_pos)
+                line = src[line_no]
+                if line then
+                    col_no = report.start_pos - line.offset + 1
+                end
+            end
+        else
+            local start = group.labels[1].start_char
+            line_no = src:get_offset_line(start)
+            line = src[line_no]
+            if line then
+                col_no = start - line.offset + 1
+            end
+        end
+        local line_str, col_str
+        if not line_no then
+            line_str, col_str = "?", "?"
+        else
+            line_str = tostring(line_no + src.display_line_offset)
+            col_str = tostring(col_no)
+        end
+        W:padding(line_no_width + 2)
+        W:margin(group_idx == 1 and draw.ltop or draw.vbar)
+        W(draw.hbar)(draw.lbox):reset " "
+        W(src.id) ":" (line_str) ":" (col_str) " ":margin(draw.rbox):reset "\n"
+    end
+
+    ---@param group SourceGroup
+    ---@return LabelInfo[]
+    ---@return LabelInfo[]
+    local function collect_multi_labels(group)
+        ---@type LabelInfo[]
+        local multi_labels = {}
+        ---@type LabelInfo[]
+        local multi_labels_with_message = {}
+
+        for _, info in ipairs(group.labels) do
+            if info.multi then
+                multi_labels[#multi_labels + 1] = info
+                if info.label.message then
+                    multi_labels_with_message[#multi_labels_with_message + 1] = info
+                end
+            end
+        end
+
+        -- Sort labels by length
+        table.sort(multi_labels_with_message, function(a, b)
+            local alen = a.end_char - a.start_char + 1
+            local blen = b.end_char - b.start_char + 1
+            return alen > blen
+        end)
+        return multi_labels, multi_labels_with_message
+    end
+
+    --- Get the margin label for a line.
+    ---
+    --- Which is the most significant multiline label on this line.
+    --- It's the multiline label with the minimum column (start or end),
+    --- if columns are equal, the one with the maximum start position is chosen.
+    ---@param line Line
+    ---@param multi_labels_with_message LabelInfo[]
+    ---@return LineLabel?
+    local function get_margin_label(line, multi_labels_with_message)
+        ---@type integer?, LabelInfo?, boolean?
+        local col, info, draw_msg
+        for i, cur_info in ipairs(multi_labels_with_message) do
+            local cur_col, cur_draw_msg
+            if line:span_contains(cur_info.start_char) then
+                cur_col = cur_info.start_char - line.offset + 1
+                cur_draw_msg = false
+            elseif cur_info.end_char and line:span_contains(cur_info.end_char) then
+                cur_col = cur_info.end_char - line.offset + 1
+                cur_draw_msg = true
+            end
+            -- find the minimum column or maximum start pos if columns are equal
+            -- label as the margin label
+            if cur_col and (not col or not info or cur_col < col or (cur_col == col
+                    and cur_info.start_char > info.start_char)) then
+                col, info, draw_msg = cur_col, cur_info, cur_draw_msg
+            end
+        end
+        if not col then return nil end
+        return { col = col, info = info, draw_msg = draw_msg }
+    end
+
+    --- Collect multiline labels for a specific line
+    ---@param line_labels LineLabel[]
+    ---@param line Line
+    ---@param margin_label LineLabel?
+    ---@param multi_labels_with_message LabelInfo[]
+    local function collect_multi_labels_in_line(line_labels, line,
+                                                margin_label, multi_labels_with_message)
+        for i, info in ipairs(multi_labels_with_message) do
+            local col, draw_msg
+            if line:span_contains(info.start_char)
+                and (not margin_label or info ~= margin_label.info)
+            then
+                line_labels[#line_labels + 1] = {
+                    col = info.start_char - line.offset + 1,
+                    info = info,
+                    draw_msg = false,
+                }
+            elseif info.end_char and line:span_contains(info.end_char) then
+                line_labels[#line_labels + 1] = {
+                    col = info.end_char - line.offset + 1,
+                    info = info,
+                    draw_msg = true,
+                }
+            end
+        end
+    end
+
+    --- Collect inline labels for a specific line
+    ---@param line_labels LineLabel[]
+    ---@param line Line
+    ---@param group SourceGroup
+    ---@param label_attach "start" | "end" | "middle"
+    local function collect_labels_in_line(line_labels, line, group, label_attach)
+        local end_char = line.offset + line.len
+        for _, info in ipairs(group.labels) do
+            if not info.multi and info.start_char >= line.offset and
+                (info.end_char or info.start_char) <= end_char
+            then
+                local col = info.start_char
+                if label_attach == "end" then
+                    col = info.end_char or info.start_char
+                elseif label_attach == "middle" and info.end_char then
+                    col = (info.start_char + info.end_char + 1) // 2
+                end
+                line_labels[#line_labels + 1] = {
+                    col = col - line.offset + 1,
+                    info = info,
+                    draw_msg = true,
+                }
+            end
+        end
+    end
+
+    ---@param line_labels LineLabel[]
+    local function sort_line_labels(line_labels)
+        table.sort(line_labels, function(a, b)
+            if a.info.label.order ~= b.info.label.order then
+                return a.info.label.order < b.info.label.order
+            elseif a.col ~= b.col then
+                return a.col < b.col
+            end
+            return a.info.start_char > b.info.start_char
+        end)
+    end
+
+    --- Check if an offset is within any of the multiline labels
+    ---@param offset integer
+    ---@param multi_labels LabelInfo[]
+    ---@return boolean
+    local function is_within_label(offset, multi_labels)
+        for _, info in ipairs(multi_labels) do
+            if info.start_char < offset and info.end_char > offset then
+                return true
+            end
+        end
+        return false
+    end
+
+    --- Render the line number for a specific line
+    ---@param W Writer
+    ---@param line_no integer?
+    ---@param line_no_width integer
+    ---@param is_ellipsis boolean
+    ---@param cfg Config
+    local function render_lineno(W, line_no, line_no_width, is_ellipsis, cfg)
+        local draw = cfg.char_set
+        if line_no and not is_ellipsis then
+            local line_no_str = tostring(line_no)
+            W " ":padding(line_no_width - #line_no_str)
+            W:margin(line_no_str) " " (draw.vbar):reset()
+        else
+            W " ":padding(line_no_width + 1)
+            if is_ellipsis then
+                W:skipped_margin(draw.vbar_gap)
+            else
+                W:skipped_margin(draw.vbar)
+            end
+        end
+        if not cfg.compact then
+            W " "
+        end
+    end
+
+    --- Render the margin arrows for a specific line
+    ---@param W Writer
+    ---@param is_line boolean
+    ---@param is_ellipsis boolean
+    ---@param line Line
+    ---@param report_row? LineLabel
+    ---@param report_row_is_arrow boolean
+    ---@param line_labels? LineLabel[]
+    ---@param margin_label? LineLabel
+    ---@param multi_labels_with_message LabelInfo[]
+    ---@param cfg Config
+    local function render_margin(W, is_line, is_ellipsis, line,
+                                 report_row, report_row_is_arrow, line_labels,
+                                 margin_label, multi_labels_with_message, cfg)
+        if #multi_labels_with_message == 0 then
+            return
+        end
+
+        local draw = cfg.char_set
+        local end_char = line.offset + line.len - 1
+
+        ---@type LabelInfo?, LabelInfo?
+        local hbar, margin_ptr
+        local margin_ptr_is_start = false
+
+        for _, info in ipairs(multi_labels_with_message) do
+            ---@type LabelInfo?, LabelInfo?
+            local vbar, corner
+
+            local is_start = line:span_contains(info.start_char)
+            if info.start_char <= end_char and info.end_char >= line.offset then
+                local is_margin = margin_label and info == margin_label.info
+                local is_end = line:span_contains(info.end_char)
+                if is_margin and is_line then
+                    margin_ptr, margin_ptr_is_start = info, is_start
+                elseif not is_start and (not is_end or is_line) then
+                    vbar = info
+                elseif report_row then
+                    if report_row.info == info then
+                        if not report_row_is_arrow and not is_start then
+                            vbar = info
+                        elseif is_margin then
+                            vbar = assert(margin_label).info
+                        end
+                        if report_row_is_arrow and (not is_margin or not is_start) then
+                            hbar, corner = info, info
+                        end
+                    else
+                        local report_row_is_before = 0
+                        for j, ll in ipairs(assert(line_labels)) do
+                            if ll.info == report_row.info then
+                                report_row_is_before = 2
+                            end
+                            if ll.info == info then
+                                if report_row_is_before == 2 then
+                                    report_row_is_before = 1
+                                end
+                                break
+                            end
+                        end
+                        if is_start ~= (report_row_is_before == 1) then
+                            vbar = info
+                        end
+                    end
+                end
+            end
+
+            if corner then
+                local a = is_start and draw.ltop or draw.lbot
+                W:use_color(corner.label.color):label(a):compact(draw.hbar)
+            elseif vbar and hbar and not cfg.cross_gap then
+                W:use_color(vbar.label.color):label(draw.xbar):compact(draw.hbar)
+            elseif hbar then
+                W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar)
+            elseif vbar then
+                local a = is_ellipsis and draw.vbar_gap or draw.vbar
+                W:use_color(vbar.label.color):label(a):compact ' '
+            elseif margin_ptr and is_line then
+                local a, b = draw.hbar, draw.hbar
+                if info and info == margin_ptr then
+                    a = margin_ptr_is_start and draw.ltop or draw.lcross
+                end
+                W:use_color(margin_ptr.label.color):label(a):compact(b)
+            else
+                W:reset(cfg.compact and ' ' or '  ')
+            end
+        end
+        if hbar then
+            W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar):reset()
+        elseif margin_ptr and is_line then
+            W:use_color(margin_ptr.label.color):label(draw.rarrow):compact ' ':reset()
+        else
+            W:reset(cfg.compact and ' ' or '  ')
+        end
+    end
+
+    --- Get the highest priority highlight for a offset
+    ---@param offset integer
+    ---@param margin_label? LineLabel
+    ---@param multi_labels LabelInfo[]
+    ---@param line_labels LineLabel[]
+    ---@return LabelInfo?
+    local function get_highlight(offset, margin_label, multi_labels, line_labels)
+        local result
+
+        local function update_result(info)
+            if offset < info.start_char or offset > info.end_char then return end
+            if not result then
+                result = info
+            end
+            if info.label.priority > result.label.priority then
+                result = info
+            elseif info.label.priority == result.label.priority then
+                local info_len = info.end_char - info.start_char + 1
+                local result_len = result.end_char - result.start_char + 1
+                if info_len < result_len then
+                    result = info
+                end
+            end
+        end
+
+        if margin_label then
+            update_result(margin_label.info)
+        end
+        for _, info in ipairs(multi_labels) do
+            update_result(info)
+        end
+        for _, ll in ipairs(line_labels) do
+            if ll.info.end_char then
+                update_result(ll.info)
+            end
+        end
+        return result
+    end
+
+    --- Find the character that should be drawn and the number of times it
+    --- should be drawn for each char
+    --- @param s string
+    --- @param byte_offset integer
+    --- @param col integer
+    --- @param cfg Config
+    --- @return integer repeat_count
+    --- @return integer codepoint
+    local function char_width(s, byte_offset, col, cfg)
+        local c = utf8.codepoint(s, utf8.offset(s, col, byte_offset))
+        if c == 9 then -- tab
+            return cfg.tab_width - ((col - 1) % cfg.tab_width), 32
+        elseif c == 32 then
+            return 1, 32
+        else
+            return utf8.width(c), c
+        end
+    end
+
+    --- Render a line with highlights
+    ---@param W Writer
+    ---@param line Line
+    ---@param margin_label LineLabel?
+    ---@param line_labels LineLabel[]
+    ---@param multi_labels LineLabel[]
+    ---@param src Source
+    ---@param cfg Config
+    local function render_line(W, line, margin_label, line_labels, multi_labels, src, cfg)
+        --- @type Color?
+        local cur_color
+        local cur_offset, cur_byte_offset = 1, line.byte_offset
+        for i = 1, line.len do
+            local highlight = get_highlight(
+                line.offset + i - 1,
+                margin_label,
+                multi_labels,
+                line_labels
+            )
+            local next_color = highlight and highlight.label.color
+            local repeat_count, cp = char_width(src.text, line.byte_offset, i, cfg)
+            if cur_color ~= next_color or (cp == 32 and repeat_count > 1) then
+                local next_start_bytes = assert(utf8.offset(
+                    src.text, i - cur_offset + 1, cur_byte_offset))
+                if i > cur_offset then
+                    W:label_or_unimportant(cur_color, (src.text:sub(
+                        cur_byte_offset, next_start_bytes - 1
+                    ):gsub("\t", ""))):reset()
+                end
+                if cp == 32 and repeat_count > 1 then
+                    W:label_or_unimportant(next_color, (" "):rep(repeat_count))
+                end
+                cur_color = next_color
+                cur_offset = i
+                cur_byte_offset = next_start_bytes
+            end
+        end
+        W:label_or_unimportant(cur_color, (src.text:sub(
+            cur_byte_offset, line.byte_offset + line.byte_len - 1
+        ):gsub("\t", ""))):reset()
+    end
+
+    --- Should we draw a vertical bar as part of a label arrow on this line?
+    ---@param col integer
+    ---@param row integer
+    ---@param margin_label LineLabel?
+    ---@param line_labels LineLabel[]
+    ---@return LineLabel?
+    local function get_vbar(col, row, margin_label, line_labels)
+        for i, ll in ipairs(line_labels) do
+            if ll.info.label.message and
+                (not margin_label or margin_label.info ~= ll.info)
+            then
+                if ll.col == col and row <= i then
+                    return ll
+                end
+            end
+        end
+    end
+
+    --- Should we draw an underline as part of a label arrow on this line?
+    ---@param col integer
+    ---@param line_labels LineLabel[]
+    ---@param line Line
+    ---@param cfg Config
+    ---@return LineLabel?
+    local function get_underline(col, line_labels, line, cfg)
+        if not cfg.underlines then
+            return nil
+        end
+        local offset = line.offset + col - 1
+        ---@type LineLabel?
+        local result
+        for i, ll in ipairs(line_labels) do
+            if not ll.info.multi and
+                ll.info.start_char <= offset and
+                (ll.info.end_char and offset <= ll.info.end_char)
+            then
+                if not result then
+                    result = ll
+                elseif ll.info.label.priority > result.info.label.priority then
+                    result = ll
+                elseif ll.info.label.priority == result.info.label.priority then
+                    local ll_len = ll.info.end_char - ll.info.start_char + 1
+                    local res_len = result.info.end_char - result.info.start_char + 1
+                    if ll_len < res_len then
+                        result = ll
+                    end
+                end
+            end
+        end
+        return result
+    end
+
+    --- Calculate the maximum arrow line length for a specific line
+    ---@param line Line
+    ---@param line_labels LineLabel[]
+    ---@param compact boolean
+    ---@return integer
+    local function calc_arrow_len(line, line_labels, compact)
+        local arrow_end_space = compact and 1 or 2
+        local arrow_len = 0
+        for l, ll in ipairs(line_labels) do
+            if ll.info.multi then
+                arrow_len = line.len + (line.newline and 1 or 0)
+            else
+                local cur = (ll.info.end_char or ll.info.start_char - 1) - line.offset + 1
+                if arrow_len < cur then
+                    arrow_len = cur
+                end
+            end
+        end
+        return arrow_len + arrow_end_space
+    end
+
+    --- Render arrows for a line
+    ---@param W Writer
+    ---@param line_no_width integer
+    ---@param line Line
+    ---@param is_ellipsis boolean
+    ---@param line_labels LineLabel[]
+    ---@param margin_label LineLabel?
+    ---@param multi_labels_with_message LineLabel[]
+    ---@param src Source
+    ---@param cfg Config
+    local function render_arrows(W, line_no_width, line, is_ellipsis,
+                                 line_labels, margin_label,
+                                 multi_labels_with_message, src, cfg)
+        local draw = cfg.char_set
+
+        -- Determine label bounds so we know where to put error messages
+        local arrow_len = calc_arrow_len(line, line_labels, cfg.compact)
+
+        -- Arrows
+        for row, ll in ipairs(line_labels) do
+            -- No message to draw thus no arrow to draw
+            if ll.info.label.message then
+                if not cfg.compact then
+                    -- Margin alternate
+                    render_lineno(W, nil, line_no_width, is_ellipsis, cfg)
+                    render_margin(W, false, is_ellipsis, line, ll, false, line_labels,
+                        margin_label, multi_labels_with_message, cfg)
+                    for col = 1, arrow_len do
+                        local width = 1
+                        if col <= line.len then
+                            width = char_width(src.text, line.byte_offset, col, cfg)
+                        end
+                        local vbar = get_vbar(col, row, margin_label, line_labels)
+                        local underline
+                        if row == 1 then
+                            underline = get_underline(col, line_labels, line, cfg)
+                        end
+                        if vbar and underline then
+                            -- temporaroyly disable features here
+                            local vbar_len = vbar.info.end_char
+                                and (vbar.info.end_char - vbar.info.start_char + 1)
+                                or 0
+                            local a = draw.underbar
+                            if vbar_len <= 1 or true then
+                                a = draw.underbar
+                            elseif line.offset + col - 1 == vbar.info.start_char then
+                                a = draw.ltop
+                            elseif line.offset + col - 1 == vbar.info.end_char then
+                                a = draw.rtop
+                            end
+                            W:use_color(vbar.info.label.color):label(a)
+                            W:padding(width - 1, draw.underline)
+                        elseif vbar then
+                            local a = draw.vbar
+                            if vbar.info.multi and row == 1 and cfg.multiline_arrows then
+                                a = draw.uarrow
+                            end
+                            W:use_color(vbar.info.label.color):label(a):reset()
+                            W:padding(width - 1)
+                        elseif underline then
+                            W:use_color(underline.info.label.color)
+                            W:label():padding(width, draw.underline)
+                        else
+                            W:reset():padding(width)
+                        end
+                    end
+                    W:reset "\n"
+                end
+
+                -- Margin
+                render_lineno(W, nil, line_no_width, is_ellipsis, cfg)
+                render_margin(W, false, is_ellipsis, line, ll, true, line_labels,
+                    margin_label, multi_labels_with_message, cfg)
+
+                -- Lines
+                for col = 1, arrow_len do
+                    local width = 1
+                    if col <= line.len then
+                        width = char_width(src.text, line.byte_offset, col, cfg)
+                    end
+                    local is_hbar = (col > ll.col) ~= ll.info.multi or
+                        ll.draw_msg and col > ll.col
+                    local vbar = get_vbar(col, row, margin_label, line_labels)
+                    if col == ll.col and (not margin_label or margin_label.info ~= ll.info) then
+                        local a = draw.rbot
+                        if not ll.info.multi then
+                            a = draw.lbot
+                        elseif ll.draw_msg then
+                            a = draw.mbot
+                        end
+                        W:use_color(ll.info.label.color):label(a):padding(width - 1, draw.hbar)
+                    elseif vbar and col ~= ll.col then
+                        local a, b = draw.vbar, ' '
+                        if not cfg.cross_gap and is_hbar then
+                            a = draw.xbar
+                        elseif is_hbar then
+                            a, b = draw.hbar, draw.hbar
+                        elseif vbar.info.multi and row == 1 and cfg.compact then
+                            a = draw.uarrow
+                        end
+                        W:use_color(vbar.info.label.color):label(a):padding(width - 1, b)
+                    elseif is_hbar then
+                        W:use_color(ll.info.label.color):label():padding(width, draw.hbar)
+                    else
+                        W:reset():padding(width)
+                    end
+                end
+                W:reset()
+                if ll.draw_msg then
+                    W " " (ll.info.label.message)
+                end
+                W "\n"
+            end
+        end
+    end
+
+    --- Render notes or help items
+    ---@param W Writer
+    ---@param prefix string
+    ---@param items string[]
+    ---@param line_no_width integer
+    ---@param cfg Config
+    local function render_help_or_node(W, prefix, items, line_no_width, cfg)
+        for i, item in ipairs(items) do
+            if not cfg.compact then
+                render_lineno(W, nil, line_no_width, false, cfg)
+                W "\n"
+            end
+            local item_prefix = #items > 1 and ("%s %d"):format(prefix, i) or prefix
+            local item_prefix_len
+            for line in item:gmatch "([^\n]*)\n?" do
+                render_lineno(W, nil, line_no_width, false, cfg)
+                if not item_prefix_len then
+                    W:note(item_prefix) ": " (line) "\n"
+                    item_prefix_len = #item_prefix + 2
+                else
+                    W:padding(item_prefix_len)(line) "\n"
+                end
+            end
+        end
+    end
+
+    --- render the report
+    ---@param cache Cache | Source
+    ---@return string
+    function Report:render(cache)
+        local cfg = self.config
+        local draw = cfg.char_set
+        local groups = get_source_groups(self.labels, cache, cfg.index_type,
+            self.source_id or "<unknown>")
+        local W = Writer.new(cfg)
+
+        render_header(W, self.kind, self.code, self.message)
+
+        -- line number maximum width
+        local line_no_width = calc_line_no_width(cache, groups)
+
+        -- source sections
+        for group_idx, group in ipairs(groups) do
+            local src = assert(cache:fetch(group.source_id), "source not found")
+
+            -- Render reference line
+            render_reference(W, self, line_no_width, group_idx, group, src)
+            if not cfg.compact then
+                W:padding(line_no_width + 2):margin(draw.vbar):reset "\n"
+            end
+
+            -- Generate lists of multiline labels
+            local multi_labels, multi_labels_with_message =
+                collect_multi_labels(group)
+
+            local is_ellipsis = false
+            local line_start = src:get_offset_line(group.start_char)
+            local line_end = line_start
+            if group.end_char then
+                line_end = src:get_offset_line(group.end_char)
+            end
+            for idx = line_start, line_end do
+                local line = assert(src[idx], "group line out of range")
+                local margin_label = get_margin_label(line, multi_labels_with_message)
+
+                -- Generate a list of labels for this line, along with their label columns
+                ---@type LineLabel[]
+                local line_labels = {}
+                collect_multi_labels_in_line(line_labels, line, margin_label,
+                    multi_labels_with_message)
+                collect_labels_in_line(line_labels, line, group, cfg.label_attach)
+                sort_line_labels(line_labels)
+
+                local draw_line = false
+                if #line_labels > 0 or margin_label then
+                    is_ellipsis, draw_line = false, true
+                elseif not is_ellipsis and is_within_label(line.offset, multi_labels) then
+                    is_ellipsis, draw_line = true, true
+                else
+                    -- Skip this line if we don't have labels for it
+                    if not self.config.compact and not is_ellipsis then
+                        render_lineno(W, nil, line_no_width, is_ellipsis, cfg)
+                        W "\n"
+                    end
+                    is_ellipsis, draw_line = true, false
+                end
+                if draw_line then
+                    render_lineno(W, idx + src.display_line_offset,
+                        line_no_width, is_ellipsis, cfg)
+                    render_margin(W, true, is_ellipsis, line, nil, false, nil,
+                        margin_label, multi_labels_with_message, cfg)
+                    if not is_ellipsis then
+                        render_line(W, line, margin_label, line_labels,
+                            multi_labels, src, cfg)
+                    end
+                    W "\n"
+
+                    render_arrows(W, line_no_width, line, is_ellipsis,
+                        line_labels, margin_label, multi_labels_with_message,
+                        src, cfg)
+                end
+            end
+
+            -- Tail of report
+            if not self.config.compact and group_idx < #groups then
+                W:padding(line_no_width + 2):margin(draw.vbar):reset "\n"
+            end
+        end
+
+        render_help_or_node(W, "Help", self.help, line_no_width, self.config)
+        render_help_or_node(W, "Note", self.notes, line_no_width, self.config)
+        if #groups > 0 and not self.config.compact then
+            W:margin():padding(line_no_width + 2, draw.hbar)(draw.rbot):reset "\n"
+        end
+        return W:tostring()
+    end
+end
+
+---@class (exact) Ariadne
+return {
+    Source = Source,
+    ColorGenerator = ColorGenerator,
+    Characters = Characters,
+    Config = Config,
+    Label = Label,
+    Report = Report,
 }
-
-ariadne.ascii = {
-	hbar = "-",
-	vbar = "|",
-	xbar = "+",
-	vbar_break = "*",
-	vbar_gap = ":",
-	uarrow = "^",
-	rarrow = ">",
-	ltop = ",",
-	mtop = "v",
-	rtop = ".",
-	lbot = "`",
-	rbot = "'",
-	mbot = "^",
-	lbox = "[",
-	rbox = "]",
-	lcross = "|",
-	rcross = "|",
-	underbar = "|",
-	underline = "^",
-}
-
---[[
-Config implementation
-]]
-
-local DEFAULT_CONFIG = {
-	cross_gap = true,
-	label_attach = "middle",
-	compact = false,
-	underlines = true,
-	multiline_arrows = true,
-	color = true,
-	tab_width = 4,
-	char_set = ariadne.unicode,
-	index_type = "char",
-}
-
-local function get_attach(config)
-	local value = config.label_attach
-	assert(value == "start" or value == "middle" or value == "end", "label_attach must be start, middle, or end")
-	return value
-end
-
-local function get_index_type(config)
-	local value = config.index_type
-	assert(value == "byte" or value == "char", "index_type must be byte or char")
-	return value
-end
-
--- make_config builds a config instance seeded from defaults or an existing snapshot.
-local function make_config(base)
-	local t = base or {}
-	for k, v in pairs(DEFAULT_CONFIG) do
-		if t[k] == nil then
-			t[k] = v
-		end
-	end
-	return t
-end
-
---[[
-Source representation
-]]
-
-local Source = {}
-Source.__index = Source
-
--- compute_lines tokenises the original text into line records with byte/char metadata.
-local function compute_lines(text)
-	if text == "" then
-		return {
-			{
-				offset = 1,
-				char_len = 0,
-				byte_offset = 0,
-				byte_len = 0,
-				text = "",
-				has_utf8 = false,
-			},
-		}
-	end
-
-	local lines = {}
-	local total_chars = 0
-	local total_bytes = 1
-	local start_byte = 1
-	local length = #text
-
-	while start_byte <= length do
-		local newline_pos = text:find("\n", start_byte, true)
-		local end_byte
-		if newline_pos then
-			end_byte = newline_pos
-		else
-			end_byte = length
-		end
-
-		local line_text = text:sub(start_byte, end_byte)
-		local char_len = utf8.len(line_text)
-		local byte_len = #line_text
-
-		lines[#lines + 1] = {
-			offset = total_chars + 1,
-			char_len = char_len,
-			byte_offset = total_bytes,
-			byte_len = byte_len,
-			text = line_text,
-			has_utf8 = not line_text:find("^[\0-\x7f]*$"),
-		}
-
-		total_chars = total_chars + char_len
-		total_bytes = total_bytes + byte_len
-
-		if newline_pos then
-			start_byte = newline_pos + 1
-		else
-			break
-		end
-	end
-
-	return lines
-end
-
-local function new_source(text, name)
-	local lines = compute_lines(text)
-	local total_characters = 0
-	local total_bytes = 0
-	if #lines > 0 then
-		local last = lines[#lines]
-		total_characters = last.offset + last.char_len
-		total_bytes = last.byte_offset + last.byte_len
-	end
-
-	return setmetatable({
-		name = name,
-		text = text,
-		lines = lines,
-		char_len = total_characters,
-		byte_len = total_bytes,
-		display_line_offset = 0,
-	}, Source)
-end
-
--- with_display_line_offset enables external callers to shift the printed line numbers.
-function Source:with_display_line_offset(offset)
-	self.display_line_offset = offset
-	return self
-end
-
--- line retrieves the raw line record at a 1-based index.
-function Source:line(index)
-	return self.lines[index]
-end
-
--- get_line_text unwraps the line struct to expose the stored text.
-function Source:get_line_text(line)
-	local _ = self
-	return line.text
-end
-
--- binary_search locates the greatest line index whose key is <= target.
-local function binary_search(lines, target, key)
-	local l, u = 1, #lines
-	while l <= u do
-		local mid = l + (u - l + 1) // 2
-		if lines[mid][key] <= target then
-			l = mid + 1
-		else
-			u = mid - 1
-		end
-	end
-	return l - 1
-end
-
--- line_index_for_offset finds the line containing the char offset (1-based).
-function Source:line_index_for_offset(offset)
-	if offset <= 0 then return 0 end
-	return binary_search(self.lines, offset, "offset")
-end
-
--- line_index_for_byte finds the line containing the byte offset (1-based).
-function Source:line_index_for_byte(byte_offset)
-	if byte_offset <= 0 then return 0 end
-	return binary_search(self.lines, byte_offset, "byte_offset")
-end
-
--- get_offset_line returns the line record, index, and relative char column.
-function Source:get_offset_line(offset)
-	if offset > self.char_len + 1 then return nil end
-	local idx = self:line_index_for_offset(offset)
-	local line = self.lines[idx]
-	if not line then return nil end
-	return line, idx, offset - line.offset + 1
-end
-
--- char_count_for_prefix converts a byte prefix into a character length.
-local function char_count_for_prefix(line, byte_count)
-	if byte_count <= 0 then
-		return 0
-	end
-	if line.has_utf8 then
-		return utf8.len(line.text, 1, byte_count)
-	end
-	return byte_count
-end
-
--- split_at_column divides text into the prefix and suffix around the given char column.
-local function split_at_column(text, column)
-	if column <= 1 then
-		return "", text
-	end
-	local byte_index = utf8.offset(text, column)
-	if not byte_index then
-		return text, ""
-	end
-	return text:sub(1, byte_index - 1), text:sub(byte_index)
-end
-
--- get_byte_line returns the line record, index, and relative byte column for a byte offset.
-function Source:get_byte_line(byte_offset)
-	if byte_offset > self.byte_len then return nil end
-	local idx = self:line_index_for_byte(byte_offset)
-	local line = self.lines[idx]
-	if not line then return nil end
-	return line, idx, byte_offset - line.byte_offset + 1
-end
-
--- get_line_range converts an overall span into the first/last line indexes we must print.
-function Source:get_line_range(span)
-	local start_offset = span.start
-	local finish_offset = span.finish
-	if finish_offset < start_offset then
-		finish_offset = start_offset
-	end
-
-	local start_line = self:line_index_for_offset(start_offset)
-	local end_lookup = math.max(finish_offset - 1, start_offset)
-	local end_line = self:line_index_for_offset(end_lookup)
-
-	return { start = start_line, finish = end_line }
-end
-
---[[
-Span helpers
-]]
-
--- make_span normalises the provided start/finish positions into a table.
-local function make_span(start_pos, finish_pos)
-	assert(finish_pos >= start_pos-1, "span finish must be >= start-1")
-	return { start = start_pos, finish = finish_pos }
-end
-
--- span_length returns the non-negative length of the span.
-local function span_length(span)
-	return math.max(span.finish - span.start + 1, 0)
-end
-
--- span_last_offset gives the greatest in-range offset for inclusive comparisons.
-local function span_last_offset(span)
-	return span.start <= span.finish and span.finish or span.start
-end
-
---[[
-Label implementation
-]]
-
-local Label = {}
-Label.__index = Label
-
-local function new_label(start_pos, finish_pos)
-	return setmetatable({
-		span = make_span(start_pos, finish_pos),
-        display = {
-			message = nil,
-			color = nil,
-			order = 0,
-			priority = 0,
-		}
-	}, Label)
-end
-
-function Label:message(text)
-	self.display.message = text
-	return self
-end
-
-function Label:color(value)
-	self.display.color = value
-	return self
-end
-
-function Label:order(value)
-	self.display.order = value
-	return self
-end
-
-function Label:priority(value)
-	self.display.priority = value
-	return self
-end
-
---[[
-Report builder and report objects
-]]
-
-local ReportBuilder = {}
-ReportBuilder.__index = ReportBuilder
-
-local function new_report(kind, span_obj)
-	return setmetatable({
-		_state = {
-			kind = kind,
-			code = nil,
-			message = nil,
-			notes = {},
-			helps = {},
-			span = span_obj,
-			labels = {},
-			config = DEFAULT_CONFIG,
-		},
-	}, ReportBuilder)
-end
-
-function ReportBuilder:config(cfg)
-	self._state.config = cfg
-	return self
-end
-
-function ReportBuilder:message(text)
-	self._state.message = text
-	return self
-end
-
-function ReportBuilder:code(value)
-	self._state.code = value
-	return self
-end
-
-
-function ReportBuilder:label(label_obj)
-	local labels = self._state.labels
-	labels[#labels + 1] = label_obj
-	return self
-end
-
-function ReportBuilder:help(text)
-	local helps = self._state.helps
-	helps[#helps + 1] = text
-	return self
-end
-
-function ReportBuilder:note(text)
-	local notes = self._state.notes
-	notes[#notes + 1] = text
-	return self
-end
-
-function ReportBuilder:finish()
-	local state = self._state
-	local report = {
-		kind = state.kind,
-		code = state.code,
-		message = state.message,
-		notes = state.notes,
-		helps = state.helps,
-		span = state.span,
-		labels = state.labels,
-		config = state.config,
-	}
-
-	local Report = {}
-	Report.__index = Report
-
-	function Report.write_to_string(report_instance, source)
-		return ariadne.render(report_instance, source)
-	end
-
-	return setmetatable(report, Report)
-end
-
---[[
-Label grouping helpers
-]]
-
--- index_to_char_offset converts an incoming offset into a character offset for rendering.
-local function index_to_char_offset(source, config, offset)
-	if get_index_type(config) == "char" then
-		return offset
-	end
-	local line, _, byte_column = source:get_byte_line(offset)
-	if not line then
-		return offset
-	end
-	local chars_before = char_count_for_prefix(line, byte_column - 1)
-	return line.offset + chars_before
-end
-
--- index_range_to_char_span maps the incoming span into character offsets for rendering.
-local function index_range_to_char_span(source, config, span)
-	if get_index_type(config) == "char" then
-		local start_line, start_idx = source:get_offset_line(span.start)
-		if not start_line then return nil end
-		local char_start = span.start
-		local end_line, char_end
-		if span.start > span.finish then
-			end_line, char_end = start_idx, char_start-1
-		else
-			local _, end_idx = source:get_offset_line(span.finish)
-			if not end_idx then return nil end
-			end_line, char_end = end_idx, span.finish
-		end
-		return {
-			start = char_start,
-			finish = char_end,
-			start_line = start_idx,
-			end_line = end_line,
-		}
-	end
-
-	local start_line, start_idx, start_byte_col = source:get_byte_line(span.start)
-	if not start_line then return nil end
-	local start_chars = char_count_for_prefix(start_line, start_byte_col - 1)
-	local char_start = start_line.offset + start_chars
-
-	local char_end, end_line_idx
-	if span.start > span.finish then
-        end_line_idx, char_end = start_idx, char_start-1
-	else
-		local end_pos = span.finish
-		local end_line, end_idx, end_byte_col = source:get_byte_line(end_pos)
-		if not end_line then return nil end
-		local chars_until_end = char_count_for_prefix(end_line, end_byte_col)
-		char_end, end_line_idx = end_line.offset + chars_until_end - 1, end_idx
-	end
-
-	return {
-		start = char_start,
-		finish = char_end,
-		start_line = start_idx,
-		end_line = end_line_idx,
-	}
-end
-
--- make_label_info decorates a label with computed span metadata for rendering.
-local function make_label_info(label, char_span)
-	local kind = "multiline"
-	if char_span.start_line == char_span.end_line then
-		kind = "inline"
-	end
-	return {
-		kind = kind,
-		char_span = make_span(char_span.start, char_span.finish),
-		display = label.display,
-		start_line = char_span.start_line,
-		end_line = char_span.end_line,
-	}
-end
-
--- label_last_offset proxies span_last_offset for readability downstream.
-local function label_last_offset(info)
-	return span_last_offset(info.char_span)
-end
-
--- compute_source_groups collates labels per source so we can render each section once.
-local function compute_source_groups(report, source)
-	local groups = {}
-	if #report.labels == 0 then
-		return groups
-	end
-
-	local group = {
-		source = source,
-		char_span = { start = nil, finish = nil },
-		labels = {},
-	}
-
-	for _, label in ipairs(report.labels) do
-		local char_span = index_range_to_char_span(source, report.config, label.span)
-		if char_span then
-			local group_span = group.char_span
-			local start = group_span.start
-			if not start or start > char_span.start then
-				group_span.start = char_span.start
-			end
-			local finish = group_span.finish
-			if not finish or finish < char_span.finish then
-				group_span.finish = char_span.finish
-			end
-			group.labels[#group.labels + 1] = make_label_info(label, char_span)
-		end
-	end
-
-	if group.char_span.start == nil then
-		return {}
-	end
-
-	groups[#groups + 1] = group
-	return groups
-end
-
---[[
-Rendering helpers
-]]
-
--- format_code adds surrounding brackets when a report code is present.
-local function format_code(code)
-	if not code then
-		return ""
-	end
-	return string.format("[%s] ", code)
-end
-
--- make_location formats the span start into user-facing line/column strings.
-local function make_location(source, config, span)
-	local offset = span.start
-	local reference = index_to_char_offset(source, config, offset)
-	local line, idx, column = source:get_offset_line(reference)
-	if not line then
-		return {
-			line = "?",
-			column = "?",
-		}
-	end
-	return {
-		line = tostring((idx or 1) + source.display_line_offset),
-		column = tostring(column or 1),
-	}
-end
-
--- draw_margin emits the gutter prefix for a given line or spacer.
-local function draw_margin(b, config, line_no_width, line_index, bar)
-	b[#b+1] = " "
-	if line_index then
-		local line_no = tostring(line_index)
-		b[#b+1] = repeat_char(" ", line_no_width - #line_no)
-		b[#b+1] = line_no
-		b[#b+1] = " "
-	else
-		b[#b+1] = repeat_char(" ", line_no_width + 1)
-	end
-	b[#b+1] =  bar
-
-	if not config.compact then
-		b[#b+1] = " "
-	end
-end
-
--- render_report assembles the formatted diagnostic into a single string buffer by walking
--- each source group, drawing the margin, inline highlights, arrow lines, and trailing
--- help/note sections. It mirrors the Rust formatter closely so we can diff behaviour.
--- render_report mirrors ariadne's Rust formatter so snapshot comparisons line up.
-local function render_report(report, source)
-	local config = report.config
-	local draw = config.char_set
-
-	-- Stage labels by source file; Rust keeps identical structure for deterministic output.
-	local groups = compute_source_groups(report, source)
-
-	local buffer = {}
-	buffer[#buffer + 1] = format_code(report.code)
-	buffer[#buffer + 1] = report.kind
-	buffer[#buffer + 1] = ": "
-	buffer[#buffer + 1] = report.message or ""
-	buffer[#buffer + 1] = "\n"
-
-	if #groups == 0 then
-		return table.concat(buffer)
-	end
-
-	local line_no_width = 0
-	for _, group in ipairs(groups) do
-		local range = source:get_line_range(group.char_span)
-		group.line_range = range
-		group.source_name = source.name or "<unknown>"
-		group.primary_location = make_location(source, config, report.span)
-		line_no_width = math.max(line_no_width, digits(range.finish + source.display_line_offset))
-	end
-
-	for group_index, group in ipairs(groups) do
-		local range = group.line_range
-		local prefix = repeat_char(" ", line_no_width + 2)
-		buffer[#buffer + 1] = prefix
-		buffer[#buffer + 1] = group_index == 1 and draw.ltop or draw.lcross
-		buffer[#buffer + 1] = draw.hbar
-		buffer[#buffer + 1] = draw.lbox
-		buffer[#buffer + 1] = string.format(" %s:%s:%s ", group.source_name, group.primary_location.line, group.primary_location.column)
-		buffer[#buffer + 1] = draw.rbox
-		buffer[#buffer + 1] = "\n"
-
-		if not config.compact then
-			buffer[#buffer + 1] = prefix
-			buffer[#buffer + 1] = draw.vbar
-			buffer[#buffer + 1] = "\n"
-		end
-
-		-- multi_labels hold every span that stretches over multiple lines so we can render gutter guides.
-		local multi_labels = {}
-		local multi_with_message = {}
-
-		for _, label in ipairs(group.labels) do
-			if label.kind == "multiline" then
-				multi_labels[#multi_labels + 1] = label
-				if label.display.message then
-					multi_with_message[#multi_with_message + 1] = label
-				end
-			end
-		end
-
-		table.sort(multi_labels, function(a, b)
-			return span_length(a.char_span) > span_length(b.char_span)
-		end)
-
-		table.sort(multi_with_message, function(a, b)
-			return span_length(a.char_span) > span_length(b.char_span)
-		end)
-
-		local is_ellipsis = false
-
-		for line_index = range.start, range.finish do
-			local line = source:line(line_index)
-			if not line then
-				goto continue_line
-			end
-
-			local line_text = trim_end(source:get_line_text(line))
-
-			-- Collect inline spans and multi-span endpoints that touch this line.
-			local line_labels = {}
-
-			for _, label in ipairs(group.labels) do
-				if label.kind == "inline" and line_index == label.start_line then
-					local attach
-					local config_attach = get_attach(config)
-					if config_attach == "start" then
-						attach = label.char_span.start
-					elseif config_attach == "end" then
-						attach = label_last_offset(label)
-					else
-						attach = (label.char_span.start + label.char_span.finish + 1) // 2
-					end
-					line_labels[#line_labels + 1] = {
-						col = attach - line.offset + 1,
-						label = label,
-						multi = false,
-						draw_message = true,
-					}
-				end
-			end
-
-			for _, label in ipairs(multi_with_message) do
-				local is_start = line_index == label.start_line
-				local is_end = line_index == label.end_line
-				if is_start or is_end then
-					local col
-					if is_start then
-						col = label.char_span.start - line.offset + 1
-					else
-						col = math.max(label.char_span.start - line.offset + 1, 1)
-					end
-					line_labels[#line_labels + 1] = {
-						col = col,
-						label = label,
-						multi = true,
-						draw_message = is_end,
-					}
-				end
-			end
-
-			if #line_labels == 0 then
-				local within_multiline = false
-				for _, label in ipairs(multi_labels) do
-					if line_index > label.start_line and line_index < label.end_line then
-						within_multiline = true
-						break
-					end
-				end
-				if within_multiline then
-					-- Rust prints ':' rows between multi-line label edges when interior lines are omitted.
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar_gap)
-					buffer[#buffer + 1] = ":\n"
-					is_ellipsis = true
-					goto continue_line
-				end
-				if not config.compact and not is_ellipsis then
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					buffer[#buffer + 1] = "\n"
-				end
-				is_ellipsis = true
-				goto continue_line
-			end
-
-			is_ellipsis = false
-
-			table.sort(line_labels, function(a, b)
-				if a.label.display.order ~= b.label.display.order then
-					return a.label.display.order < b.label.display.order
-				end
-				if a.col ~= b.col then
-					return a.col < b.col
-				end
-				return span_length(a.label.char_span) < span_length(b.label.char_span)
-			end)
-
-			-- pointer_data mirrors Rust's "LineLabel" margin pointer that precedes multi-line arrows.
-			local pointer_data
-			for _, ll in ipairs(line_labels) do
-				if ll.multi then
-					local col = math.max(ll.col, 1)
-					pointer_data = {
-						col = col,
-						-- Matches Rust's glyph selection: use vertical pipe for end rows, elbow for starts.
-						arrow = (ll.draw_message and draw.vbar or draw.ltop) .. draw.hbar .. draw.rarrow .. " ",
-					}
-					break
-				end
-			end
-
-			local display_line_no = line_index + source.display_line_offset
-			draw_margin(buffer, config, line_no_width, display_line_no, draw.vbar)
-
-			local text_row = line_text
-			if pointer_data then
-				-- Insert the multi-line pointer arrow into the rendered text, padding to the insertion column.
-				local col = pointer_data.col
-				local text_prefix, suffix = split_at_column(line_text, col)
-				local prefix_len = utf8.len(text_prefix)
-				if prefix_len < col-1 then
-					text_prefix = text_prefix .. repeat_char(" ", col - prefix_len)
-				end
-				text_row = text_prefix .. pointer_data.arrow .. suffix
-			end
-
-			buffer[#buffer + 1] = text_row
-			buffer[#buffer + 1] = "\n"
-			local rendered_line_width = utf8.len(text_row)
-			-- arrow_labels filters to spans that actually emit arrow messages on this line.
-			local arrow_labels = {}
-			for _, line_label in ipairs(line_labels) do
-				if line_label.label.display.message and (not line_label.multi or line_label.draw_message) then
-					arrow_labels[#arrow_labels + 1] = line_label
-				end
-			end
-
-			-- Track the highest-priority highlight per column so multiple inline labels can overlap.
-			if not config.compact then
-				local highlight_meta = {}
-				local function better_highlight(existing, candidate)
-					if not existing then
-						return true
-					end
-					if candidate.priority ~= existing.priority then
-						return candidate.priority > existing.priority
-					end
-					return candidate.span_len < existing.span_len
-				end
-
-				for _, line_label in ipairs(line_labels) do
-					local display = line_label.label.display
-					if not display.message then
-						goto continue_label_highlight
-					end
-					if line_label.multi then
-						goto continue_label_highlight
-					end
-					local span_start = math.max(line_label.label.char_span.start, line.offset)
-					local span_finish = math.min(line_label.label.char_span.finish, line.offset + line.char_len)
-					local start_col = math.max(span_start - line.offset + 1, 1)
-					local end_col = math.max(span_finish - line.offset + 1, start_col-1)
-					local candidate = {
-						priority = display.priority or 0,
-						span_len = span_length(line_label.label.char_span),
-					}
-					for col = start_col, end_col do
-						if col >= 1 then
-							if better_highlight(highlight_meta[col], candidate) then
-								candidate.cell = draw.underline
-								highlight_meta[col] = candidate
-							end
-						end
-					end
-					local attach_col = line_label.col
-					if attach_col >= 1 and attach_col <= line.char_len then
-						local attach_candidate = {
-							priority = candidate.priority,
-							span_len = 0,
-							cell = draw.underbar,
-						}
-						if better_highlight(highlight_meta[attach_col], attach_candidate) then
-							highlight_meta[attach_col] = attach_candidate
-						end
-					end
-					::continue_label_highlight::
-				end
-
-				local has_highlight = false
-				local highlight_chars = {}
-				for col = 1, line.char_len + 1 do
-					local ch = highlight_meta[col] and highlight_meta[col].cell or " "
-					highlight_chars[#highlight_chars + 1] = ch
-					if ch ~= " " then
-						has_highlight = true
-					end
-				end
-				if has_highlight then
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					for _, c in ipairs(highlight_chars) do
-						buffer[#buffer+1] = c
-					end
-					buffer[#buffer + 1] = "\n"
-				end
-			end
-
-			-- Rust reserves a trailing gap so text after the arrow stays readable.
-			local arrow_end_space = config.compact and 1 or 2
-			local arrow_span_width = 0
-			for _, ll in ipairs(line_labels) do
-				if ll.multi then
-					arrow_span_width = math.max(arrow_span_width, line.char_len)
-				else
-					local span_end = math.max(ll.label.char_span.finish - line.offset + 1, 0)
-					arrow_span_width = math.max(arrow_span_width, span_end)
-				end
-			end
-			local pointer_width = 0
-			if pointer_data then
-				-- Include the pointer glyph width
-				pointer_width = pointer_data.col + utf8.len(pointer_data.arrow) - 1
-			end
-			local effective_line_width = (pointer_data and rendered_line_width) or 0
-			local line_arrow_width = math.max(arrow_span_width, pointer_width, effective_line_width) + arrow_end_space
-
-			for arrow_index, line_label in ipairs(arrow_labels) do
-				-- Pre-arrow connector rows keep vertical guides alive above zero-length spans or pointer joins.
-				local span_len = span_length(line_label.label.char_span)
-				local needs_pre_connectors = not config.compact and (span_len == 0 or pointer_data ~= nil)
-				if needs_pre_connectors then
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					for col = 1, line_arrow_width do
-						local draw_connector = false
-						if pointer_data and col == pointer_data.col then
-							draw_connector = true
-						elseif span_len == 0 and col == line_label.col then
-							draw_connector = true
-						end
-						if draw_connector then
-							buffer[#buffer + 1] = draw.vbar
-							break
-						else
-							buffer[#buffer + 1] = " "
-						end
-					end
-					buffer[#buffer + 1] = "\n"
-				end
-
-				draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-
-				for col = 1, line_arrow_width do
-					if col == line_label.col then
-						buffer[#buffer + 1] = draw.lbot
-					elseif col > line_label.col then
-						buffer[#buffer + 1] = draw.hbar
-					else
-						local cell = " "
-						if pointer_data and col == pointer_data.col then
-							cell = draw.vbar
-						else
-							for pending = arrow_index + 1, #arrow_labels do
-								local pending_col = arrow_labels[pending].col
-								if pending_col >= 1 and pending_col == col then
-									cell = draw.vbar
-									break
-								end
-							end
-						end
-						buffer[#buffer + 1] = cell
-					end
-				end
-
-				if line_label.draw_message then
-					buffer[#buffer + 1] = " "
-					buffer[#buffer + 1] = line_label.label.display.message or nil
-				end
-				buffer[#buffer + 1] = "\n"
-
-				-- Post-arrow connectors ensure pending arrows line up in subsequent rows.
-				if not config.compact and arrow_index < #arrow_labels then
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					local connectors = {}
-					for col = 1, line_arrow_width do
-						local draw_connector = false
-						if pointer_data and col == pointer_data.col then
-							draw_connector = true
-						else
-							for pending = arrow_index + 1, #arrow_labels do
-								local pending_col = arrow_labels[pending].col
-								if pending_col >= 1 and pending_col == col then
-									draw_connector = true
-									break
-								end
-							end
-						end
-						if draw_connector then
-							connectors[#connectors + 1] = draw.vbar
-						else
-							connectors[#connectors + 1] = " "
-						end
-					end
-					buffer[#buffer + 1] = trim_end(table.concat(connectors))
-					buffer[#buffer + 1] = "\n"
-				end
-
-			end
-
-			::continue_line::
-		end
-
-		if group_index == #groups then
-			for help_index, help_text in ipairs(report.helps) do
-				-- Match Rust by inserting blank spacer rows when not compact.
-				if not config.compact then
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					buffer[#buffer + 1] = "\n"
-				end
-				local help_prefix = #report.helps > 1 and string.format("Help %d", help_index) or "Help"
-				local help_prefix_len = (#report.helps > 1) and #help_prefix or 4
-				local help_lines = split_lines(help_text)
-				for line_idx, line_text in ipairs(help_lines) do
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					local content
-					if line_idx == 1 then
-						content = string.format("%s: %s", help_prefix, line_text)
-					else
-						content = repeat_char(" ", help_prefix_len + 2) .. line_text
-					end
-					buffer[#buffer + 1] = content
-					buffer[#buffer + 1] = "\n"
-				end
-			end
-
-			for note_index, note_text in ipairs(report.notes) do
-				if not config.compact then
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					buffer[#buffer + 1] = "\n"
-				end
-				local note_prefix = #report.notes > 1 and string.format("Note %d", note_index) or "Note"
-				local note_prefix_len = (#report.notes > 1) and #note_prefix or 4
-				local note_lines = split_lines(note_text)
-				for line_idx, line_text in ipairs(note_lines) do
-					draw_margin(buffer, config, line_no_width, nil, draw.vbar)
-					local content
-					if line_idx == 1 then
-						content = string.format("%s: %s", note_prefix, line_text)
-					else
-						content = repeat_char(" ", note_prefix_len + 2) .. line_text
-					end
-					buffer[#buffer + 1] = content
-					buffer[#buffer + 1] = "\n"
-				end
-			end
-		end
-
-		if not config.compact then
-			buffer[#buffer + 1] = repeat_char(draw.hbar, line_no_width + 2)
-			buffer[#buffer + 1] = draw.rbot
-			buffer[#buffer + 1] = "\n"
-		end
-	end
-
-	return table.concat(buffer)
-end
-
---[[
-Public API
-]]
-
-function ariadne.config(base)
-	return make_config(base)
-end
-
-function ariadne.source(text, name)
-	return new_source(text, name)
-end
-
-function ariadne.span(start_pos, finish_pos)
-	return make_span(start_pos, finish_pos)
-end
-
-function ariadne.label(start_pos, finish_pos)
-	return new_label(start_pos, finish_pos)
-end
-
-function ariadne.report(kind, span_obj)
-	return new_report(kind, span_obj)
-end
-
-function ariadne.error(span_obj)
-    return new_report("Error", span_obj)
-end
-
-function ariadne.warning(span_obj)
-    return new_report("Warning", span_obj)
-end
-
-function ariadne.advice(span_obj)
-    return new_report("Advice", span_obj)
-end
-
-function ariadne.render(report, source)
-	return render_report(report, source)
-end
-
---[[
-Color generator placeholder (exposed for tests)
-]]
-
--- ColorGenerator mimics the deterministic color cycling used in the Rust implementation.
-local ColorGenerator = {}
-ColorGenerator.__index = ColorGenerator
-
-function ColorGenerator:next()
-	self.state = (self.state * 40503 + 1130) % 256
-	return self.state
-end
-
-function ariadne.color_generator()
-	return setmetatable({ state = 1 }, ColorGenerator)
-end
-
-return ariadne

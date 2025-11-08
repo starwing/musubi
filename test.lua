@@ -1,147 +1,195 @@
-local luaunit = require "luaunit"
-local _ = require "luacov"
-
+local lu = require "luaunit"
 local ariadne = require "ariadne"
 
-local function remove_trailing(text)
-	local out = {}
-	local start = 1
+local TestSource = {} do
+    local function get_line_text(src, line)
+        return src.text:sub(line:byte_span())
+    end
 
-	while true do
-		local stop = text:find("\n", start, true)
-		if not stop then
-			if start <= #text then
-				local line = text:sub(start)
-				local trimmed = line:gsub("%s+$", "")
-				table.insert(out, trimmed)
-				table.insert(out, "\n")
-			end
-			break
-		end
+    local function test_with_lines(lines)
+        local code = table.concat(lines, "\n")
+        local src = ariadne.Source.new(code)
+        lu.assertEquals(#src, #lines)
+        local chars, bytes = 0, 0
+        for i, line in ipairs(lines) do
+            lu.assertEquals(src[i].offset, chars+1)
+            lu.assertEquals(src[i].byte_offset, bytes+1)
+            lu.assertEquals(src[i].len, utf8.len(line))
+            lu.assertEquals(src[i].byte_len, #line)
+            lu.assertEquals(get_line_text(src, src[i]), line)
+            chars = chars + utf8.len(line) + 1
+            bytes = bytes + #line + 1
+        end
+        lu.assertEquals(src.len, chars - 1)
+        lu.assertEquals(src.byte_len, bytes - 1)
+    end
 
-		local line = text:sub(start, stop - 1)
-		local trimmed = line:gsub("%s+$", "")
-		table.insert(out, trimmed)
-		table.insert(out, "\n")
-		start = stop + 1
-	end
+    function TestSource.test_empty()
+        test_with_lines { "" }
+    end
 
-	return table.concat(out)
+    function TestSource.test_single()
+        test_with_lines { "single line" }
+        test_with_lines { "single line with CR\r" }
+    end
+
+    function TestSource.test_multiple()
+        test_with_lines {
+            "first line",
+            "second line",
+            "third line",
+        }
+        test_with_lines {
+            "line with あ unicode",
+            "another line with emoji 😊",
+            "final line",
+        }
+    end
+
+    function TestSource.test_trims_trailing_space()
+        test_with_lines {
+            "Trailing spaces    ",
+            "not trimmed\t",
+        }
+    end
+
+    function TestSource.test_various_line_endings()
+        test_with_lines {
+            "CR\r",
+            "VT\x0B",
+            "FF\x0C",
+            "NEL\u{0085}",
+            "LS\u{2028}",
+            "PS\u{2029}",
+        }
+    end
 end
 
-local function no_color_ascii(index_type, compact)
-    return ariadne.config {
-		color = false,
-		char_set = ariadne.ascii,
-		index_type = index_type,
-		compact = compact,
-	}
+local TestColor = {} do
+    function TestColor.test_colors()
+        local gen = ariadne.ColorGenerator.new()
+        local colors = {}
+        colors[#colors+1] = gen:next()
+        colors[#colors+1] = gen:next()
+        colors[#colors+1] = gen:next()
+        lu.assertNotEquals(colors[1], colors[2])
+        lu.assertNotEquals(colors[2], colors[3])
+        lu.assertNotEquals(colors[1], colors[3])
+    end
 end
 
-local function source(text, name)
-	return ariadne.source(text, name)
-end
+local TestWrite = {} do
+    ---@param text string
+    ---@return string
+    local function remove_trailing(text)
+        return (text:gsub("%s+\n", "\n"):gsub("%s+\n$", "\n"))
+    end
 
-local TestWrite = {}
+    ---@param index_type? "byte"|"char"
+    ---@param compact? boolean
+    ---@return Config
+    local function no_color_ascii(index_type, compact)
+        return ariadne.Config.new {
+            color = false,
+            char_set = ariadne.Characters.ascii,
+            index_type = index_type,
+            compact = compact,
+        }
+    end
 
-function TestWrite.test_one_message()
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(0, 0))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:finish()
-			:write_to_string(source(""))
-	)
+    function TestWrite.test_one_message()
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 0, 0)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :render(ariadne.Source.new(""))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
 ]=]))
-end
+    end
 
-function TestWrite.test_two_labels_without_messages()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 5))
-			:label(ariadne.label(10, 15))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_two_labels_without_messages()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 5))
+            :add_label(ariadne.Label.new(10, 15))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
  1 | apple == orange;
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_label_attach_start_with_blank_line()
-	local text = "alpha\nbravo\ncharlie\n"
-	local cfg = no_color_ascii()
-	cfg.label_attach = "start"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 5):message("This is an apple"))
-			:label(ariadne.label(10, 15):message("This is an orange"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_label_attach_start_with_blank_line()
+        local text = "alpha\nbravo\ncharlie\n"
+        local cfg = no_color_ascii()
+        cfg.label_attach = "start"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
- 1 | alpha
-   | ^^|^^
-   |   `---- This is an apple
- 2 | bra,-> vo
+ 1 |     alpha
+   |     ^^|^^
+   |       `---- This is an apple
+ 2 | ,-> bravo
  3 | |-> charlie
    | |
-   | `------------ This is an orange
+   | `------------- This is an orange
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_two_labels_with_messages_compact()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii(nil, true))
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 5):message("This is an apple"))
-			:label(ariadne.label(10, 15):message("This is an orange"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_two_labels_with_messages_compact()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii(nil, true))
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
  1 |apple == orange;
    |  `------------- This is an apple
    |            `--- This is an orange
 ]=]))
-end
+    end
 
-function TestWrite.test_multi_byte_chars()
-	local text = "äpplë == örängë;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii "char")
-			:message("can't compare äpplës with örängës")
-			:label(ariadne.label(1, 5):message("This is an äpplë"))
-			:label(ariadne.label(10, 15):message("This is an örängë"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_multi_byte_chars()
+        local text = "äpplë == örängë;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii "char")
+            :set_message("can't compare äpplës with örängës")
+            :add_label(ariadne.Label.new(1, 5):with_message("This is an äpplë"))
+            :add_label(ariadne.Label.new(10, 15):with_message("This is an örängë"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare äpplës with örängës
    ,-[ <unknown>:1:1 ]
    |
@@ -152,21 +200,20 @@ Error: can't compare äpplës with örängës
    |             `---- This is an örängë
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_byte_label()
-	local text = "äpplë == örängë;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii "byte")
-			:message("can't compare äpplës with örängës")
-			:label(ariadne.label(1, 7):message("This is an äpplë"))
-			:label(ariadne.label(12, 20):message("This is an örängë"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_byte_label()
+        local text = "äpplë == örängë;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii "byte")
+            :set_message("can't compare äpplës with örängës")
+            :add_label(ariadne.Label.new(1, 7):with_message("This is an äpplë"))
+            :add_label(ariadne.Label.new(12, 20):with_message("This is an örängë"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare äpplës with örängës
    ,-[ <unknown>:1:1 ]
    |
@@ -177,21 +224,20 @@ Error: can't compare äpplës with örängës
    |             `---- This is an örängë
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_byte_column()
-	local text = "äpplë == örängë;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(12, 12))
-			:config(no_color_ascii "byte")
-			:message("can't compare äpplës with örängës")
-			:label(ariadne.label(1, 7):message("This is an äpplë"))
-			:label(ariadne.label(12, 20):message("This is an örängë"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_byte_column()
+        local text = "äpplë == örängë;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 12)
+            :with_config(no_color_ascii "byte")
+            :set_message("can't compare äpplës with örängës")
+            :add_label(ariadne.Label.new(1, 7):with_message("This is an äpplë"))
+            :add_label(ariadne.Label.new(12, 20):with_message("This is an örängë"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare äpplës with örängës
    ,-[ <unknown>:1:10 ]
    |
@@ -202,20 +248,19 @@ Error: can't compare äpplës with örängës
    |             `---- This is an örängë
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_label_at_end_of_long_line()
-	local text = string.rep("apple == ", 100) .. "orange"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(#text - 5, #text):message("This is an orange"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_label_at_end_of_long_line()
+        local text = string.rep("apple == ", 100) .. "orange"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(#text - 5, #text):with_message("This is an orange"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -224,42 +269,40 @@ Error: can't compare apples with oranges
    |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        `---- This is an orange
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_label_of_width_zero_at_end_of_line()
-	local text = "apple ==\n"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii "byte")
-			:message("unexpected end of file")
-			:label(ariadne.label(10, 9):message("Unexpected end of file"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_label_of_width_zero_at_end_of_line()
+        local text = "apple ==\n"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(no_color_ascii "byte")
+            :set_message("unexpected end of file")
+            :add_label(ariadne.Label.new(9):with_message("Unexpected end of file"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
  1 | apple ==
-   |          |
-   |          `- Unexpected end of file
+   |         |
+   |         `- Unexpected end of file
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_empty_input()
-	local text = ""
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("unexpected end of file")
-			:label(ariadne.label(1, 0):message("No more fruit!"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_empty_input()
+        local text = ""
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("unexpected end of file")
+            :add_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
@@ -268,21 +311,20 @@ Error: unexpected end of file
    | `- No more fruit!
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_empty_input_help()
-	local text = ""
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("unexpected end of file")
-			:label(ariadne.label(1, 0):message("No more fruit!"))
-			:help("have you tried going to the farmer's market?")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_empty_input_help()
+        local text = ""
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("unexpected end of file")
+            :add_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
+            :add_help("have you tried going to the farmer's market?")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
@@ -293,21 +335,20 @@ Error: unexpected end of file
    | Help: have you tried going to the farmer's market?
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_empty_input_note()
-	local text = ""
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("unexpected end of file")
-			:label(ariadne.label(1, 0):message("No more fruit!"))
-			:note("eat your greens!")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_empty_input_note()
+        local text = ""
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("unexpected end of file")
+            :add_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
+            :add_note("eat your greens!")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
@@ -318,22 +359,21 @@ Error: unexpected end of file
    | Note: eat your greens!
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_empty_input_help_note()
-	local text = ""
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("unexpected end of file")
-			:label(ariadne.label(1, 0):message("No more fruit!"))
-			:note("eat your greens!")
-			:help("have you tried going to the farmer's market?")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_empty_input_help_note()
+        local text = ""
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("unexpected end of file")
+            :add_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
+            :add_note("eat your greens!")
+            :add_help("have you tried going to the farmer's market?")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
@@ -346,38 +386,36 @@ Error: unexpected end of file
    | Note: eat your greens!
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_byte_spans_never_crash()
-	local text = "apple\np\n\nempty\n"
+    function TestWrite.test_byte_spans_never_crash()
+        local text = "apple\np\n\nempty\n"
 
-	for i = 1, #text do
-		for j = i, #text do
-			local ok, result = pcall(function()
-				return ariadne.error(ariadne.span(1, 1))
-					:config(no_color_ascii "byte")
-					:message("Label")
-					:label(ariadne.label(i, j):message("Label"))
-					:finish()
-					:write_to_string(source(text))
-			end)
-			luaunit.assertTrue(ok)
-			luaunit.assertEquals(type(result), "string")
-		end
-	end
-end
+        for i = 1, #text do
+            for j = i, #text do
+                local ok, result = pcall(function()
+                    return ariadne.Report.build("Error", 1, 1)
+                        :with_config(no_color_ascii "byte")
+                        :set_message("Label")
+                        :add_label(ariadne.Label.new(i, j):with_message("Label"))
+                        :render(ariadne.Source.new(text))
+                end)
+                lu.assertTrue(ok)
+                lu.assertEquals(type(result), "string")
+            end
+        end
+    end
 
-function TestWrite.test_multiline_label()
-	local text = "apple\n==\norange"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:label(ariadne.label(1, #text):message("illegal comparison"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_multiline_label()
+        local text = "apple\n==\norange"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :add_label(ariadne.Label.new(1, #text):with_message("illegal comparison"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error:
    ,-[ <unknown>:1:1 ]
    |
@@ -388,21 +426,20 @@ Error:
    | `----------- illegal comparison
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_partially_overlapping_labels()
-	local text = "https://example.com/"
-	local colon_start = assert(text:find(":", 1, true)) - 1
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:label(ariadne.label(1, #text):message("URL"))
-			:label(ariadne.label(1, colon_start):message("scheme"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_partially_overlapping_labels()
+        local text = "https://example.com/"
+        local colon_start = assert(text:find(":", 1, true)) - 1
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :add_label(ariadne.Label.new(1, #text):with_message("URL"))
+            :add_label(ariadne.Label.new(1, colon_start):with_message("scheme"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error:
    ,-[ <unknown>:1:1 ]
    |
@@ -413,25 +450,24 @@ Error:
    |           `----------- URL
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_multiple_labels_same_span()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 5):message("This is an apple"))
-			:label(ariadne.label(1, 5):message("Have I mentioned that this is an apple?"))
-			:label(ariadne.label(1, 5):message("No really, have I mentioned that?"))
-			:label(ariadne.label(10, 15):message("This is an orange"))
-			:label(ariadne.label(10, 15):message("Have I mentioned that this is an orange?"))
-			:label(ariadne.label(10, 15):message("No really, have I mentioned that?"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_multiple_labels_same_span()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :add_label(ariadne.Label.new(1, 5):with_message("Have I mentioned that this is an apple?"))
+            :add_label(ariadne.Label.new(1, 5):with_message("No really, have I mentioned that?"))
+            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :add_label(ariadne.Label.new(10, 15):with_message("Have I mentioned that this is an orange?"))
+            :add_label(ariadne.Label.new(10, 15):with_message("No really, have I mentioned that?"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -450,22 +486,21 @@ Error: can't compare apples with oranges
    |             `---- No really, have I mentioned that?
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_note()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 5):message("This is an apple"))
-			:label(ariadne.label(10, 15):message("This is an orange"))
-			:note("stop trying ... this is a fruitless endeavor")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_note()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :add_note("stop trying ... this is a fruitless endeavor")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -478,22 +513,21 @@ Error: can't compare apples with oranges
    | Note: stop trying ... this is a fruitless endeavor
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_note_compact()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii(nil, true))
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 5):message("This is an apple"))
-			:label(ariadne.label(10, 15):message("This is an orange"))
-			:note("stop trying ... this is a fruitless endeavor")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_note_compact()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii(nil, true))
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :add_note("stop trying ... this is a fruitless endeavor")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
  1 |apple == orange;
@@ -501,22 +535,21 @@ Error: can't compare apples with oranges
    |            `--- This is an orange
    |Note: stop trying ... this is a fruitless endeavor
 ]=]))
-end
+    end
 
-function TestWrite.test_help()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 5):message("This is an apple"))
-			:label(ariadne.label(10, 15):message("This is an orange"))
-			:help("have you tried peeling the orange?")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_help()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :add_help("have you tried peeling the orange?")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -529,23 +562,22 @@ Error: can't compare apples with oranges
    | Help: have you tried peeling the orange?
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_help_and_note()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 5):message("This is an apple"))
-			:label(ariadne.label(10, 15):message("This is an orange"))
-			:help("have you tried peeling the orange?")
-			:note("stop trying ... this is a fruitless endeavor")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_help_and_note()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :add_help("have you tried peeling the orange?")
+            :add_note("stop trying ... this is a fruitless endeavor")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -560,21 +592,20 @@ Error: can't compare apples with oranges
    | Note: stop trying ... this is a fruitless endeavor
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_single_note_single_line()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 15):message("This is a strange comparison"))
-			:note("No need to try, they can't be compared.")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_single_note_single_line()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
+            :add_note("No need to try, they can't be compared.")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -585,22 +616,21 @@ Error: can't compare apples with oranges
    | Note: No need to try, they can't be compared.
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_multi_notes_single_lines()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 15):message("This is a strange comparison"))
-			:note("No need to try, they can't be compared.")
-			:note("Yeah, really, please stop.")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_multi_notes_single_lines()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
+            :add_note("No need to try, they can't be compared.")
+            :add_note("Yeah, really, please stop.")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -613,22 +643,21 @@ Error: can't compare apples with oranges
    | Note 2: Yeah, really, please stop.
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_multi_notes_multi_lines()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 15):message("This is a strange comparison"))
-			:note("No need to try, they can't be compared.")
-			:note("Yeah, really, please stop.\nIt has no resemblance.")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_multi_notes_multi_lines()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
+            :add_note("No need to try, they can't be compared.")
+            :add_note("Yeah, really, please stop.\nIt has no resemblance.")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -642,22 +671,21 @@ Error: can't compare apples with oranges
    |         It has no resemblance.
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_multi_helps_multi_lines()
-	local text = "apple == orange;"
-	local msg = remove_trailing(
-		ariadne.advice(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("can't compare apples with oranges")
-			:label(ariadne.label(1, 15):message("This is a strange comparison"))
-			:help("No need to try, they can't be compared.")
-			:help("Yeah, really, please stop.\nIt has no resemblance.")
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_multi_helps_multi_lines()
+        local text = "apple == orange;"
+        local msg = remove_trailing(
+            ariadne.Report.build("Advice", 1)
+            :with_config(no_color_ascii())
+            :set_message("can't compare apples with oranges")
+            :add_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
+            :add_help("No need to try, they can't be compared.")
+            :add_help("Yeah, really, please stop.\nIt has no resemblance.")
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Advice: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
@@ -671,20 +699,19 @@ Advice: can't compare apples with oranges
    |         It has no resemblance.
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_display_line_offset()
-	local text = "first line\nsecond line\n"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("line offset demo")
-			:label(ariadne.label(12, 22):message("Second line"))
-			:finish()
-			:write_to_string(source(text):with_display_line_offset(9))
-	)
+    function TestWrite.test_display_line_offset()
+        local text = "first line\nsecond line\n"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("line offset demo")
+            :add_label(ariadne.Label.new(12, 22):with_message("Second line"))
+            :render(ariadne.Source.new(text, nil, 9))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: line offset demo
     ,-[ <unknown>:10:1 ]
     |
@@ -693,21 +720,20 @@ Error: line offset demo
     |      `------- Second line
 ----'
 ]=]))
-end
+    end
 
-function TestWrite.test_label_ordering()
-	local text = "abcdef"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("ordered labels")
-			:label(ariadne.label(1, 3):message("Left"))
-			:label(ariadne.label(4, 6):order(-10):message("Right"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_label_ordering()
+        local text = "abcdef"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("ordered labels")
+            :add_label(ariadne.Label.new(1, 3):with_message("Left"))
+            :add_label(ariadne.Label.new(4, 6):with_order(-10):with_message("Right"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: ordered labels
    ,-[ <unknown>:1:1 ]
    |
@@ -718,23 +744,22 @@ Error: ordered labels
    |  `------ Left
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_split_labels()
-	local text = "alpha\nbravo\ncharlie\n"
-	local cfg = no_color_ascii()
-	cfg.label_attach = "start"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 15))
-			:config(cfg)
-			:message("gaps between labels")
-			:label(ariadne.label(1, 5):message("first"))
-			:label(ariadne.label(13, 19):message("third"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_split_labels()
+        local text = "alpha\nbravo\ncharlie\n"
+        local cfg = no_color_ascii()
+        cfg.label_attach = "start"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 15)
+            :with_config(cfg)
+            :set_message("gaps between labels")
+            :add_label(ariadne.Label.new(1, 5):with_message("first"))
+            :add_label(ariadne.Label.new(13, 19):with_message("third"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: gaps between labels
    ,-[ <unknown>:1:1 ]
    |
@@ -747,73 +772,73 @@ Error: gaps between labels
    | `-------- third
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_zero_length_span()
-	local text = "delta"
-	local cfg = no_color_ascii()
-	cfg.label_attach = "end"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(3, 2))
-			:config(cfg)
-			:message("zero length span")
-			:label(ariadne.label(3, 2):message("point"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_zero_length_span()
+        local text = "delta"
+        local cfg = no_color_ascii()
+        cfg.label_attach = "end"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 3, 2)
+            :with_config(cfg)
+            :set_message("zero length span")
+            :add_label(ariadne.Label.new(3, 2):with_message("point"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: zero length span
    ,-[ <unknown>:1:3 ]
    |
  1 | delta
    |   |
-   |   |
    |   `- point
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_priority_highlight_and_color()
-	local text = "klmnop"
-	local strong = ariadne.label(2, 5):message("strong"):priority(10):color("cyan")
-	local weak = ariadne.label(1, 4):message("weak")
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("overlap priorities")
-			:label(weak)
-			:label(strong)
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_priority_highlight_and_color()
+        local text = "klmnop"
+        local strong = ariadne.Label.new(2, 5):with_message("strong"):with_priority(10):with_color(
+            function(k)
+                if k == "reset" then return "]" end
+                return "["
+            end)
+        local weak = ariadne.Label.new(1, 4):with_message("weak")
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("overlap priorities")
+            :add_label(weak)
+            :add_label(strong)
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: overlap priorities
    ,-[ <unknown>:1:1 ]
    |
- 1 | klmnop
-   | ^^^|^
-   |   `---- weak
-   |    |
-   |    `--- strong
+ 1 | k[lmno]p
+   | ^[^]|[|^]
+   |   `[-]--- weak
+   |    [|]
+   |    [`---] strong
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_multiple_arrow_connectors()
-	local text = "qrstuvwx"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("stacked arrows")
-			:label(ariadne.label(1, 3):message("left"))
-			:label(ariadne.label(5, 8):message("right"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_multiple_arrow_connectors()
+        local text = "qrstuvwx"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("stacked arrows")
+            :add_label(ariadne.Label.new(1, 3):with_message("left"))
+            :add_label(ariadne.Label.new(5, 8):with_message("right"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: stacked arrows
    ,-[ <unknown>:1:1 ]
    |
@@ -824,91 +849,85 @@ Error: stacked arrows
    |       `--- right
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_custom_report_with_code()
-	local msg = remove_trailing(
-		ariadne.report("Notice", ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:code("E100")
-			:message("custom kind")
-			:finish()
-			:write_to_string(source("x"))
-	)
+    function TestWrite.test_custom_report_with_code()
+        local msg = remove_trailing(
+            ariadne.Report.build("Notice", 1)
+            :with_config(no_color_ascii())
+            :with_code("E100")
+            :set_message("custom kind")
+            :render(ariadne.Source.new("x"))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 [E100] Notice: custom kind
 ]=]))
-end
+    end
 
-function TestWrite.test_warning_and_advice()
-	local warning = remove_trailing(
-		ariadne.warning(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("careful")
-			:finish()
-			:write_to_string(source("w"))
-	)
-	local advice = remove_trailing(
-		ariadne.advice(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("consider")
-			:finish()
-			:write_to_string(source("a"))
-	)
+    function TestWrite.test_warning_and_advice()
+        local warning = remove_trailing(
+            ariadne.Report.build("Warning", 1)
+            :with_config(no_color_ascii())
+            :set_message("careful")
+            :render(ariadne.Source.new("w"))
+        )
+        local advice = remove_trailing(
+            ariadne.Report.build("Advice", 1)
+            :with_config(no_color_ascii())
+            :set_message("consider")
+            :render(ariadne.Source.new("a"))
+        )
 
-	luaunit.assertEquals(warning, ([=[
+        lu.assertEquals(warning, ([=[
 Warning: careful
 ]=]))
-	luaunit.assertEquals(advice, ([=[
+        lu.assertEquals(advice, ([=[
 Advice: consider
 ]=]))
-end
+    end
 
-function TestWrite.test_byte_index_out_of_bounds()
-	local cfg = no_color_ascii("byte")
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(100, 100))
-			:config(cfg)
-			:message("unknown position")
-			:finish()
-			:write_to_string(source("hi"))
-	)
+    function TestWrite.test_byte_index_out_of_bounds()
+        local cfg = no_color_ascii("byte")
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 100, 100)
+            :with_config(cfg)
+            :set_message("unknown position")
+            :render(ariadne.Source.new("hi"))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: unknown position
 ]=]))
-end
+    end
 
-function TestWrite.test_invalid_label_skipped()
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("invalid label")
-			:label(ariadne.label(999, 1000):message("ignored"))
-			:finish()
-			:write_to_string(source("short"))
-	)
+    function TestWrite.test_invalid_label_skipped()
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("invalid label")
+            :add_label(ariadne.Label.new(999, 1000):with_message("ignored"))
+            :render(ariadne.Source.new("short"))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: invalid label
 ]=]))
-end
+    end
 
--- Additional coverage-focused tests (expected outputs intentionally left blank)
-function TestWrite.test_oob_location_with_label_byte()
-	local text = "hi"
-	local cfg = no_color_ascii("byte")
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(100, 100))
-			:config(cfg)
-			:message("oob location with label")
-			:label(ariadne.label(1, 1):message("label"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    -- Additional coverage-focused tests (expected outputs intentionally left blank)
+    function TestWrite.test_oob_location_with_label_byte()
+        local text = "hi"
+        local cfg = no_color_ascii("byte")
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 100, 100)
+            :with_config(cfg)
+            :set_message("oob location with label")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: oob location with label
    ,-[ <unknown>:?:? ]
    |
@@ -917,131 +936,122 @@ Error: oob location with label
    | `-- label
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_multiline_sort_and_padding()
-	-- First line has trailing spaces to exercise split_at_column padding; two
-	-- multiline labels with messages ensure sorting comparators run.
-	local text = "abc   \nmid\nxyz"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("multiline sort & padding")
-			:label(ariadne.label(5, 13):message("outer"))  -- from trailing spaces into last line
-			:label(ariadne.label(9, 12):message("inner"))  -- spans mid->x
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_multiline_sort_and_padding()
+        -- First line has trailing spaces to exercise split_at_column padding; two
+        -- multiline labels with messages ensure sorting comparators run.
+        local text = "abc   \nmid\nxyz"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("multiline sort & padding")
+            :add_label(ariadne.Label.new(5, 13):with_message("outer")) -- from trailing spaces into last line
+            :add_label(ariadne.Label.new(9, 13):with_message("inner")) -- spans mid->x
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: multiline sort & padding
    ,-[ <unknown>:1:1 ]
    |
- 1 | abc  ,->
- 2 | m,-> id
- 3 | |-> xyz
-   | |
-   | `-------- inner
-   | |
-   | |
-   | `-------- outer
+ 1 | ,---> abc
+ 2 | | ,-> mid
+ 3 | | |-> xyz
+   | | |    ^
+   | | `-------- inner
+   | |      |
+   | `------^--- outer
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_pointer_and_connectors()
-	-- On the second line we have both a multiline end and an inline label with
-	-- messages, which drives connector rows and vbar cells.
-	local text = "abcde\nfghij\n"
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(1, 1))
-			:config(no_color_ascii())
-			:message("pointer and connectors")
-			:label(ariadne.label(2, 8):message("multi")) -- multi spanning line1->line2
-			:label(ariadne.label(9, 10):message("inline"))
-			:finish()
-			:write_to_string(source(text))
-	)
+    function TestWrite.test_pointer_and_connectors()
+        -- On the second line we have both a multiline end and an inline label with
+        -- messages, which drives connector rows and vbar cells.
+        local text = "abcde\nfghij\n"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1, 1)
+            :with_config(no_color_ascii())
+            :set_message("pointer and connectors")
+            :add_label(ariadne.Label.new(2, 8):with_message("multi")) -- multi spanning line1->line2
+            :add_label(ariadne.Label.new(9, 10):with_message("inline"))
+            :render(ariadne.Source.new(text))
+        )
 
-	luaunit.assertEquals(msg, ([=[
+        lu.assertEquals(msg, ([=[
 Error: pointer and connectors
    ,-[ <unknown>:1:1 ]
    |
- 1 | a,-> bcde
+ 1 | ,-> abcde
  2 | |-> fghij
-   |   ^|
-   | |
-   | `---------- multi
-   | |  |
-   | |
-   | |  `------- inline
+   | |     ^|
+   | `----------- multi
+   |        |
+   |        `---- inline
 ---'
 ]=]))
-end
+    end
 
-function TestWrite.test_demo()
-	local text = [[
+    function TestWrite.test_demo()
+        local text = [[
 def five = match () in {
 	() => 5,
 	() => "5",
 }
 
 def six =
-	five
-	+ 1
+    five
+    + 1
 ]]
 
-	local msg = remove_trailing(
-		ariadne.error(ariadne.span(13, 12))
-			:config(no_color_ascii())
-			:code(3)
-			:message("Incompatible types")
-			:label(ariadne.label(33, 33):message("This is of type Nat"))
-			:label(ariadne.label(43, 45):message("This is of type Str"))
-			:label(ariadne.label(12, 48):message("This values are outputs of this match expression"))
-			:note("Outputs of match expressions must coerce to the same type")
-			:finish()
-			:write_to_string(source(text, "sample.tao"))
-	)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 12)
+            :with_config(no_color_ascii())
+            :with_code "3"
+            :set_message("Incompatible types")
+            :add_label(ariadne.Label.new(33, 33):with_message("This is of type Nat"))
+            :add_label(ariadne.Label.new(43, 45):with_message("This is of type Str"))
+            :add_label(ariadne.Label.new(12, 48):with_message("This values are outputs of this match expression"))
+            :add_label(ariadne.Label.new(1, 48):with_message("The definition has a problem"))
+            :add_label(ariadne.Label.new(51, 76):with_message("Usage of definition here"))
+            :add_note("Outputs of match expressions must coerce to the same type")
+            :render(ariadne.Source.new(text, "sample.tao"))
+        )
 
-	luaunit.assertEquals(msg, [=[
+        lu.assertEquals(msg, [=[
 [3] Error: Incompatible types
-   ,-[ sample.tao:1:13 ]
+   ,-[ sample.tao:1:12 ]
    |
- 1 | def five = ,-> match () in {
- 2 | 	() => 5,
-   |        |
-   |        `-- This is of type Nat
- 3 | 	() => "5",
-   |        ^|^
-   |         `--- This is of type Str
+ 1 | ,-----> def five = match () in {
+   | |                  ^
+   | | ,----------------'
+ 2 | | |         () => 5,
+   | | |               |
+   | | |               `-- This is of type Nat
+ 3 | | |         () => "5",
+   | | |               ^|^
+   | | |                `--- This is of type Str
+ 4 | | |---> }
+   | | |     ^
+   | | `--------- This values are outputs of this match expression
+   | |       |
+   | `-------^--- The definition has a problem
+   |
+ 6 |     ,-> def six =
+   :     :
+ 8 |     |->     + 1
+   |     |
+   |     `------------- Usage of definition here
    |
    | Note: Outputs of match expressions must coerce to the same type
 ---'
 ]=])
+    end
 end
 
-
-local TestDraw = {}
-
-function TestDraw.test_color_generator()
-	local gen = ariadne.color_generator()
-	local a, b, c = gen:next(), gen:next(), gen:next()
-	luaunit.assertEquals(a, 161)
-	luaunit.assertEquals(b, 1)
-	luaunit.assertEquals(c, 161)
-end
-
-local TestSource = {}
-
-function TestSource.test_line_range_clamps_finish()
-	local src = ariadne.source("hello world")
-	local range = src:get_line_range({ start = 2, finish = 1 })
-	luaunit.assertEquals(range, { start = 1, finish = 1 })
-end
-
-_G.TestWrite = TestWrite
-_G.TestDraw = TestDraw
 _G.TestSource = TestSource
+_G.TestColor = TestColor
+_G.TestWrite = TestWrite
 
-os.exit(luaunit.LuaUnit.run())
+os.exit(lu.LuaUnit.run())
