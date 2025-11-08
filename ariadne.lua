@@ -61,7 +61,7 @@ do
     ---@param pos integer
     ---@return boolean
     function Line:span_contains(pos)
-        return pos >= self.offset and pos < self.offset + self.len
+        return pos >= self.offset and pos <= self.offset + self.len
     end
 
     --- returns the byte span of this line in the original [`Source`]

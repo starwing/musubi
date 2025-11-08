@@ -1328,15 +1328,15 @@ Error: xbar test
             :with_config(cfg)
             :set_message("two multiline labels")
             :add_label(ariadne.Label.new(1, 18):with_message("outer"))
-            :add_label(ariadne.Label.new(3, 20):with_message("inner"))
+            :add_label(ariadne.Label.new(3, 19):with_message("inner"))
             :render(src))
-        -- TODO: wired output looks a bit off here; fix later
         lu.assertEquals(msg, [[
 Error: two multiline labels
    ,-[ <unknown>:1:1 ]
  1 |,->abcdefgh
    ||,---'
-   :::
+ 2 |||>ijklmnop
+   |`------------ outer
  3 | |>qrstuvwx
    | `---------- inner
 ]])
