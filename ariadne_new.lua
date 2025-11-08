@@ -836,22 +836,17 @@ do -- report Rendering
             end
         end
 
-        -- Sort multiline labels by length
-        table.sort(multi_labels, function(a, b)
-            local alen = a.end_char and (a.end_char - a.start_char + 1) or 0
-            local blen = b.end_char and (b.end_char - b.start_char + 1) or 0
-            return alen > blen
-        end)
+        -- Sort labels by length
         table.sort(multi_labels_with_message, function(a, b)
-            local alen = a.end_char and (a.end_char - a.start_char + 1) or 0
-            local blen = b.end_char and (b.end_char - b.start_char + 1) or 0
+            local alen = a.end_char - a.start_char + 1
+            local blen = b.end_char - b.start_char + 1
             return alen > blen
         end)
         return multi_labels, multi_labels_with_message
     end
 
     --- Get the margin label for a line.
-    --- 
+    ---
     --- Which is the most significant multiline label on this line.
     --- It's the multiline label with the minimum column (start or end),
     --- if columns are equal, the one with the maximum start position is chosen.
@@ -859,44 +854,35 @@ do -- report Rendering
     ---@param multi_labels_with_message LabelInfo[]
     ---@return LineLabel?
     local function get_margin_label(line, multi_labels_with_message)
-        --- @type LineLabel?
-        local margin_label
-        for i, info in ipairs(multi_labels_with_message) do
-            local col, draw_msg
-            if line:span_contains(info.start_char) then
-                col = info.start_char - line.offset + 1
-                draw_msg = false
-            elseif info.end_char and line:span_contains(info.end_char) then
-                col = -info.end_char - line.offset + 1
-                draw_msg = true
+        ---@type integer?, LabelInfo?, boolean?
+        local col, info, draw_msg
+        for i, cur_info in ipairs(multi_labels_with_message) do
+            local cur_col, cur_draw_msg
+            if line:span_contains(cur_info.start_char) then
+                cur_col = cur_info.start_char - line.offset + 1
+                cur_draw_msg = false
+            elseif cur_info.end_char and line:span_contains(cur_info.end_char) then
+                cur_col = -cur_info.end_char - line.offset + 1
+                cur_draw_msg = true
             end
             -- find the minimum column or maximum start pos if columns are equal
             -- label as the margin label
-            if col then
-                if not margin_label then
-                    margin_label = {
-                        col = col,
-                        info = info,
-                        draw_msg = draw_msg,
-                    }
-                elseif col < margin_label.col or (col == margin_label.col
-                        and info.start_char > margin_label.info.start_char) then
-                    margin_label.col = col
-                    margin_label.info = info
-                    margin_label.draw_msg = draw_msg
-                end
+            if cur_col and (not col or not info or cur_col < col or (cur_col == col
+                    and cur_info.start_char > info.start_char)) then
+                col, info, draw_msg = cur_col, cur_info, cur_draw_msg
             end
         end
-        return margin_label
+        if not col then return nil end
+        return { col = col, info = info, draw_msg = draw_msg }
     end
 
     --- Collect multiline labels for a specific line
     ---@param line_labels LineLabel[]
-    ---@param margin_label LineLabel?
     ---@param line Line
+    ---@param margin_label LineLabel?
     ---@param multi_labels_with_message LabelInfo[]
-    local function collect_multi_labels_in_line(line_labels, margin_label,
-                                     line, multi_labels_with_message)
+    local function collect_multi_labels_in_line(line_labels, line,
+                                                margin_label, multi_labels_with_message)
         for i, info in ipairs(multi_labels_with_message) do
             local col, draw_msg
             if line:span_contains(info.start_char)
@@ -919,10 +905,10 @@ do -- report Rendering
 
     --- Collect inline labels for a specific line
     ---@param line_labels LineLabel[]
-    ---@param group SourceGroup
     ---@param line Line
+    ---@param group SourceGroup
     ---@param label_attach "start" | "end" | "middle"
-    local function collect_labels_in_line(line_labels, group, line, label_attach)
+    local function collect_labels_in_line(line_labels, line, group, label_attach)
         local end_char = line.offset + line.len
         for _, info in ipairs(group.labels) do
             if not info.multi and info.start_char >= line.offset and
@@ -961,33 +947,11 @@ do -- report Rendering
     ---@return boolean
     local function is_within_label(offset, multi_labels)
         for _, info in ipairs(multi_labels) do
-            assert(info.end_char, "multiline label missing end_char")
             if info.start_char < offset and info.end_char > offset then
                 return true
             end
         end
         return false
-    end
-
-    --- Calculate the maximum arrow line length for a specific line
-    ---@param line Line
-    ---@param line_labels LineLabel[]
-    ---@param compact boolean
-    ---@return integer
-    local function calc_arrow_len(line, line_labels, compact)
-        local arrow_end_space = compact and 1 or 2
-        local arrow_len = 0
-        for l, ll in ipairs(line_labels) do
-            if ll.info.multi then
-                arrow_len = line.len + (line.newline and 1 or 0)
-            else
-                local cur = (ll.info.end_char or ll.info.start_char - 1) - line.offset + 1
-                if arrow_len < cur then
-                    arrow_len = cur
-                end
-            end
-        end
-        return arrow_len + arrow_end_space
     end
 
     --- Render the line number for a specific line
@@ -1020,19 +984,15 @@ do -- report Rendering
     ---@param is_line boolean
     ---@param is_ellipsis boolean
     ---@param line Line
-    ---@param report_row integer?
+    ---@param report_row? LineLabel
     ---@param report_row_is_arrow boolean
-    ---@param line_labels LineLabel[]
-    ---@param margin_label LineLabel?
+    ---@param line_labels? LineLabel[]
+    ---@param margin_label? LineLabel
     ---@param multi_labels_with_message LabelInfo[]
     ---@param cfg Config
-    local function render_margin(W, is_line, is_ellipsis,
-                                 line,
-                                 report_row, report_row_is_arrow,
-                                 line_labels,
-                                 margin_label,
-                                 multi_labels_with_message,
-                                 cfg)
+    local function render_margin(W, is_line, is_ellipsis, line,
+                                 report_row, report_row_is_arrow, line_labels,
+                                 margin_label, multi_labels_with_message, cfg)
         if #multi_labels_with_message == 0 then
             return
         end
@@ -1040,82 +1000,54 @@ do -- report Rendering
         local draw = cfg.char_set
         local end_char = line.offset + line.len - 1
 
-        for col = 1, #multi_labels_with_message + 1 do
-            local label = multi_labels_with_message[col]
+        ---@type LabelInfo?, LabelInfo?
+        local hbar, margin_ptr
+        local margin_ptr_is_start = false
 
-            ---@type LabelInfo?, LabelInfo?, LabelInfo?, LabelInfo?
-            local hbar, vbar, corner, margin_ptr
-            local corner_is_start = false
-            local margin_ptr_is_start = false
+        for _, info in ipairs(multi_labels_with_message) do
+            ---@type LabelInfo?, LabelInfo?
+            local vbar, corner
 
-            -- TODO: need refactor
-            for i = 1, col do
-                local info = multi_labels_with_message[i]
-                if info
-                    and info.start_char <= end_char
-                    and info.end_char >= line.offset
-                then
-                    local is_start = line:span_contains(info.start_char)
-                    local is_end = line:span_contains(info.end_char)
-                    if margin_label and info == margin_label.info and is_line then
-                        margin_ptr, margin_ptr_is_start = info, is_start
-                    elseif not is_start and (not is_end or is_line) then
-                        if i == col then
-                            vbar = vbar or info
+            local is_start = line:span_contains(info.start_char)
+            if info.start_char <= end_char and info.end_char >= line.offset then
+                local is_margin = margin_label and info == margin_label.info
+                local is_end = line:span_contains(info.end_char)
+                if is_margin and is_line then
+                    margin_ptr, margin_ptr_is_start = info, is_start
+                elseif not is_start and (not is_end or is_line) then
+                    vbar = info
+                elseif report_row then
+                    if report_row.info == info then
+                        if not report_row_is_arrow and not is_start then
+                            vbar = info
+                        elseif is_margin then
+                            vbar = assert(margin_label).info
                         end
-                    elseif report_row then
-                        local label_row = 0
-                        for j, ll in ipairs(line_labels) do
+                        if report_row_is_arrow and (not is_margin or not is_start) then
+                            hbar, corner = info, info
+                        end
+                    else
+                        local report_row_is_before = 0
+                        for j, ll in ipairs(assert(line_labels)) do
+                            if ll.info == report_row.info then
+                                report_row_is_before = 2
+                            end
                             if ll.info == info then
-                                label_row = j
+                                if report_row_is_before == 2 then
+                                    report_row_is_before = 1
+                                end
                                 break
                             end
                         end
-                        if report_row == label_row then
-                            local skip = false
-                            if margin_label and margin_label.info == info then
-                                if i == col then
-                                    vbar = margin_label.info
-                                end
-                                if is_start then
-                                    skip = true
-                                end
-                            end
-                            if not skip then
-                                if report_row_is_arrow then
-                                    hbar = info
-                                    if i == col then
-                                        corner, corner_is_start = info, is_start
-                                    end
-                                elseif not is_start then
-                                    if i == col then
-                                        vbar = vbar or info
-                                    end
-                                end
-                            end
-                        else
-                            if i == col and is_start ~= (report_row < label_row) then
-                                vbar = vbar or info
-                            end
+                        if is_start ~= (report_row_is_before == 1) then
+                            vbar = info
                         end
                     end
                 end
             end
 
-            if (not hbar) and margin_ptr and is_line then
-                local is_col = label and label == margin_ptr
-                local is_limit = col + 1 == #multi_labels_with_message
-                if not is_col and not is_limit then
-                    hbar = margin_ptr
-                end
-            end
-
-            if margin_label and margin_label.info == hbar and is_line then
-                hbar = nil
-            end
-
             if corner then
-                local a = corner_is_start and draw.ltop or draw.lbot
+                local a = is_start and draw.ltop or draw.lbot
                 W:use_color(corner.label.color):label(a):compact(draw.hbar)
             elseif vbar and hbar and not cfg.cross_gap then
                 W:use_color(vbar.label.color):label(draw.xbar):compact(draw.hbar)
@@ -1126,9 +1058,7 @@ do -- report Rendering
                 W:use_color(vbar.label.color):label(a):compact ' '
             elseif margin_ptr and is_line then
                 local a, b = draw.hbar, draw.hbar
-                if col == #multi_labels_with_message + 1 then
-                    a, b = draw.rarrow, ' '
-                elseif label and label == margin_ptr then
+                if info and info == margin_ptr then
                     a = margin_ptr_is_start and draw.ltop or draw.lcross
                 end
                 W:use_color(margin_ptr.label.color):label(a):compact(b)
@@ -1136,59 +1066,52 @@ do -- report Rendering
                 W:reset(cfg.compact and ' ' or '  ')
             end
         end
-        W:reset()
+        if hbar then
+            W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar):reset()
+        elseif margin_ptr and is_line then
+            W:use_color(margin_ptr.label.color):label(draw.rarrow):compact ' ':reset()
+        else
+            W:reset(cfg.compact and ' ' or '  ')
+        end
     end
 
     --- Get the highest priority highlight for a offset
-    --- @type fun(offset: integer, margin_label?: LineLabel,
-    ---     multi_labels: LabelInfo[], line_labels: LineLabel[]): LabelInfo?
-    local get_highlight
-    do
-        --- check whether or not to use current info to update the result
-        ---@param offset integer
-        ---@param info LabelInfo
-        ---@param result LabelInfo?
-        ---@return LabelInfo?
-        local function update_result(result, offset, info)
-            if offset < info.start_char or offset > info.end_char then
-                return result
-            end
+    ---@param offset integer
+    ---@param margin_label? LineLabel
+    ---@param multi_labels LabelInfo[]
+    ---@param line_labels LineLabel[]
+    ---@return LabelInfo?
+    local function get_highlight(offset, margin_label, multi_labels, line_labels)
+        local result
+
+        local function update_result(info)
+            if offset < info.start_char or offset > info.end_char then return end
             if not result then
-                return info
+                result = info
             end
             if info.label.priority > result.label.priority then
-                return info
+                result = info
             elseif info.label.priority == result.label.priority then
                 local info_len = info.end_char - info.start_char + 1
                 local result_len = result.end_char - result.start_char + 1
                 if info_len < result_len then
-                    return info
+                    result = info
                 end
             end
-            return result
         end
 
-        --- Get the highest priority highlight for a offset
-        ---@param offset integer
-        ---@param margin_label LineLabel
-        ---@param multi_labels LabelInfo[]
-        ---@param line_labels LineLabel[]
-        ---@return LabelInfo?
-        function get_highlight(offset, margin_label, multi_labels, line_labels)
-            local result
-            if margin_label then
-                result = update_result(nil, offset, margin_label.info)
-            end
-            for _, info in ipairs(multi_labels) do
-                result = update_result(result, offset, info)
-            end
-            for _, ll in ipairs(line_labels) do
-                if ll.info.end_char then
-                    result = update_result(result, offset, ll.info)
-                end
-            end
-            return result
+        if margin_label then
+            update_result(margin_label.info)
         end
+        for _, info in ipairs(multi_labels) do
+            update_result(info)
+        end
+        for _, ll in ipairs(line_labels) do
+            if ll.info.end_char then
+                update_result(ll.info)
+            end
+        end
+        return result
     end
 
     --- Find the character that should be drawn and the number of times it
@@ -1214,11 +1137,11 @@ do -- report Rendering
     ---@param W Writer
     ---@param line Line
     ---@param margin_label LineLabel?
-    ---@param multi_labels LineLabel[]
     ---@param line_labels LineLabel[]
+    ---@param multi_labels LineLabel[]
     ---@param src Source
     ---@param cfg Config
-    local function render_line(W, line, margin_label, multi_labels, line_labels, src, cfg)
+    local function render_line(W, line, margin_label, line_labels, multi_labels, src, cfg)
         --- @type Color?
         local cur_color
         local cur_offset, cur_byte_offset = 1, line.byte_offset
@@ -1233,14 +1156,10 @@ do -- report Rendering
             local repeat_count, cp = char_width(src.text, line.byte_offset, i, cfg)
             if cur_color ~= next_color or (cp == 32 and repeat_count > 1) then
                 local next_start_bytes = assert(utf8.offset(
-                    src.text,
-                    i - cur_offset + 1,
-                    cur_byte_offset
-                ))
+                    src.text, i - cur_offset + 1, cur_byte_offset))
                 if i > cur_offset then
                     W:label_or_unimportant(cur_color, (src.text:sub(
-                        cur_byte_offset,
-                        next_start_bytes - 1
+                        cur_byte_offset, next_start_bytes - 1
                     ):gsub("\t", ""))):reset()
                 end
                 if cp == 32 and repeat_count > 1 then
@@ -1252,8 +1171,7 @@ do -- report Rendering
             end
         end
         W:label_or_unimportant(cur_color, (src.text:sub(
-            cur_byte_offset,
-            line.byte_offset + line.byte_len - 1
+            cur_byte_offset, line.byte_offset + line.byte_len - 1
         ):gsub("\t", ""))):reset()
     end
 
@@ -1309,30 +1227,25 @@ do -- report Rendering
         return result
     end
 
-    --- Render notes or help items
-    ---@param W Writer
-    ---@param prefix string
-    ---@param items string[]
-    ---@param line_no_width integer
-    ---@param cfg Config
-    local function render_help_or_node(W, prefix, items, line_no_width, cfg)
-        for i, item in ipairs(items) do
-            if not cfg.compact then
-                render_lineno(W, nil, line_no_width, false, cfg)
-                W "\n"
-            end
-            local item_prefix = #items > 1 and ("%s %d"):format(prefix, i) or prefix
-            local item_prefix_len
-            for line in item:gmatch "([^\n]*)\n?" do
-                render_lineno(W, nil, line_no_width, false, cfg)
-                if not item_prefix_len then
-                    W:note(item_prefix) ": " (line) "\n"
-                    item_prefix_len = #item_prefix + 2
-                else
-                    W:padding(item_prefix_len)(line) "\n"
+    --- Calculate the maximum arrow line length for a specific line
+    ---@param line Line
+    ---@param line_labels LineLabel[]
+    ---@param compact boolean
+    ---@return integer
+    local function calc_arrow_len(line, line_labels, compact)
+        local arrow_end_space = compact and 1 or 2
+        local arrow_len = 0
+        for l, ll in ipairs(line_labels) do
+            if ll.info.multi then
+                arrow_len = line.len + (line.newline and 1 or 0)
+            else
+                local cur = (ll.info.end_char or ll.info.start_char - 1) - line.offset + 1
+                if arrow_len < cur then
+                    arrow_len = cur
                 end
             end
         end
+        return arrow_len + arrow_end_space
     end
 
     --- Render arrows for a line
@@ -1360,8 +1273,8 @@ do -- report Rendering
                 if not cfg.compact then
                     -- Margin alternate
                     render_lineno(W, nil, line_no_width, is_ellipsis, cfg)
-                    render_margin(W, false, is_ellipsis, line, row, false,
-                        line_labels, margin_label, multi_labels_with_message, cfg)
+                    render_margin(W, false, is_ellipsis, line, ll, false, line_labels,
+                        margin_label, multi_labels_with_message, cfg)
                     for col = 1, arrow_len do
                         local width = 1
                         if col <= line.len then
@@ -1406,8 +1319,8 @@ do -- report Rendering
 
                 -- Margin
                 render_lineno(W, nil, line_no_width, is_ellipsis, cfg)
-                render_margin(W, false, is_ellipsis, line, row, true,
-                    line_labels, margin_label, multi_labels_with_message, cfg)
+                render_margin(W, false, is_ellipsis, line, ll, true, line_labels,
+                    margin_label, multi_labels_with_message, cfg)
 
                 -- Lines
                 for col = 1, arrow_len do
@@ -1451,12 +1364,38 @@ do -- report Rendering
         end
     end
 
+    --- Render notes or help items
+    ---@param W Writer
+    ---@param prefix string
+    ---@param items string[]
+    ---@param line_no_width integer
+    ---@param cfg Config
+    local function render_help_or_node(W, prefix, items, line_no_width, cfg)
+        for i, item in ipairs(items) do
+            if not cfg.compact then
+                render_lineno(W, nil, line_no_width, false, cfg)
+                W "\n"
+            end
+            local item_prefix = #items > 1 and ("%s %d"):format(prefix, i) or prefix
+            local item_prefix_len
+            for line in item:gmatch "([^\n]*)\n?" do
+                render_lineno(W, nil, line_no_width, false, cfg)
+                if not item_prefix_len then
+                    W:note(item_prefix) ": " (line) "\n"
+                    item_prefix_len = #item_prefix + 2
+                else
+                    W:padding(item_prefix_len)(line) "\n"
+                end
+            end
+        end
+    end
+
     --- render the report
     ---@param cache Cache | Source
     ---@return string
     function Report:render(cache)
-        local draw = self.config.char_set
         local cfg = self.config
+        local draw = cfg.char_set
         local groups = get_source_groups(self.labels, cache, cfg.index_type,
             self.source_id or "<unknown>")
         local W = Writer.new(cfg)
@@ -1472,12 +1411,11 @@ do -- report Rendering
 
             -- Render reference line
             render_reference(W, self, line_no_width, group_idx, group, src)
-
             if not cfg.compact then
                 W:padding(line_no_width + 2):margin(draw.vbar):reset "\n"
             end
 
-            -- Generate a list of label that multi is true
+            -- Generate lists of multiline labels
             local multi_labels, multi_labels_with_message =
                 collect_multi_labels(group)
 
@@ -1494,11 +1432,9 @@ do -- report Rendering
                 -- Generate a list of labels for this line, along with their label columns
                 ---@type LineLabel[]
                 local line_labels = {}
-                collect_multi_labels_in_line(line_labels, margin_label, line,
+                collect_multi_labels_in_line(line_labels, line, margin_label,
                     multi_labels_with_message)
-                collect_labels_in_line(line_labels, group, line, cfg.label_attach)
-
-                -- Sort the labels by their columns
+                collect_labels_in_line(line_labels, line, group, cfg.label_attach)
                 sort_line_labels(line_labels)
 
                 local draw_line = false
@@ -1517,12 +1453,11 @@ do -- report Rendering
                 if draw_line then
                     render_lineno(W, idx + src.display_line_offset,
                         line_no_width, is_ellipsis, cfg)
-                    render_margin(W, true, is_ellipsis, line, nil, false,
-                        line_labels, margin_label, multi_labels_with_message, cfg)
-
+                    render_margin(W, true, is_ellipsis, line, nil, false, nil,
+                        margin_label, multi_labels_with_message, cfg)
                     if not is_ellipsis then
-                        render_line(W, line, margin_label,
-                            multi_labels, line_labels, src, cfg)
+                        render_line(W, line, margin_label, line_labels,
+                            multi_labels, src, cfg)
                     end
                     W "\n"
 
@@ -1541,9 +1476,7 @@ do -- report Rendering
         render_help_or_node(W, "Help", self.help, line_no_width, self.config)
         render_help_or_node(W, "Note", self.notes, line_no_width, self.config)
         if #groups > 0 and not self.config.compact then
-            W:margin()
-                :padding(line_no_width + 2, draw.hbar)(draw.rbot)
-                :reset "\n"
+            W:margin():padding(line_no_width + 2, draw.hbar)(draw.rbot):reset "\n"
         end
         return W:tostring()
     end
