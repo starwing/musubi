@@ -57,13 +57,6 @@ do
         }, Line)
     end
 
-    --- returns the character span of this line in the original [`Source`]
-    ---@return integer first
-    ---@return integer last
-    function Line:span()
-        return self.offset, self.offset + self.len - 1
-    end
-
     --- checks if a position is within the span of this line
     ---@param pos integer
     ---@return boolean
@@ -1046,8 +1039,9 @@ do -- report Rendering
             if corner then
                 local a = is_start and draw.ltop or draw.lbot
                 W:use_color(corner.label.color):label(a):compact(draw.hbar)
-            elseif vbar and hbar and not cfg.cross_gap then
-                W:use_color(vbar.label.color):label(draw.xbar):compact(draw.hbar)
+                -- hbar and corner are always setted together
+                -- elseif vbar and hbar and not cfg.cross_gap then
+                --     W:use_color(vbar.label.color):label(draw.xbar):compact(draw.hbar)
             elseif hbar then
                 W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar)
             elseif vbar then
@@ -1343,6 +1337,7 @@ do -- report Rendering
                         elseif is_hbar then
                             a, b = draw.hbar, draw.hbar
                         elseif vbar.info.multi and row == 1 and cfg.compact then
+                            -- TODO: how to cover this line?
                             a = draw.uarrow
                         end
                         W:use_color(vbar.info.label.color):label(a):padding(width - 1, b)

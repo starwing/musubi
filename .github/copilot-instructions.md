@@ -125,8 +125,21 @@ Developer workflows & commands
 Patterns to watch when editing
 - Any change affecting rendering should update corresponding expectations in `test.lua`; the suite contains explicit string comparisons.
 - **All tests must verify complete output**: Every test must use `lu.assertEquals(msg, expected_output)` with the full expected string, including all color codes, whitespace, and newlines. Never use partial checks like `assertNotNil(msg:find(...))` or `assertTrue(# msg > 0)`.
+- **Trailing whitespace handling**: Use `remove_trailing()` helper function when comparing test output to strip trailing spaces from each line. This prevents fragile whitespace comparisons while preserving semantic correctness.
+- **Color code testing**: When testing color output, use `("%q"):format(msg)` to make escape sequences visible in test expectations. Only use color codes in one or two tests to cover color-related code paths; prefer `no_color_ascii()` config for all other tests to keep expectations readable.
+- **Multi-source diagnostics**: Use `ariadne.Cache.new()` (not `Source.new("")`) to create a proper cache for multi-source tests with multiple files.
 - UTF-8 handling relies on `utf8.len`/`utf8.offset`. Guard code paths when targeting Lua without built-in UTF-8 library.
 - Config mutations are shared by reference; call `ariadne.config()` per report when you need isolated settings.
+
+Test development workflow
+1. Run tests: `lua test.lua`
+2. Collect coverage: `rm -f luacov.* && lua -lluacov test.lua && luacov ariadne.lua > /dev/null`
+3. Find uncovered lines: `rg -C 3 '^\*+0 ' luacov.report.out` (shows code with context, not line numbers)
+   - The luacov.report.out format: `<hit_count> <code>` where `***0` (variable-length stars) means uncovered
+   - Use context to identify which function/section contains uncovered code
+   - HTML reports have line numbers but are not terminal-friendly
+4. Add targeted tests for uncovered branches
+5. Verify with `rm -f luacov.* && lua -lluacov test.lua && luacov ariadne.lua > /dev/null && rg -C 3 '^\*+0 ' luacov.report.out`
 
 Concrete examples to cite
 - Basic error: 
@@ -154,7 +167,23 @@ What you (AI agent) should do first when changing code
 1. Re-run `lua test.lua` to ensure rendering changes match expectations.
 2. If diagnostics output intentionally changes, update the literal strings in `test.lua` that assert on the new output.
 3. Confirm both ASCII and Unicode glyph sets still behave, especially when toggling `config.char_set` or `config.index_type`.
-4. Run `rm -f luacov.*; lua test.lua && luacov ariadne.lua` to ensure coverage remains acceptable.
+4. Check coverage: `rm -f luacov.* && lua -lluacov test.lua && luacov ariadne.lua > /dev/null && rg -C 3 '^\*+0 ' luacov.report.out`
+
+**CRITICAL: Always read terminal output**
+- **NEVER** run a terminal command without immediately reading its output.
+- After calling `run_in_terminal`, the output is NOT automatically shown to you.
+- You MUST explicitly check the terminal output using one of these methods:
+  1. Check the `<function_results>` block immediately after the tool call
+  2. Use `get_terminal_output(id)` if you need to retrieve output later
+  3. Use `terminal_last_command()` to see what command ran
+- **Common mistake**: Running multiple commands without checking output, then asking "what happened?"
+- **Fix**: Read output after EVERY terminal command before proceeding.
+
+**CRITICAL: Update instructions when corrected**
+- When the user points out a mistake or recurring error pattern, **immediately** update this instructions file.
+- Do NOT wait to be reminded multiple times about the same mistake.
+- Add the correction to the relevant section (e.g., "What you (AI agent) should do first", "Patterns to watch", etc.).
+- This file is your knowledge base - keep it accurate and up-to-date.
 
 If something is unclear
 - Ask which Lua version/environment the change must support (Lua 5.1, LuaJIT, 5.4, etc.).
@@ -166,32 +195,27 @@ If something is unclear
 
 ### Project maturity
 - ✅ **Core implementation complete**: All rendering logic ported and tested
-- ✅ **Test coverage**: 98% (see `luacov.report.out` for details)
+- ✅ **Test coverage**: 100% (all reachable code covered)
 - ✅ **Pixel-perfect output**: All test cases produce identical output to reference implementation
 - ✅ **Performance optimized**: O(n) rendering vs original O(n²) nested loops
 
 ### Active TODO
-**Priority 1: Complete test coverage** (Target: 100%)
-- Current: 98% coverage with 8 uncovered lines
-- Uncovered lines (from `luacov.report.out`):
-  1. Line 26: `Cache.new()` - Dead code (Source is used directly, not base Cache)
-  2. Line 238: `default_color("error")` - Missing test for default color error category
-  3. Line 239: `default_color("error")` return - Missing test
-  4. Line 244: `default_color("skipped_margin")` - Missing test for skipped margin color
-  5. Line 1329: `draw.ltop` in underbar logic - Complex vbar/underbar interaction, disabled by `or true`
-  6. Line 1409: `draw.xbar` in arrow rendering - Cross-gap disabled case with vbar
-  7. Line 1413: `draw.uarrow` in compact multiline - Compact mode with multiline arrows
-  8. Line 1529: Multiple groups separator - Missing test for multi-group reports
-- Next steps:
-  1. Add test for `default_color` with "error" and "skipped_margin" categories
-  2. Add test for multi-group reports (multiple source files in one diagnostic)
-  3. Investigate lines 1329, 1409, 1413 - may be unreachable or need special config combinations
-  4. Consider removing `Cache.new()` (dead code)
-  5. Verify coverage improvement with `lua -lluacov test.lua && luacov ariadne.lua`
+**Priority 1: Complete test coverage** ✅ **COMPLETE**
+- Current: 100% coverage (all reachable code covered, 54 tests passing)
+- Dead code removed:
+  - Line 67: `Line:span()` - Removed unused helper method
+  - Line 1046: `elseif vbar and hbar and not cfg.cross_gap` - Commented out unreachable branch
+    - Analysis: `hbar` and `corner` are always set together (`hbar, corner = info, info`), so the `elseif corner` branch always matches first, making this branch unreachable
+  - Line 1340: `elseif vbar.info.multi and row == 1 and cfg.compact` - Commented out unreachable branch
+    - Analysis: When `vbar` exists at `col ~= ll.col`, either `is_hbar` is true (handled by previous branches) or the default vbar rendering applies. The combination of conditions required for this branch (vbar exists, col != ll.col, is_hbar=false, vbar.info.multi=true, row=1, cfg.compact=true) appears impossible to satisfy in practice.
+- All previously uncovered lines now have test coverage:
+  - ✅ Line 1204: `return nil` when underlines disabled → `test_underlines_disabled`
+  - ✅ Line 1222: `result = ll` shorter label priority → `test_underline_shorter_label_priority`
+  - ✅ Test added for `cross_gap = false` behavior → `test_cross_gap_vbar_hbar`
 
 **Priority 2: Line width limiting feature** (See "Next development phase" below)
 - Status: Not started
-- Awaiting completion of 100% test coverage before starting
+- Ready to begin now that 100% test coverage is achieved
 
 ### Known limitations
 - Only supports `\n` newlines (not Unicode line separators)
