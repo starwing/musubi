@@ -219,6 +219,91 @@ When `row=1` (processing Label C) and `col=1`:
 
 **Test implementation**: See `test_uarrow` in `test.lua`.
 
+### Line 1043: `xbar` in margin with cross_gap disabled
+
+**Location**: `render_margin()`, line 1043-1044:
+```lua
+elseif vbar and hbar and not cfg.cross_gap then
+    W:use_color(vbar.label.color):label(draw.xbar):compact(draw.hbar)
+```
+
+**Why this is hard to cover**:
+
+This line renders a cross symbol (`+` in ASCII, `┼` in Unicode) in the margin when two multiline labels intersect. The challenge is that `vbar` and `hbar` are set in **different iterations** of the loop.
+
+**Key variable scoping**:
+```lua
+local hbar, margin_ptr  -- Outer variables, persist across iterations
+for mli, info in ipairs(multi_labels_with_message) do
+    local vbar, corner  -- Local variables, reset each iteration
+    -- ...
+end
+```
+
+**Original Rust code bug**:
+
+The original implementation had this sequence:
+```rust
+// Set hbar for margin_ptr rows
+if let (Some((margin, _is_start)), true) = (margin_ptr, is_line) {
+    if !is_col && !is_limit {
+        hbar = hbar.or(Some(margin.label));
+    }
+}
+
+// Immediately filter out the hbar we just set (BUG!)
+hbar = hbar.filter(|l| {
+    margin_label.as_ref().map_or(true, |margin| !std::ptr::eq(margin.label, *l))
+    || !is_line
+});
+```
+
+This was **no-op code**: it set `hbar = margin.label`, then immediately filtered it out when `is_line = true` and `margin.label == hbar`. The second filter should have checked `&& !is_limit` to preserve `hbar` for all columns except the last.
+
+**The fix** (lines 1039-1041, 1063):
+
+```lua
+-- Line 1039-1041: Set hbar for margin_ptr rows
+if (not hbar) and margin_ptr and is_line and info ~= margin_ptr then
+    hbar = margin_ptr
+end
+
+-- Line 1063: Clear hbar at the last column (show arrow instead)
+if hbar and (not is_line or hbar ~= margin_ptr) then
+    W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar):reset()
+elseif margin_ptr and is_line then
+    W:use_color(margin_ptr.label.color):label(draw.rarrow):compact ' ':reset()
+```
+
+**How line 1043 gets triggered**:
+
+When `margin_ptr` is set and we're on a line where it ends (`is_line = true`):
+- **Iteration 1** (margin_ptr label): Sets `vbar`, `corner`, `hbar` for itself → outputs `corner`
+- **Iteration 2** (another multiline label): 
+  - Sets `vbar = info` (this label passes through)
+  - Line 1039 triggers: `hbar = margin_ptr` (inherited from previous context)
+  - Now we have: `vbar != nil`, `hbar != nil`, `corner == nil`, `cfg.cross_gap = false`
+  - Line 1043 executes: output `xbar` (cross symbol)
+
+**Test scenario** (`test_margin_xbar`):
+
+```lua
+-- Source: "apple\norange\nbanana\nstrawberry"
+-- Label outer: (1, 14), chars 1-14, spans lines 1-2, order=0 (margin_label)
+-- Label inner: (7, 21), chars 7-21, spans lines 2-3, order=1
+
+-- On line 2, margin rendering:
+--   margin_ptr = outer (ends on this line)
+--   Iteration 1 (outer): outputs corner ','
+--   Iteration 2 (inner): 
+--     - vbar = inner (passes through)
+--     - hbar = outer (from line 1039)
+--     - Outputs xbar '+' at line 1043
+-- Result: ",-+-> orange"
+```
+
+**Test implementation**: See `test_margin_xbar` in `test.lua`.
+
 ## Code Examples
 
 ### Basic Error Report

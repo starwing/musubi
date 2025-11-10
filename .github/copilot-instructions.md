@@ -4,6 +4,8 @@
 > - [Project Structure](project-structure.md) - Technical architecture and design decisions
 > - [Development Roadmap](roadmap.md) - TODO, plans, and completed work
 
+**IMPORTANT for AI agents**: When documenting challenging coverage cases, complex algorithms, or significant architectural decisions, update `project-structure.md` (not this file). This instructions file focuses on workflows and conventions.
+
 This repository is a Lua implementation of the Ariadne diagnostics renderer. Originally ported from the Rust `ariadne` library, it now serves as the primary implementation with architectural improvements for performance and clarity.
 
 ## Quick Context
@@ -68,41 +70,41 @@ For development status and plans, see [roadmap.md](roadmap.md).
 
 - **NO EXCEPTIONS**: You MUST read the output of EVERY terminal command you execute.
 - **ENFORCEMENT**: If you run a terminal command, the VERY NEXT action must be examining its output.
-- After calling `run_in_terminal`, the output is NOT automatically shown to you in the `<function_results>` block.
 
-**You MUST explicitly verify the output by**:
-1. **First**: Check the `<function_results>` block for the command's output
-2. **If empty or unclear**: The output may be truncated or missing - you must acknowledge this and describe what you see
-3. **If you see a prompt or exit code without output**: The command may have succeeded silently OR failed - you must acknowledge this
-4. **Never assume success**: An exit code alone doesn't tell you what happened - always read the actual output
+**CRITICAL: How to get terminal output**:
+- `run_in_terminal` with `isBackground=false`: Output may NOT appear in `<function_results>` (often shows only prompt)
+- **YOU MUST use `terminal_last_command` tool immediately after ANY terminal command**
+- `terminal_last_command` returns: command, directory, exit code, and **complete output**
+- For background processes: use `get_terminal_output` with terminal ID
 
-**Common mistake**: Running a command, seeing `$ [exit code]` in results, and continuing without reading what actually happened.
-
-**Correct behavior**:
+**Correct workflow**:
 ```
-1. Run command with run_in_terminal
-2. Read the <function_results> block
-3. Describe what you see (even if it's "no output" or "command prompt only")
-4. If test failed, read the failure message
+1. Call run_in_terminal(command, isBackground=false)
+2. IMMEDIATELY call terminal_last_command  ← MANDATORY!
+3. Read the output from terminal_last_command results
+4. Describe what you see in the output
 5. Only then proceed to next action
 ```
 
+**Common mistake**: Assuming `<function_results>` from `run_in_terminal` contains the output.
+
 **Example of WRONG behavior**:
 ```
-<run lua test.lua>
-<see exit code 1>
-<immediately try to fix code without reading error>  ← WRONG!
+<run_in_terminal: lua test.lua>
+<see only "$ [00:28:08]" in function_results>
+<assume no output or success>  ← WRONG! You didn't check terminal_last_command!
 ```
 
 **Example of CORRECT behavior**:
 ```
-<run lua test.lua>
-<see exit code 1>
-<observe: "I see exit code 1, but the output shows only a prompt. Let me check what the actual error was...">
-<take appropriate action based on what you learned>
+<run_in_terminal: lua test.lua>
+<see only "$ [00:28:08]" in function_results>
+<immediately call terminal_last_command>
+<observe: "terminal_last_command shows exit code 1 and error message: ...">
+<take appropriate action based on the actual output>
 ```
 
-**Violation consequences**: If you violate this rule, you will waste time debugging blind and the user will need to correct you.
+**Violation consequences**: If you don't use `terminal_last_command`, you will miss critical output and waste time debugging blind.
 
 ### ⚠️ CRITICAL: Update Instructions When Corrected
 
