@@ -1332,12 +1332,12 @@ do -- report Rendering
                         W:use_color(ll.info.label.color):label(a):padding(width - 1, draw.hbar)
                     elseif vbar and col ~= ll.col then
                         local a, b = draw.vbar, ' '
-                        if not cfg.cross_gap and is_hbar then
+                        if is_hbar then
                             a = draw.xbar
-                        elseif is_hbar then
-                            a, b = draw.hbar, draw.hbar
+                            if cfg.cross_gap then
+                                a, b = draw.hbar, draw.hbar
+                            end
                         elseif vbar.info.multi and row == 1 and cfg.compact then
-                            -- TODO: how to cover this line?
                             a = draw.uarrow
                         end
                         W:use_color(vbar.info.label.color):label(a):padding(width - 1, b)

@@ -5,7 +5,7 @@ Quick context
 - Dependencies: `lua-utf8` library for UTF-8 operations, `luaunit` for tests, optional `luacov` for coverage.
 - Entry points: `ariadne.lua` exports the public API (see "Public API" section below).
 - Tests: run `lua test.lua` from the project root once `luaunit` (and `luacov` if desired) are on `package.path`.
-- Coverage: Currently at 98% test coverage. See `luacov.report.out` for coverage details.
+- Coverage: Currently at 100% test coverage (all reachable code covered). See `luacov.report.out` for coverage details.
 
 High-level architecture (what to know fast)
 - `ariadne.lua` contains all runtime code (~1500 lines), structured into sections:
@@ -195,32 +195,34 @@ If something is unclear
 
 ### Project maturity
 - ✅ **Core implementation complete**: All rendering logic ported and tested
-- ✅ **Test coverage**: 100% (all reachable code covered)
+- ✅ **Test coverage**: 100% (all reachable code covered, 55 tests passing)
 - ✅ **Pixel-perfect output**: All test cases produce identical output to reference implementation
 - ✅ **Performance optimized**: O(n) rendering vs original O(n²) nested loops
 
 ### Active TODO
-**Priority 1: Complete test coverage** ✅ **COMPLETE**
-- Current: 100% coverage (all reachable code covered, 54 tests passing)
-- Dead code removed:
-  - Line 67: `Line:span()` - Removed unused helper method
-  - Line 1046: `elseif vbar and hbar and not cfg.cross_gap` - Commented out unreachable branch
-    - Analysis: `hbar` and `corner` are always set together (`hbar, corner = info, info`), so the `elseif corner` branch always matches first, making this branch unreachable
-  - Line 1340: `elseif vbar.info.multi and row == 1 and cfg.compact` - Commented out unreachable branch
-    - Analysis: When `vbar` exists at `col ~= ll.col`, either `is_hbar` is true (handled by previous branches) or the default vbar rendering applies. The combination of conditions required for this branch (vbar exists, col != ll.col, is_hbar=false, vbar.info.multi=true, row=1, cfg.compact=true) appears impossible to satisfy in practice.
-- All previously uncovered lines now have test coverage:
-  - ✅ Line 1204: `return nil` when underlines disabled → `test_underlines_disabled`
-  - ✅ Line 1222: `result = ll` shorter label priority → `test_underline_shorter_label_priority`
-  - ✅ Test added for `cross_gap = false` behavior → `test_cross_gap_vbar_hbar`
 
-**Priority 2: Line width limiting feature** (See "Next development phase" below)
-- Status: Not started
-- Ready to begin now that 100% test coverage is achieved
+**Priority 1: Line width limiting feature** (See "Planned features" section below)
+- Status: Not started, ready to begin
+- Goal: Add optional `line_width` config for intelligent truncation of long diagnostic lines
 
 ### Known limitations
 - Only supports `\n` newlines (not Unicode line separators)
 - No streaming output (full diagnostic built in memory)
 - Color codes must follow `\27[...m` format (no validation)
+
+### Completed work
+
+**✅ 100% test coverage achievement** (2025-11-10)
+- Final status: 100% coverage (all reachable code covered, 55 tests passing)
+- Dead code identified and removed:
+  - Line 67: `Line:span()` - Removed unused helper method
+  - Line 1046: `elseif vbar and hbar and not cfg.cross_gap` - Commented out unreachable branch
+    - Analysis: `hbar` and `corner` are always set together (`hbar, corner = info, info`), so the `elseif corner` branch always matches first, making this branch unreachable
+- All edge cases now have test coverage:
+  - ✅ Line 1204: `return nil` when underlines disabled → `test_underlines_disabled`
+  - ✅ Line 1222: `result = ll` shorter label priority → `test_underline_shorter_label_priority`
+  - ✅ Line 1341: `a = draw.uarrow` compact multiline vbar → `test_uarrow` (see "Challenging coverage case" below)
+  - ✅ Cross-gap behavior: `test_cross_gap_vbar_hbar`
 
 ---
 
@@ -312,12 +314,71 @@ local width = cfg.tab_width - ((col - 1) % cfg.tab_width)
 | 5 | 4 | 4 |
 | 8 | 7 | 1 |
 
+### Challenging coverage case: Line 1341 (`a = draw.uarrow` in compact mode)
+
+**Location**: `render_arrows()`, line 1339-1341:
+```lua
+elseif vbar.info.multi and row == 1 and cfg.compact then
+    a = draw.uarrow
+end
+```
+
+**Why this is hard to cover**:
+
+This line requires a very specific combination of conditions that appear contradictory at first:
+
+1. **`vbar` exists AND `col ~= ll.col`** (line 1326 condition)
+   - Key insight: `ll` is the **outer loop variable** (from `for row, ll in ipairs(line_labels)`)
+   - `vbar` is returned by `get_vbar(col, row, margin_label, line_labels)`
+   - These can be **different labels** from the same `line_labels` array!
+
+2. **`is_hbar = false`** (line 1319 definition):
+   ```lua
+   local is_hbar = (col > ll.col) ~= ll.info.multi or
+       ll.draw_msg and col > ll.col
+   ```
+   - For `ll.info.multi = true`, this becomes:
+     `is_hbar = (col > ll.col) ~= true OR (ll.draw_msg AND col > ll.col)`
+   - For `is_hbar = false`, we need:
+     - `(col > ll.col) == true` AND `NOT (ll.draw_msg AND col > ll.col)` ← **Contradiction!**
+     - OR `col <= ll.col` AND `NOT ll.draw_msg` ← **This works!**
+
+3. **`vbar.info.multi = true`** (the vbar label must be multiline)
+
+4. **`row == 1`** (first arrow row)
+
+5. **`cfg.compact = true`** (compact mode)
+
+6. **`vbar` must exist via `get_vbar(col, row, margin_label, line_labels)`**:
+   - Requires some label in `line_labels` where `ll.col == col` and `row <= i`
+   - That label must have a message and not be the `margin_label`
+
+**The winning strategy**:
+
+To satisfy `col <= ll.col` AND `col == vbar.col`, we need **3 multiline labels**:
+
+- **Label A** (margin_label): Highest column (e.g., col=4), excluded from `line_labels` by `collect_multi_labels_in_line`
+- **Label B** (vbar): Lower column (e.g., col=1), included in `line_labels`, matches `get_vbar(1, ...)`
+- **Label C** (ll): Middle column (e.g., col=2), lowest order (processed first in outer loop)
+
+When `row=1` (processing Label C) and `col=1`:
+- `ll = Label C` (outer loop), `ll.col = 2`
+- `vbar = Label B` (from `get_vbar(1, ...)`), `vbar.col = 1`
+- `col (1) <= ll.col (2)` ✓ → `is_hbar = false`
+- `col (1) ~= ll.col (2)` ✓ → enters line 1326 branch
+- `vbar.info.multi = true` ✓
+- `cfg.compact = true` ✓
+- Line 1341 executes!
+
+**Test implementation**: See `test_uarrow` in `test.lua`.
+
 ---
 
-## Next development phase: Line width limiting
+## Planned features
 
-### Overview
-Add optional `line_width` config to intelligently truncate/split long diagnostic lines while preserving readability.
+### Line width limiting
+
+**Overview**: Add optional `line_width` config to intelligently truncate/split long diagnostic lines while preserving readability.
 
 ### Motivation
 Current behavior (e.g., `test_label_at_end_of_long_line`) renders 900+ character lines in full, making terminal output unusable. Proposed enhancement:

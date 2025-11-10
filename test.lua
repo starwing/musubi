@@ -1367,6 +1367,29 @@ Error: test two multiline labels ending at same col
    |`--^----- labelA spans 1-6
 ]])
     end
+
+    function TestWrite.test_uarrow()
+        local src = ariadne.Source.new("apple\norange\nbanana")
+        local msg = remove_trailing(ariadne.Report.build("Error", 1)
+            :with_config(no_color_ascii(nil, true))
+            :set_message("uarrow test")
+            :add_label(ariadne.Label.new(1, 7):with_message("inner"))
+            :add_label(ariadne.Label.new(2, 14):with_message("outer"):with_order(1))
+            :add_label(ariadne.Label.new(1, 8):with_message("outer outer"):with_order(2))
+            :render(src))
+        lu.assertEquals(msg, [=[
+Error: uarrow test
+   ,-[ <unknown>:1:1 ]
+ 1 | ,->apple
+   | |,-'^
+   |,----'
+ 2 ||||>orange
+   |||`--------- inner
+   ||`---^------ outer outer
+ 3 ||-->banana
+   |`---------- outer
+]=])
+    end
 end
 
 _G.TestSource = TestSource
