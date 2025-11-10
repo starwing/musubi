@@ -208,6 +208,7 @@ do
         rcross = '┤',
         underbar = '┬',
         underline = '─',
+        ellipsis = '…',
     }, Characters)
 
     ---@type CharSet
@@ -231,6 +232,7 @@ do
         rcross = '|',
         underbar = '|',
         underline = '^',
+        ellipsis = '...',
     }, Characters)
 end
 
@@ -327,6 +329,7 @@ do
         tab_width = 4,
         char_set = Characters.unicode,
         index_type = "char",
+        line_width = nil, -- nil = no limit, positive integer = max width
     }, Config)
 
     --- creates a new Config

@@ -18,8 +18,9 @@ This document tracks the project's development status, active TODOs, completed w
 ## Active TODO
 
 **Priority 1: Line width limiting feature** (See "Planned Features" section below)
-- Status: Not started, ready to begin
+- Status: Phase 0 in progress
 - Goal: Add optional `line_width` config for intelligent truncation of long diagnostic lines
+- Current phase: Infrastructure setup (Config, Characters, helper functions)
 
 ## Completed Work
 
@@ -79,35 +80,41 @@ This document tracks the project's development status, active TODOs, completed w
 
 ### Implementation Phases
 
-**Phase 0: Infrastructure (1-2 days)**
+**Phase 0: Infrastructure (1-2 days)** 🔄 *In Progress*
 - Add `Config.line_width` field (default `nil` = no limit)
 - Add `Characters.ellipsis`: `"…"` (unicode) / `"..."` (ascii)
-- Add `Color` category `"ellipsis"`
-- Implement helper functions:
-  - `calc_display_width(text, cfg)`: Compute rendered width (accounts for tabs, UTF-8, colors)
-  - `truncate_to_width(text, max_width, cfg)`: Safe UTF-8 truncation
+- Implement helper functions (depending on luautf8 enhancements):
+  - `calc_display_width(text, cfg)`: Wrapper around `utf8.subwidth()` with ANSI color stripping
+  - `truncate_to_width(text, max_width, cfg)`: Wrapper around `utf8.truncate_width()` with ellipsis
 - **Validation**: All existing tests pass with `line_width = nil`
+- **Dependencies**: Requires luautf8 to add:
+  - `utf8.subwidth(str, start_byte, end_byte, [tab_width], [start_col])` - compute display width of substring
+  - `utf8.truncate_width(str, max_width, [tab_width], [start_col])` - find safe truncation point
 
-**Phase 1: Header truncation (2-3 days)**
+**Phase 1: Header truncation (1-2 days)**
 - Modify `render_header()` to truncate file path when exceeding `line_width`
-- Strategy: Keep filename + location, truncate parent directories
+- Strategy: Keep filename + location, truncate parent directories with ellipsis
 - Edge cases: very long line numbers, very small `line_width`
-- **Test**: Add `test_header_truncation` with 40-char limit
+- **Test**: Add `test_header_truncation` with various widths
+- **Goal**: Quick win - visible improvement with minimal risk
 
-**Phase 2: Single-label windowing (3-5 days)**
-- Modify `render_line()` to accept `col_start, col_end` range parameters
-- Compute optimal window: `[min(label.start) - margin, max(label.end) + margin]`
-- Add ellipsis rendering for truncated context
-- Update `calc_arrow_len()` to work with windowed ranges
+**Phase 2a: End-of-line single-label windowing (Simplified, 2-3 days)**
+- **Scope**: Only handle labels at/near end of long lines (like `test_label_at_end_of_long_line`)
+- Strategy: Show `...` prefix + local context around label
+- No changes to multi-label logic or arrow rendering
 - **Test**: Modify `test_label_at_end_of_long_line` with `line_width = 80`
-- **Challenges**:
-  - Column alignment: label positions must adjust to window offset
-  - Margin symbols: multiline labels may extend outside window
+- **Goal**: Solve 80% of real-world long-line issues with minimal complexity
 
-**Phase 3: Multi-label splitting (5-7 days)**
+**Phase 2b: POC for virtual rows (3-5 days)**
+- Create experimental branch to test virtual row concept
+- Implement multi-label splitting in isolation
+- Test margin symbol continuity across virtual rows
+- Evaluate architectural fit and complexity
+- **Decision point**: Proceed with Phase 3 or adjust approach
+
+**Phase 3: Multi-label splitting (5-7 days)** ⏸️ *Pending Phase 2b results*
 - Implement "virtual row" concept: same source line rendered multiple times
 - Split labels into groups that fit within `line_width`
-- First group shows line number, subsequent groups show spaces
 - Preserve `vbar` continuity across groups
 - **Test**: Add `test_multi_label_split` with 3+ overlapping labels
 - **Challenges**:
@@ -115,28 +122,24 @@ This document tracks the project's development status, active TODOs, completed w
   - Message alignment across virtual rows
   - Interaction with existing "skipped lines" logic
 
-**Phase 4: Forced multiline (2-3 days)**
+**Phase 4: Forced multiline (2-3 days)** ⏸️ *Optional - evaluate after Phase 3*
 - Detect "unsplittable" oversized labels
 - Runtime conversion: set `label.multi = true` during rendering
-- Adjust `render_margin()` and `render_arrows()` for dynamic multiline labels
 - **Test**: Add `test_force_multiline` with 200-char single label
-- **Challenges**:
-  - Mutating label info during render (violates immutability)
-  - Message positioning for converted labels
+- **Note**: May not be needed if Phase 3 provides sufficient solutions
 
-**Phase 5: Edge cases & polish (3-5 days)**
-- Handle extreme widths: `line_width < 20`, `line_width > 1000`
-- UTF-8 safety: ensure truncation respects character boundaries
-- Color code handling: exclude ANSI escapes from width calculation
-- Performance: cache width calculations
-- **Test**: Fuzz testing with random labels and widths
+**Phase 5: Edge cases & polish (2-3 days)**
+- Handle extreme widths: `line_width < 40`, very large widths
+- UTF-8 safety: verify truncation respects character boundaries (handled by luautf8)
+- Color code handling: ensure ANSI escapes are stripped before width calculation
+- **Test**: Edge cases with combining characters, emoji, zero-width characters
 
 ### Technical Challenges
 
-**Challenge 1: Width prediction consistency**
-- Problem: Must predict rendered width before actual rendering
-- Solution: Implement dry-run mode in `Writer` that calculates width without output
-- Risk: Mismatch between prediction and reality leads to overflow/underflow
+**Challenge 1: UTF-8 width calculation and truncation** ✅ *Solved via luautf8*
+- Solution: Use `utf8.subwidth()` and `utf8.truncate_width()` from luautf8
+- Handles: Double-width characters, combining characters, zero-width modifiers, tab expansion
+- Our responsibility: Strip ANSI color codes before calling luautf8 functions
 
 **Challenge 2: Virtual row margin symbols**
 - Problem: Margin symbols must connect vertically across split rows
@@ -147,28 +150,32 @@ This document tracks the project's development status, active TODOs, completed w
   1 | code [B--msgB]  <- Same line number, different label
   ```
 - Solution: Track `vbar` state across virtual rows, similar to current "skipped line" logic
+- Status: To be explored in Phase 2b POC
 
-**Challenge 3: UTF-8 truncation safety**
-- Problem: Naive `string.sub()` can split multi-byte characters
-- Solution: Use `utf8.offset()` to find safe truncation points
-- Test: Truncate strings with emoji, combining characters, RTL text
+**Challenge 3: Architecture compatibility**
+- Problem: Current renderer is single-pass; line_width may require two-pass rendering
+- Proposed solutions:
+  1. **Buffered rendering** (preferred): Render to temp buffer, measure, then output
+  2. **Lazy application**: Only apply line_width when needed
+  3. **Separate code path**: Dedicated renderer for `line_width ~= nil`
+- Decision: Start with buffered approach, switch to #3 if memory issues arise
 
 **Challenge 4: Backward compatibility**
-- Problem: Must not break existing API or tests
 - Solution: All new behavior gated by `line_width ~= nil` check
 - Validation: Run full test suite with and without `line_width`
+- No changes to existing tests unless explicitly testing new feature
 
 ### Success Criteria
 
 - [ ] All existing tests pass with `line_width = nil`
 - [ ] New tests cover all 4 requirements
 - [ ] `test_label_at_end_of_long_line` produces readable 80-char output
-- [ ] No UTF-8 corruption in truncated text
-- [ ] Performance: < 10% slowdown for typical reports
+- [ ] No UTF-8 corruption in truncated text (guaranteed by luautf8)
+- [ ] Algorithm complexity: No worse than O(n) for rendering
 - [ ] Documentation: API examples and migration guide
 
 ### Current Status
-**Not started** - Awaiting approval to begin Phase 0.
+**Phase 0 in progress** - Adding infrastructure (Config, Characters, helper functions).
 
 ---
 
