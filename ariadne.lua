@@ -994,7 +994,7 @@ do -- report Rendering
         local hbar, margin_ptr
         local margin_ptr_is_start = false
 
-        for _, info in ipairs(multi_labels_with_message) do
+        for mli, info in ipairs(multi_labels_with_message) do
             ---@type LabelInfo?, LabelInfo?
             local vbar, corner
 
@@ -1036,12 +1036,15 @@ do -- report Rendering
                 end
             end
 
+            if margin_ptr and is_line and info ~= margin_ptr then
+                hbar = hbar or margin_ptr
+            end
+
             if corner then
                 local a = is_start and draw.ltop or draw.lbot
                 W:use_color(corner.label.color):label(a):compact(draw.hbar)
-                -- hbar and corner are always setted together
-                -- elseif vbar and hbar and not cfg.cross_gap then
-                --     W:use_color(vbar.label.color):label(draw.xbar):compact(draw.hbar)
+            elseif vbar and hbar and not cfg.cross_gap then
+                W:use_color(vbar.label.color):label(draw.xbar):compact(draw.hbar)
             elseif hbar then
                 W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar)
             elseif vbar then
@@ -1057,7 +1060,7 @@ do -- report Rendering
                 W:reset(cfg.compact and ' ' or '  ')
             end
         end
-        if hbar then
+        if hbar and (not is_line or hbar ~= margin_ptr) then
             W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar):reset()
         elseif margin_ptr and is_line then
             W:use_color(margin_ptr.label.color):label(draw.rarrow):compact ' ':reset()

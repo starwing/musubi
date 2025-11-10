@@ -1335,7 +1335,7 @@ Error: two multiline labels
    ,-[ <unknown>:1:1 ]
  1 |,->abcdefgh
    ||,---'
- 2 |||>ijklmnop
+ 2 ||->ijklmnop
    |`------------ outer
  3 | |>qrstuvwx
    | `---------- inner
@@ -1389,6 +1389,32 @@ Error: uarrow test
  3 ||-->banana
    |`---------- outer
 ]=])
+    end
+
+    function TestWrite.test_margin_xbar()
+        local cfg = no_color_ascii()
+        cfg.cross_gap = false
+        local src = ariadne.Source.new("apple\norange\nbanana\nstrawberry")
+        local msg = remove_trailing(ariadne.Report.build("Error", 1, 1)
+            :with_config(cfg)
+            :set_message("margin xbar test")
+            :add_label(ariadne.Label.new(1, 14):with_message("outer"):with_order(0))
+            :add_label(ariadne.Label.new(7, 21):with_message("inner"):with_order(1))
+            :render(src))
+        lu.assertEquals(msg, [[
+Error: margin xbar test
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 |   ,-> apple
+ 2 | ,-+-> orange
+ 3 | | |-> banana
+   | | |
+   | | `------------ outer
+ 4 | |---> strawberry
+   | |
+   | `----------------- inner
+---'
+]])
     end
 end
 
