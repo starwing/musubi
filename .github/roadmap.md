@@ -51,18 +51,27 @@ This document tracks the project's development status, active TODOs, completed w
 - Truncate long headers with `...`
 - Show local context for labels on long lines
 - Split multi-label lines into multiple rows
-- Convert oversized single-line labels to multiline format
+- Convert oversized single-label labels to multiline format
+
+**Core principle: "Minimum meaningful width"**
+- `line_width` is a **soft limit**: prioritize displaying core information over strict width compliance
+- If displaying essential information (label position + message) requires exceeding `line_width`, do so
+- Rationale: Users may resize terminal after seeing output; avoid forcing recompilation
+- Simplification: No need to handle message truncation or wrapping (messages always display fully)
 
 ### Requirements
 
 **REQ-1: Header truncation**
 - If `,-[ /very/long/path/to/file.lua:123:45 ]` exceeds `line_width`, truncate path to `.../file.lua:123:45`
-- Preserve minimum readability: always show filename + location even if `line_width` is small
+- Available width = `line_width - line_no_width - 5` (for margin symbols and brackets)
+- Preserve filename + location; truncate parent directories from start
+- Tab characters in `source.id` normalized to spaces before calculation
 
 **REQ-2: Local context windowing**
-- For single-label lines: show only `[start_col - margin, end_col + margin]` range
-- Prefix with `...` if start is truncated, suffix if end is truncated
+- For single-label lines: show only local context around label if line is too long
+- Strategy: Truncate code before label (keep suffix), show `...` prefix
 - Example: `1 | ...long code[label]...` instead of full line
+- Priority: Ensure label and message are always visible (ignore `line_width` if necessary)
 
 **REQ-3: Multi-label splitting**
 - If multiple labels + messages exceed `line_width`, render as separate "virtual rows"
@@ -83,18 +92,19 @@ This document tracks the project's development status, active TODOs, completed w
 **Phase 0: Infrastructure (1-2 days)** 🔄 *In Progress*
 - Add `Config.line_width` field (default `nil` = no limit)
 - Add `Characters.ellipsis`: `"…"` (unicode) / `"..."` (ascii)
-- Implement helper functions (depending on luautf8 enhancements):
-  - `calc_display_width(text, cfg)`: Wrapper around `utf8.subwidth()` with ANSI color stripping
-  - `truncate_to_width(text, max_width, cfg)`: Wrapper around `utf8.truncate_width()` with ellipsis
+- Implement helper functions:
+  - `truncate_keep_prefix(text, max_width, cfg)`: Truncate from end, keep prefix + ellipsis
+  - `truncate_keep_suffix(text, max_width, cfg)`: Truncate from start, keep ellipsis + suffix
 - **Validation**: All existing tests pass with `line_width = nil`
 - **Dependencies**: Requires luautf8 to add:
-  - `utf8.subwidth(str, start_byte, end_byte, [tab_width], [start_col])` - compute display width of substring
-  - `utf8.truncate_width(str, max_width, [tab_width], [start_col])` - find safe truncation point
+  - `utf8.widthlimit(s, i, j, max_width, [ambi_is_single], [fallback])` - find truncation position
+    - Positive `max_width`: truncate from front, return end position
+    - Negative `max_width`: truncate from back, return start position
 
 **Phase 1: Header truncation (1-2 days)**
-- Modify `render_header()` to truncate file path when exceeding `line_width`
-- Strategy: Keep filename + location, truncate parent directories with ellipsis
-- Edge cases: very long line numbers, very small `line_width`
+- Modify `render_reference()` (line 811) to truncate `source.id` when exceeding `line_width`
+- Strategy: Keep filename + location, truncate parent directories with ellipsis from start
+- Normalize tab characters in `source.id` to spaces before width calculation
 - **Test**: Add `test_header_truncation` with various widths
 - **Goal**: Quick win - visible improvement with minimal risk
 
@@ -137,11 +147,25 @@ This document tracks the project's development status, active TODOs, completed w
 ### Technical Challenges
 
 **Challenge 1: UTF-8 width calculation and truncation** ✅ *Solved via luautf8*
-- Solution: Use `utf8.subwidth()` and `utf8.truncate_width()` from luautf8
-- Handles: Double-width characters, combining characters, zero-width modifiers, tab expansion
-- Our responsibility: Strip ANSI color codes before calling luautf8 functions
+- Solution: Use `utf8.widthlimit(s, i, j, max_width, [ambi_is_single], [fallback])` from luautf8
+- API design:
+  - Positive `max_width`: truncate from front, return end byte position
+  - Negative `max_width`: truncate from back, return start byte position
+  - Returns: `(truncate_pos, actual_width)` where `truncate_pos` is safe to use with `string.sub()`
+- Handles: Double-width characters, combining characters, zero-width modifiers
+- Does NOT handle: Tab expansion (application layer responsibility), ANSI color codes (application layer responsibility)
+- Newlines: Treated as width-1 characters (no special handling at luautf8 level)
 
-**Challenge 2: Virtual row margin symbols**
+**Challenge 2: line_width as soft limit**
+- Problem: Strict width enforcement may truncate essential information
+- Solution: "Minimum meaningful width" principle
+  - Always display: line numbers, margin symbols, label arrows, full messages
+  - Apply truncation only to: reference headers, code context
+  - If minimum meaningful display exceeds `line_width`, ignore the limit
+- Example: 100-char message on narrow terminal → display fully, ignore `line_width`
+- Benefit: Avoids complex message wrapping/truncation logic, maintains information integrity
+
+**Challenge 3: Virtual row margin symbols**
 - Problem: Margin symbols must connect vertically across split rows
 - Example:
   ```
@@ -151,14 +175,6 @@ This document tracks the project's development status, active TODOs, completed w
   ```
 - Solution: Track `vbar` state across virtual rows, similar to current "skipped line" logic
 - Status: To be explored in Phase 2b POC
-
-**Challenge 3: Architecture compatibility**
-- Problem: Current renderer is single-pass; line_width may require two-pass rendering
-- Proposed solutions:
-  1. **Buffered rendering** (preferred): Render to temp buffer, measure, then output
-  2. **Lazy application**: Only apply line_width when needed
-  3. **Separate code path**: Dedicated renderer for `line_width ~= nil`
-- Decision: Start with buffered approach, switch to #3 if memory issues arise
 
 **Challenge 4: Backward compatibility**
 - Solution: All new behavior gated by `line_width ~= nil` check

@@ -5,7 +5,10 @@ This document describes the technical architecture, data structures, and design 
 ## Quick Reference
 
 - Language: Lua with UTF-8 support (tested against Lua 5.1/LuaJIT)
-- Dependencies: `lua-utf8` library for UTF-8 operations, `luaunit` for tests, optional `luacov` for coverage
+- Dependencies: 
+  - `lua-utf8` library for UTF-8 operations (requires `utf8.widthlimit` function for line width limiting)
+  - `luaunit` for tests
+  - Optional `luacov` for coverage
 - Entry points: `ariadne.lua` exports the public API
 - Tests: run `lua test.lua` from the project root
 - Coverage: Currently at 100% test coverage (all reachable code covered)
@@ -329,3 +332,56 @@ local cfg = ariadne.Config.new()
 cfg.color = color_fn
 report:with_config(cfg):render(source)
 ```
+
+## Line Width Limiting (Planned Feature)
+
+### UTF-8 Width Calculation Dependency
+
+The line width limiting feature depends on `utf8.widthlimit()` from luautf8:
+
+**Function signature**:
+```lua
+utf8.widthlimit(s, i, j, max_width, [ambi_is_single], [fallback])
+```
+
+**Parameters**:
+- `s` (string): Input string
+- `i` (integer): Start byte position (1-based)
+- `j` (integer): End byte position (1-based)
+- `max_width` (integer): Maximum display width
+  - **Positive**: Truncate from front, return end position
+  - **Negative**: Truncate from back, return start position (absolute value used)
+- `ambi_is_single` (boolean, optional): Treat ambiguous-width characters as single-width, default `true`
+- `fallback` (integer, optional): Width for unparseable characters, default `1`
+
+**Returns**:
+- `truncate_pos` (integer): Safe truncation byte position
+- `actual_width` (integer): Actual display width consumed
+
+**Example usage**:
+```lua
+-- Truncate from front (keep prefix)
+local pos, width = utf8.widthlimit("hello world", 1, 11, 5)
+-- Returns: pos=5, width=5  (can truncate at byte 5, "hello")
+
+-- Truncate from back (keep suffix)
+local pos, width = utf8.widthlimit("/path/to/file.lua", 1, 17, -8)
+-- Returns: pos=10, width=8  (start at byte 10, "file.lua")
+```
+
+### Soft Limit Strategy
+
+`line_width` is treated as a **soft limit**:
+
+- **Priority 1**: Always display core diagnostic information (label position, message)
+- **Priority 2**: Apply truncation to context (file paths, code lines)
+- **Priority 3**: If core information exceeds `line_width`, ignore the limit
+
+**Rationale**: Users may resize terminal after viewing output; forcing truncation of essential information would require recompilation.
+
+**Implementation approach**:
+- Reference headers: Truncate file path from start, keep filename + location
+- Code lines: Show local context around labels with ellipsis
+- Messages: Always display fully (no truncation or wrapping)
+- Tab characters in file paths: Normalized to spaces before width calculation
+
