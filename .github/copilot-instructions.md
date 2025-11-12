@@ -13,10 +13,12 @@ This repository is a Lua implementation of the Ariadne diagnostics renderer. Ori
 - **Language**: Lua 5.1+ with UTF-8 support (tested against Lua 5.1/LuaJIT)
 - **Dependencies**: `lua-utf8`, `luaunit`, optional `luacov`
 - **Tests**: Run `lua test.lua` from project root
-- **Coverage**: 100% (all reachable code covered, 55 tests passing)
+- **Coverage**: 100% (all reachable code covered, 55 tests passing in stable state)
 - **Key files**: 
   - `ariadne.lua` - All runtime code (~1500 lines)
   - `test.lua` - Exhaustive regression suite (~1400 lines)
+
+**Current development state**: Check `roadmap.md` for active feature work. During feature development, tests may temporarily fail - this is expected. Always check roadmap to understand which tests are work-in-progress vs. regressions.
 
 For detailed architecture, see project-structure.md.
 
