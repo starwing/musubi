@@ -543,15 +543,13 @@ do
 end
 
 --- @class (exact) Report
---- @field build fun(kind: string, start_pos: integer,
----                  end_pos?: integer, source_id?: string): Report
+--- @field build fun(kind: string, pos: integer, source_id?: string): Report
 --- @field kind string
 --- @field code? string
 --- @field message? string
 --- @field notes string[]
 --- @field help string[]
---- @field start_pos integer
---- @field end_pos? integer
+--- @field pos integer
 --- @field source_id? string
 --- @field labels Label[]
 --- @field config Config
@@ -559,19 +557,17 @@ local Report = class "Report"
 do
     --- creates a new Report
     ---@param kind string
-    ---@param start_pos integer
-    ---@param end_pos? integer
+    ---@param pos integer
     ---@param source_id? string
     ---@return Report
-    function Report.build(kind, start_pos, end_pos, source_id)
+    function Report.build(kind, pos, source_id)
         return setmetatable({
             kind = kind,
             code = nil,
             message = nil,
             notes = {},
             help = {},
-            start_pos = start_pos,
-            end_pos = end_pos,
+            pos = pos,
             source_id = source_id,
             labels = {},
             config = Config.default,
@@ -775,19 +771,19 @@ do -- report Rendering
         local line, line_no, col_no
         if group.source_id == report.source_id then
             if cfg.index_type == "byte" then
-                line_no = src:get_byte_line(report.start_pos)
+                line_no = src:get_byte_line(report.pos)
                 line = assert(src[line_no], "byte offset out of range")
-                if line and report.start_pos <= line.byte_offset + line.byte_len - 1 then
+                if line and report.pos <= line.byte_offset + line.byte_len - 1 then
                     col_no = assert(utf8.len(src.text, line.byte_offset,
-                        report.start_pos - 1)) + 1
+                        report.pos - 1)) + 1
                 else
                     line_no = nil
                 end
             else
-                line_no = src:get_offset_line(report.start_pos)
+                line_no = src:get_offset_line(report.pos)
                 line = src[line_no]
                 if line then
-                    col_no = report.start_pos - line.offset + 1
+                    col_no = report.pos - line.offset + 1
                 end
             end
         else
