@@ -6,7 +6,7 @@ This document describes the technical architecture, data structures, and design 
 
 - Language: Lua with UTF-8 support (tested against Lua 5.1/LuaJIT)
 - Dependencies: 
-  - `lua-utf8` library for UTF-8 operations (requires `utf8.widthlimit` function for line width limiting)
+  - `lua-utf8` library for UTF-8 operations (requires `utf8.widthlimit` for line width limiting)
   - `luaunit` for tests
   - Optional `luacov` for coverage
 - Entry points: `ariadne.lua` exports the public API
@@ -341,25 +341,30 @@ The line width limiting feature depends on `utf8.widthlimit()` from luautf8:
 
 **Function signature**:
 ```lua
-utf8.widthlimit(s, i, j, max_width, [ambi_is_single], [fallback])
+utf8.widthlimit(s, i, j[, limit[, ambiwidth[, default]]])
 ```
 
 **Parameters**:
 - `s` (string): Input string
 - `i` (integer): Start byte position (1-based)
 - `j` (integer): End byte position (1-based)
-- `max_width` (integer): Maximum display width
+- `limit` (integer, optional): Maximum display width
   - **Positive**: Truncate from front, return end position
   - **Negative**: Truncate from back, return start position (absolute value used)
-- `ambi_is_single` (boolean, optional): Treat ambiguous-width characters as single-width, default `true`
-- `fallback` (integer, optional): Width for unparseable characters, default `1`
+  - **Omitted/nil**: Just measure width, return `j` and actual width
+- `ambiwidth` (integer, optional): Width for ambiguous-width characters (1 or 2, default: 1)
+- `default` (integer, optional): Width for unparseable characters (default: 1)
 
 **Returns**:
-- `truncate_pos` (integer): Safe truncation byte position
-- `actual_width` (integer): Actual display width consumed
+- `pos` (integer): Truncation byte position, or `j` if just measuring
+- `width` (integer): Actual display width consumed
 
 **Example usage**:
 ```lua
+-- Measure width (no limit parameter)
+local pos, width = utf8.widthlimit("你好world", 1, 11)
+-- Returns: pos=11, width=9  (total width of "你好world")
+
 -- Truncate from front (keep prefix)
 local pos, width = utf8.widthlimit("hello world", 1, 11, 5)
 -- Returns: pos=5, width=5  (can truncate at byte 5, "hello")
@@ -368,6 +373,10 @@ local pos, width = utf8.widthlimit("hello world", 1, 11, 5)
 local pos, width = utf8.widthlimit("/path/to/file.lua", 1, 17, -8)
 -- Returns: pos=10, width=8  (start at byte 10, "file.lua")
 ```
+
+**Use case**: This unified function handles both:
+1. **Measuring**: Calculate label width to determine available space for context
+2. **Truncating**: Find safe truncation points for prefix/suffix with ellipsis
 
 ### Soft Limit Strategy
 

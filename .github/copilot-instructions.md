@@ -1,8 +1,8 @@
 # GitHub Copilot Instructions
 
 > **Related documents**: 
-> - [Project Structure](project-structure.md) - Technical architecture and design decisions
-> - [Development Roadmap](roadmap.md) - TODO, plans, and completed work
+> - Project Structure: project-structure.md in .github - Technical architecture and design decisions
+> - Development Roadmap: roadmap.md in .github - TODO, plans, and completed work
 
 **IMPORTANT for AI agents**: When documenting challenging coverage cases, complex algorithms, or significant architectural decisions, update `project-structure.md` (not this file). This instructions file focuses on workflows and conventions.
 
@@ -18,9 +18,41 @@ This repository is a Lua implementation of the Ariadne diagnostics renderer. Ori
   - `ariadne.lua` - All runtime code (~1500 lines)
   - `test.lua` - Exhaustive regression suite (~1400 lines)
 
-For detailed architecture, see [project-structure.md](project-structure.md).
+For detailed architecture, see project-structure.md.
 
-For development status and plans, see [roadmap.md](roadmap.md).
+For development status and plans, see roadmap.md.
+
+---
+
+## Collaboration Workflow (for AI agents)
+
+When implementing new features (like line width limiting):
+
+### Test-Driven Development
+1. **Agent writes test cases first** (following existing test patterns in `test.lua`)
+2. **User reviews and approves** test cases for correctness and completeness
+3. **Tests define expected behavior** before any implementation
+
+### Implementation Guidance
+1. **Agent provides implementation suggestions**:
+   - Identify which functions need modification
+   - Provide pseudo-code or algorithmic approach (not full implementation)
+   - Highlight key technical points (UTF-8 handling, edge cases, etc.)
+2. **User evaluates feasibility** and makes final architectural decisions
+3. **User writes actual code** implementation
+4. **Agent assists** with debugging and analysis when problems arise
+
+### Iterative Development
+- Start with simple cases, add complexity gradually
+- Run tests frequently: `lua test.lua` after each change
+- Agent helps identify edge cases and potential issues
+- Both parties discuss trade-offs and design decisions
+
+### Code Ownership
+- **User maintains full control** over code quality and architecture
+- **Agent acts as pair programmer**: review, suggest, assist (not implement)
+- **User makes all final decisions** on implementation details
+- Agent never writes production code without explicit user request
 
 ---
 
@@ -48,6 +80,40 @@ For development status and plans, see [roadmap.md](roadmap.md).
 - **Trailing whitespace handling**: Use `remove_trailing()` helper function when comparing test output to strip trailing spaces from each line. This prevents fragile whitespace comparisons while preserving semantic correctness.
 - **Color code testing**: When testing color output, use `("%q"):format(msg)` to make escape sequences visible in test expectations. Only use color codes in one or two tests to cover color-related code paths; prefer `no_color_ascii()` config for all other tests to keep expectations readable.
 - **Multi-source diagnostics**: Use `ariadne.Cache.new()` (not `Source.new("")`) to create a proper cache for multi-source tests with multiple files.
+- **Generate realistic test data**: Use string repetition like `("dir/"):rep(20)` for long paths, `("line\n"):rep(200)` for many lines. Never hardcode short values when testing overflow/truncation behavior.
+- **Always add labels when testing reference headers**: Reference headers only display when at least one label is present. Use `:add_label(ariadne.Label.new(...):with_message("..."))` in all tests that expect header output.
+- **Calculate display widths accurately**: CJK characters are width 2, ASCII is width 1, tabs expand to `tab_width` spaces. Verify calculations manually before writing expected outputs.
+
+### Quality Standards
+
+⚠️ **CRITICAL: Self-Check Before Presenting Work**
+
+Before showing test cases or code to the user, you MUST:
+
+1. **Verify test data is realistic**: 
+   - Long paths should actually be long (use string repetition)
+   - Multi-line tests should have many lines (use string repetition)
+   - Don't hardcode values like "/very/long/path" (only 16 chars - not long!)
+
+2. **Verify all required elements are present**:
+   - Tests expecting headers must have labels (otherwise header won't display)
+   - Tests expecting arrows must have non-empty spans
+   - Tests expecting messages must set message text
+
+3. **Verify calculations are correct**:
+   - Calculate actual display widths for UTF-8 strings
+   - Account for tab expansion in width calculations
+   - Check that truncation/overflow will actually occur with your test data
+
+4. **Think through the logic**:
+   - Will this test actually exercise the code path I'm targeting?
+   - Does the expected output match what the implementation should produce?
+   - Are there edge cases I'm missing?
+
+**User's expectation**: "我不要求你一次写对，但是我不能容忍你完全不思考"
+- Errors are acceptable, but thoughtless work is not
+- Self-check your work before presenting it
+- Don't waste user's time with obviously flawed test cases
 
 ### Developer Workflows & Commands
 

@@ -97,9 +97,11 @@ This document tracks the project's development status, active TODOs, completed w
   - `truncate_keep_suffix(text, max_width, cfg)`: Truncate from start, keep ellipsis + suffix
 - **Validation**: All existing tests pass with `line_width = nil`
 - **Dependencies**: Requires luautf8 to add:
-  - `utf8.widthlimit(s, i, j, max_width, [ambi_is_single], [fallback])` - find truncation position
-    - Positive `max_width`: truncate from front, return end position
-    - Negative `max_width`: truncate from back, return start position
+  - `utf8.widthlimit(s, i, j[, limit[, ambiwidth[, default]]])` - unified width function
+    - With `limit`: Find truncation position (positive = from front, negative = from back)
+    - Without `limit`: Calculate display width of byte range [i, j]
+    - `ambiwidth`: Integer (1 or 2) for ambiguous-width characters
+    - Returns: `(pos, width)` where `pos` is `j` when measuring, or truncation point when limiting
 
 **Phase 1: Header truncation (1-2 days)**
 - Modify `render_reference()` (line 811) to truncate `source.id` when exceeding `line_width`
@@ -147,11 +149,14 @@ This document tracks the project's development status, active TODOs, completed w
 ### Technical Challenges
 
 **Challenge 1: UTF-8 width calculation and truncation** ✅ *Solved via luautf8*
-- Solution: Use `utf8.widthlimit(s, i, j, max_width, [ambi_is_single], [fallback])` from luautf8
-- API design:
-  - Positive `max_width`: truncate from front, return end byte position
-  - Negative `max_width`: truncate from back, return start byte position
-  - Returns: `(truncate_pos, actual_width)` where `truncate_pos` is safe to use with `string.sub()`
+- Solution: Use `utf8.widthlimit(s, i, j, [limit], [ambiwidth], [fallback])` for all width operations
+- Unified API design:
+  - With `limit` parameter: Find truncation position
+    - Positive `limit`: truncate from front, return end position
+    - Negative `limit`: truncate from back, return start position
+  - Without `limit` parameter: Calculate display width of byte range `[i, j]`
+  - `ambiwidth`: Integer (1 or 2) for handling ambiguous-width characters
+  - Returns: `(pos, width)` where `pos` is `j` when measuring, or truncation point when limiting
 - Handles: Double-width characters, combining characters, zero-width modifiers
 - Does NOT handle: Tab expansion (application layer responsibility), ANSI color codes (application layer responsibility)
 - Newlines: Treated as width-1 characters (no special handling at luautf8 level)
