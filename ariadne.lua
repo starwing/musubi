@@ -1,9 +1,14 @@
 ---@class utf8
 ---@field len fun(s: string, i?: integer, j?: integer): integer?
 ---@field offset fun(s: string, n: integer, i?: integer): integer?, integer?
----@field width fun(s: integer|string, ambi_is_single: boolean?, fallback: integer?): integer
+---@field width fun(s: string, i?: integer, j?:integer, ambiwidth?: integer, fallback: integer?): integer
+---@field width fun(ch: integer, ambiwidth?: integer, fallback: integer?): integer
+---@field widthindex fun(s: string, width?: integer, i?: integer, j?:integer, ambiwidth?: integer, fallback: integer?): integer, integer, integer
+---@field widthlimit fun(s: string, limit?: integer, i?: integer, j?:integer, ambiwidth?: integer, fallback: integer?): integer, integer
 ---@field codepoint fun(s: string, i?: integer, j?: integer, lax?: boolean): integer
 local utf8 = require "lua-utf8"
+
+local MIN_FILENAME_WIDTH = 8
 
 --- Creates a new class
 ---@generic T
@@ -183,6 +188,7 @@ end
 --- @field rcross      string
 --- @field underbar    string
 --- @field underline   string
+--- @field ellipsis    string
 
 ---@type table
 local Characters = {}
@@ -285,15 +291,16 @@ end
 
 --- @class Config
 --- @field default Config
---- @field cross_gap       boolean
---- @field label_attach    "start" | "end" | "middle"
+--- @field cross_gap        boolean
+--- @field label_attach     "start" | "end" | "middle"
 --- @field compact          boolean
 --- @field underlines       boolean
 --- @field multiline_arrows boolean
---- @field color            Color
+--- @field color?           Color
 --- @field tab_width        integer
 --- @field char_set         CharSet
---- @field index_type      "byte" | "char"
+--- @field index_type       "byte" | "char"
+--- @field line_width?      integer
 local Config = class "Config"
 do
     ---@type Color
@@ -745,7 +752,7 @@ do -- report Rendering
                 + src.display_line_offset
             if line_no then
                 local cur_width, max_line_no = 1, 1
-                while cur_width * 10 <= line_no do
+                while max_line_no * 10 <= line_no do
                     cur_width, max_line_no = cur_width + 1, max_line_no * 10
                 end
                 if width < cur_width then
@@ -756,17 +763,13 @@ do -- report Rendering
         return width
     end
 
-    --- Render the reference line for a source group
-    ---@param W Writer
-    ---@param report Report
-    ---@param line_no_width integer
-    ---@param group_idx integer
+    --- Calculate the line and column string for a report position
     ---@param group SourceGroup
+    ---@param report Report
     ---@param src Source
-    local function render_reference(W, report, line_no_width, group_idx, group, src)
+    ---@return string
+    local function calc_location(group, report, src)
         local cfg = report.config
-        local draw = cfg.char_set
-
         ---@type Line?, integer?, integer?
         local line, line_no, col_no
         if group.source_id == report.source_id then
@@ -794,17 +797,38 @@ do -- report Rendering
                 col_no = start - line.offset + 1
             end
         end
-        local line_str, col_str
-        if not line_no then
-            line_str, col_str = "?", "?"
-        else
-            line_str = tostring(line_no + src.display_line_offset)
-            col_str = tostring(col_no)
+        if not line_no then return "?:?" end
+        return ("%d:%d"):format(line_no + src.display_line_offset, col_no)
+    end
+
+    --- Render the reference line for a source group
+    ---@param W Writer
+    ---@param report Report
+    ---@param line_no_width integer
+    ---@param group_idx integer
+    ---@param group SourceGroup
+    ---@param src Source
+    local function render_reference(W, report, line_no_width, group_idx, group, src)
+        local cfg = report.config
+        local draw = cfg.char_set
+        local id = src.id:gsub("\t", " ")
+        local loc = calc_location(group, report, src)
+        if cfg.line_width then
+            local id_width = utf8.width(id)
+            -- assume draw's components' width are all 1
+            local fixed_width = utf8.width(loc) + line_no_width + 9
+            if id_width + fixed_width > cfg.line_width then
+                local avail = cfg.line_width - fixed_width - utf8.width(draw.ellipsis)
+                if avail < MIN_FILENAME_WIDTH then
+                    avail = MIN_FILENAME_WIDTH
+                end
+                id = draw.ellipsis .. id:sub((utf8.widthlimit(id, -avail)))
+            end
         end
         W:padding(line_no_width + 2)
         W:margin(group_idx == 1 and draw.ltop or draw.vbar)
         W(draw.hbar)(draw.lbox):reset " "
-        W(src.id) ":" (line_str) ":" (col_str) " ":margin(draw.rbox):reset "\n"
+        W(id) ":" (loc) " ":margin(draw.rbox):reset "\n"
     end
 
     ---@param group SourceGroup

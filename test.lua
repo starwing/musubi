@@ -1418,8 +1418,279 @@ Error: margin xbar test
     end
 end
 
+local TestLineWidth = {}
+do
+    ---@param line_width? integer
+    ---@param index_type? "byte"|"char"
+    ---@param compact? boolean
+    ---@return Config
+    local function no_color_ascii_width(line_width, index_type, compact)
+        return ariadne.Config.new {
+            color = false,
+            char_set = ariadne.Characters.ascii,
+            index_type = index_type,
+            compact = compact,
+            line_width = line_width,
+        }
+    end
+
+    -- Phase 1: Header Truncation Tests (MVP: simple suffix truncation)
+    -- Header format: "   ,-[ {path}:{line}:{col} ]"
+    -- Fixed width = 7 (before) + 2 (after) = 9 chars
+    -- Available for path:line:col = line_width - 9
+    -- Ellipsis width = 3 (ASCII "...")
+    -- Suffix width = available - 3
+
+    function TestLineWidth.test_header_no_truncation_short_path()
+        -- Path is short, no truncation needed
+        local text = "apple"
+        local cfg = no_color_ascii_width(60)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text, "file.lua"))
+        )
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ file.lua:1:1 ]
+   |
+ 1 | apple
+   | |
+   | `-- label
+---'
+]])
+    end
+
+    function TestLineWidth.test_header_truncation_long_path()
+        -- Path exceeds line_width, should truncate from start (keep suffix)
+        -- Generate long path: ("dir/"):rep(20) = "dir/dir/.../dir/" (80 chars)
+        local text = "apple"
+        local cfg = no_color_ascii_width(40)
+        local long_path = ("dir/"):rep(20) .. "file.lua"
+        -- Full id: ("dir/"):rep(20) + "file.lua" = 80 + 8 = 88 chars
+        -- line_width=40, line_no_width=1, loc="1:1"(3 chars)
+        -- fixed_width = 1 + 9 + 3 = 13
+        -- avail = 40 - 13 - 3(ellipsis) = 24
+        -- Expected id: "..." + 24 chars suffix = ".../dir/dir/dir/dir/file.lua" (28 total)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text, long_path))
+        )
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ ...dir/dir/dir/dir/file.lua:1:1 ]
+   |
+ 1 | apple
+   | |
+   | `-- label
+---'
+]])
+    end
+
+    function TestLineWidth.test_header_truncation_large_line_number()
+        -- Generate a file with many lines to test large line numbers
+        -- Use ("line\n"):rep(200) instead of manual loop
+        local text = ("line\n"):rep(200) .. "target"
+        local cfg = no_color_ascii_width(45)
+        local long_path = ("dir/"):rep(20) .. "file.lua"
+
+        -- Line 201 is the "target" line, char position = 200*5 + 1 = 1001
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1001)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1001, 1001):with_message("label"))
+            :render(ariadne.Source.new(text, long_path))
+        )
+        -- Available = 45 - 9 - 3 = 33, loc = 5, ellipsis = 3, suffix = 25
+        -- Expected: ".../dir/dir/dir/dir/file.lua" (25 chars fits)
+        lu.assertEquals(msg, [[
+Error: test
+     ,-[ .../dir/dir/dir/dir/file.lua:201:1 ]
+     |
+ 201 | target
+     | |
+     | `-- label
+-----'
+]])
+    end
+
+    function TestLineWidth.test_header_truncation_utf8_path()
+        -- Path with UTF-8 characters (CJK chars are width 2)
+        -- "目录" = 4 display width, repeat 20 times = 80 display width
+        local text = "apple"
+        local cfg = no_color_ascii_width(40)
+        local utf8_path = ("目录/"):rep(20) .. "文件.lua"
+        -- Display width of id: 20*(2+2+1) + (2+2+4) = 100 + 9 = 109 width units
+        -- (目=2, 录=2, /=1) * 20 + (文=2, 件=2, .lua=4)
+        -- line_width=40, line_no_width=1, loc="1:1"(3 chars)
+        -- fixed_width = 1 + 9 + 3 = 13
+        -- avail = 40 - 13 - 3(ellipsis "..." is 3 width in ascii mode) = 24
+        -- Expected: "..." + suffix to fit 24 width = ".../目录/目录/目录/文件.lua"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text, utf8_path))
+        )
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ .../目录/目录/目录/文件.lua:1:1 ]
+   |
+ 1 | apple
+   | |
+   | `-- label
+---'
+]])
+    end
+
+    function TestLineWidth.test_header_truncation_tab_in_path()
+        -- Path contains tab character (should normalize to spaces before width calc)
+        -- Tab width = 4 (default)
+        local text = "apple"
+        local cfg = no_color_ascii_width(40)
+        local tab_path = ("dir\t"):rep(20) .. "file.lua"
+        -- Tab normalized to single space: "dir " * 20 + "file.lua" = 80 + 8 = 88 chars
+        -- line_width=40, line_no_width=1, loc="1:1"(3 chars)
+        -- fixed_width = 1 + 9 + 3 = 13
+        -- avail = 40 - 13 - 3(ellipsis) = 24
+        -- Expected: "..." + 24 chars suffix = "...dir dir dir dir file.lua"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text, tab_path))
+        )
+        -- Expected: tabs normalized to spaces, then suffix truncated
+        -- "...dir    file.lua:1:1" (approx 22 chars)
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ ...dir dir dir dir file.lua:1:1 ]
+   |
+ 1 | apple
+   | |
+   | `-- label
+---'
+]])
+    end
+
+    function TestLineWidth.test_header_truncation_very_narrow()
+        -- Very narrow line_width: available = 25 - 9 = 16
+        local text = "apple"
+        local cfg = no_color_ascii_width(25)
+        local long_path = ("dir/"):rep(20) .. "file.lua"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text, long_path))
+        )
+        -- Available = 25 - 9 - 1 = 15, loc = 3, ellipsis = 3, suffix = 9
+        -- "/file.lua" = 9 chars, fits
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ .../file.lua:1:1 ]
+   |
+ 1 | apple
+   | |
+   | `-- label
+---'
+]])
+    end
+
+    function TestLineWidth.test_header_no_truncation_when_nil()
+        -- line_width = nil, no truncation should occur
+        local text = "apple"
+        local cfg = no_color_ascii_width(nil)
+        local long_path = ("dir/"):rep(20) .. "file.lua"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text, long_path))
+        )
+        -- Full path should be displayed (80 chars total)
+        local expected_header = ",-[ " .. long_path .. ":1:1 ]"
+        lu.assertEquals(msg, [[
+Error: test
+   ]] .. expected_header .. [[
+
+   |
+ 1 | apple
+   | |
+   | `-- label
+---'
+]])
+    end
+
+    function TestLineWidth.test_header_truncation_exact_boundary()
+        -- Path exactly matches available width, no truncation
+        local text = "apple"
+        local cfg = no_color_ascii_width(30)
+        -- line_width=30, line_no_width=1, loc="1:1"(3 chars)
+        -- fixed_width = 1 + 9 + 3 = 13
+        -- id="short/path.lua" = 14 chars, total = 13 + 14 + 3 = 30, exactly fits
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text, "short/path.lua"))
+        )
+        -- "short/path.lua:1:1" = 18 chars, under 21, no truncation
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ short/path.lua:1:1 ]
+   |
+ 1 | apple
+   | |
+   | `-- label
+---'
+]])
+    end
+
+    function TestLineWidth.test_header_truncation_one_over_boundary()
+        -- Path exceeds available width by exactly 1 char
+        local text = "apple"
+        local cfg = no_color_ascii_width(30)
+        -- Full id: "xxx...xxx.lua" = 15 + 4 = 19 chars
+        -- line_width=30, line_no_width=1, loc="1:1"(3 chars)
+        -- fixed_width = 1 + 9 + 3 = 13
+        -- avail = 30 - 13 - 3(ellipsis) = 14
+        -- Expected: "..." + 14 chars suffix = "...xxxxxxxxxx.lua" (17 total, with :1:1 = 22 total)
+        local long_name = ("x"):rep(15) .. ".lua"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :render(ariadne.Source.new(text, long_name))
+        )
+        -- Expected suffix: last 18 chars of "xxxxxxxxxxxxxxx.lua:1:1" = "xxxxxxxxxx.lua:1:1"
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ ...xxxxxxxxxx.lua:1:1 ]
+   |
+ 1 | apple
+   | |
+   | `-- label
+---'
+]])
+    end
+end
+
 _G.TestSource = TestSource
 _G.TestColor = TestColor
 _G.TestWrite = TestWrite
+_G.TestLineWidth = TestLineWidth
 
 os.exit(lu.LuaUnit.run())

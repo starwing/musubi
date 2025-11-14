@@ -89,28 +89,36 @@ This document tracks the project's development status, active TODOs, completed w
 
 ### Implementation Phases
 
-**Phase 0: Infrastructure (1-2 days)** 🔄 *In Progress*
-- Add `Config.line_width` field (default `nil` = no limit)
-- Add `Characters.ellipsis`: `"…"` (unicode) / `"..."` (ascii)
-- Implement helper functions:
-  - `truncate_keep_prefix(text, max_width, cfg)`: Truncate from end, keep prefix + ellipsis
-  - `truncate_keep_suffix(text, max_width, cfg)`: Truncate from start, keep ellipsis + suffix
-- **Validation**: All existing tests pass with `line_width = nil`
-- **Dependencies**: Requires luautf8 to add:
-  - `utf8.widthlimit(s, i, j[, limit[, ambiwidth[, default]]])` - unified width function
-    - With `limit`: Find truncation position (positive = from front, negative = from back)
-    - Without `limit`: Calculate display width of byte range [i, j]
-    - `ambiwidth`: Integer (1 or 2) for ambiguous-width characters
-    - Returns: `(pos, width)` where `pos` is `j` when measuring, or truncation point when limiting
+**Phase 0: Infrastructure** ✅ *Completed 2025-11-14*
+- ✅ `Config.line_width` field added (default `nil` = no limit)
+- ✅ `Characters.ellipsis` already existed: `"…"` (unicode) / `"..."` (ascii)
+- ✅ luautf8 0.2.0 provides `utf8.width()`, `utf8.widthindex()`, `utf8.widthlimit()`
+- ✅ All existing tests pass with `line_width = nil`
 
-**Phase 1: Header truncation (1-2 days)**
-- Modify `render_reference()` (line 811) to truncate `source.id` when exceeding `line_width`
-- Strategy: Keep filename + location, truncate parent directories with ellipsis from start
-- Normalize tab characters in `source.id` to spaces before width calculation
-- **Test**: Add `test_header_truncation` with various widths
-- **Goal**: Quick win - visible improvement with minimal risk
+**Phase 1: Header truncation** ✅ *Completed 2025-11-14*
+- ✅ Added `MIN_FILENAME_WIDTH` constant (8 chars minimum for meaningful info)
+- ✅ Extracted `calc_location()` helper to compute `"line:col"` strings
+- ✅ Modified `render_reference()` to truncate `source.id` when exceeding `line_width`
+- ✅ Tab normalization: `\t` → single space (not tab_width expansion)
+- ✅ Soft limit implementation: enforce MIN_FILENAME_WIDTH even if exceeds line_width
+- ✅ Width calculation formula:
+  ```
+  fixed_width = line_no_width + 9 + utf8.width(loc)
+  avail = line_width - fixed_width - utf8.width(ellipsis)
+  truncated_id = ellipsis .. id:sub(utf8.widthlimit(id, -avail))
+  ```
+- ✅ **Tests added** (9 new tests, all passing):
+  - `test_header_truncation_long_path` - Basic long path truncation
+  - `test_header_truncation_large_line_number` - Dynamic line_no_width
+  - `test_header_truncation_utf8_path` - CJK characters (width 2)
+  - `test_header_truncation_tab_in_path` - Tab normalization
+  - `test_header_truncation_very_narrow` - Extreme narrow width
+  - `test_header_no_truncation_when_nil` - No truncation when disabled
+  - `test_header_truncation_exact_boundary` - Exact fit
+  - `test_header_truncation_one_over_boundary` - Just over limit
+  - Coverage: ASCII, UTF-8, tabs, edge cases, soft limits
 
-**Phase 2a: End-of-line single-label windowing (Simplified, 2-3 days)**
+**Phase 2a: End-of-line single-label windowing (Simplified, 2-3 days)** 🔄 *In Progress*
 - **Scope**: Only handle labels at/near end of long lines (like `test_label_at_end_of_long_line`)
 - Strategy: Show `...` prefix + local context around label
 - No changes to multi-label logic or arrow rendering
