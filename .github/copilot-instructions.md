@@ -36,13 +36,32 @@ When implementing new features (like line width limiting):
 3. **Tests define expected behavior** before any implementation
 
 ### Implementation Guidance
-1. **Agent provides implementation suggestions**:
-   - Identify which functions need modification
-   - Provide pseudo-code or algorithmic approach (not full implementation)
-   - Highlight key technical points (UTF-8 handling, edge cases, etc.)
-2. **User evaluates feasibility** and makes final architectural decisions
-3. **User writes actual code** implementation
-4. **Agent assists** with debugging and analysis when problems arise
+
+⚠️ **CRITICAL: Think Before Providing Solutions**
+
+**MANDATORY workflow before providing ANY implementation suggestion**:
+1. **Think deeply** about the requirement (understand what user really needs)
+2. **Think again** about potential issues (edge cases, performance, correctness)
+3. **Think third time** about the approach (is this the best solution?)
+4. **Only then** provide the suggestion (pseudo-code or algorithmic approach)
+
+**User's explicit requirement**: "Don't rush to write code. Think more. Think at least three times and make sure there are no issues with the approach before providing it. Only write code when I explicitly request it."
+
+- **Never write code immediately** - always think first
+- **Never provide code unless explicitly requested** - give approach/algorithm instead
+- **Self-check rigorously** - verify your thinking before presenting
+- **Ask questions** when uncertain - don't guess or assume
+
+**When providing implementation suggestions**:
+1. Identify which functions need modification
+2. Provide pseudo-code or algorithmic approach (NOT full implementation)
+3. Highlight key technical points (UTF-8 handling, edge cases, etc.)
+4. Point out open questions that need user confirmation
+
+**After agent provides suggestions**:
+1. User evaluates feasibility and makes final architectural decisions
+2. User writes actual code implementation
+3. Agent assists with debugging and analysis when problems arise
 
 ### Iterative Development
 - Start with simple cases, add complexity gradually
@@ -180,6 +199,8 @@ Before showing test cases or code to the user, you MUST:
 - Do NOT wait to be reminded multiple times about the same mistake.
 - Add the correction to the relevant section (e.g., "What to Do First", "Test Writing Patterns", etc.).
 - This file is your knowledge base - keep it accurate and up-to-date.
+
+---
 
 ---
 

@@ -120,10 +120,69 @@ This document tracks the project's development status, active TODOs, completed w
 
 **Phase 2a: End-of-line single-label windowing (Simplified, 2-3 days)** 🔄 *In Progress*
 - **Scope**: Only handle labels at/near end of long lines (like `test_label_at_end_of_long_line`)
-- Strategy: Show `...` prefix + local context around label
-- No changes to multi-label logic or arrow rendering
-- **Test**: Modify `test_label_at_end_of_long_line` with `line_width = 80`
+- **Strategy**: Show `...` prefix + local context around label
+- **Core concept**: When line is too long, show only relevant portion with ellipsis
+  - Example: `1 | ...apple == orange` instead of full 900+ chars
+- **No changes** to multi-label logic or complex splitting (deferred to Phase 2b/3)
+- **Tests added** (5 new tests):
+  - `test_single_label_at_end_of_long_line` - Label at line end (900 chars)
+  - `test_single_label_in_middle_of_long_line` - Label centered in long line
+  - `test_single_label_at_start_of_long_line` - Label at start, no ellipsis
+  - `test_no_windowing_when_line_fits` - Short line, no truncation
+  - `test_no_windowing_when_line_width_nil` - Disabled, full display
 - **Goal**: Solve 80% of real-world long-line issues with minimal complexity
+
+### Phase 2a Implementation Details
+
+**Key Technical Points**:
+
+1. **Color Code Stripping**
+   - Pattern: `(text:gsub("\x1b%[[^m]*m", ""))`
+   - Matches: `\x1b[31m` (simple) and `\x1b[38;5;147m` (256-color)
+   - Needed for: Accurate message width calculation
+
+2. **Compact Mode Impact**
+   - Non-compact: `` `---- message`` on separate line
+   - Compact: Message inline
+   - Affects connector width in label width calculation
+
+3. **UTF-8 Width vs Position**
+   - **widthlimit**: Returns byte position (wrong for this use case)
+   - **widthindex**: Returns character index at given width (correct)
+   - Usage: `char_idx = utf8.widthindex(line_text, skip_width)`
+
+4. **Soft Limit Principle**
+   - No fixed `MIN_LINE_CONTENT` constant
+   - Always show at least up to leftmost label
+   - `render_pos = min(calculated_pos, leftmost_label_col)`
+
+**Algorithm**:
+```
+1. Calculate margin_width from multi_labels_with_message count
+2. Calculate fixed_width = line_no_width + 2 + 1 + 1 + margin_width
+3. Early exit if no line_width or no labels
+4. Calculate max label width:
+   - For each label: arrow_end + connector_width + message_width
+   - Strip color codes before measuring message
+5. Calculate line display width (sum of char_width)
+6. If line_width + max_label_width <= avail: no truncation
+7. Otherwise:
+   - content_width = avail - ellipsis_width
+   - skip_width = line_width - content_width
+   - char_idx = utf8.widthindex(line_text, skip_width)
+   - leftmost_col = line_labels[1].start_char - line.offset
+   - render_pos = min(char_idx, leftmost_col)
+   - render_pos = max(0, render_pos)
+8. Render: W(ellipsis if needed) + render_line/arrows with render_pos
+```
+
+**Function Modifications**:
+- `render_line`: Add `render_pos` parameter, start from char (render_pos + 1)
+- `render_arrows`: Add `render_pos` parameter, adjust arrow positions
+
+**Open Questions**:
+- Are `line_labels` pre-sorted by `start_char`?
+- Exact connector width for compact vs non-compact modes?
 
 **Phase 2b: POC for virtual rows (3-5 days)**
 - Create experimental branch to test virtual row concept
