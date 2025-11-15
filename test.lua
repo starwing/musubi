@@ -1418,22 +1418,23 @@ Error: margin xbar test
     end
 end
 
+--- Helper function for tests that need line_width
+---@param line_width? integer
+---@param index_type? "byte"|"char"
+---@param compact? boolean
+---@return Config
+local function no_color_ascii_width(line_width, index_type, compact)
+    return ariadne.Config.new {
+        color = false,
+        char_set = ariadne.Characters.ascii,
+        index_type = index_type,
+        compact = compact,
+        line_width = line_width,
+    }
+end
+
 local TestLineWidth = {}
 do
-    ---@param line_width? integer
-    ---@param index_type? "byte"|"char"
-    ---@param compact? boolean
-    ---@return Config
-    local function no_color_ascii_width(line_width, index_type, compact)
-        return ariadne.Config.new {
-            color = false,
-            char_set = ariadne.Characters.ascii,
-            index_type = index_type,
-            compact = compact,
-            line_width = line_width,
-        }
-    end
-
     -- Phase 1: Header Truncation Tests (MVP: simple suffix truncation)
     -- Header format: "   ,-[ {path}:{line}:{col} ]"
     -- Fixed width = 7 (before) + 2 (after) = 9 chars
@@ -1688,9 +1689,217 @@ Error: test
     end
 end
 
+TestLineWindowing = {}
+do
+    function TestLineWindowing.test_single_label_at_end_of_long_line()
+        -- Label at the very end of a 900+ char line
+        -- Should show ellipsis prefix + local context
+        local text = string.rep("apple == ", 100) .. "orange"
+        -- Total length: 100*9 + 6 = 906 chars
+        -- Label is at chars 901-906 ("orange")
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(901, 906):with_message("This is an orange"))
+            :render(ariadne.Source.new(text))
+        )
+
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ... apple == apple == apple == apple == apple == orange
+   |                                                  ^^^|^^
+   |                                                     `---- This is an orange
+---'
+]])
+    end
+
+    function TestLineWindowing.test_single_label_in_middle_of_long_line()
+        -- Label in the middle of a long line
+        -- Should center the label in the available width
+        local prefix = string.rep("a", 400)
+        local target = "error"
+        local suffix = string.rep("b", 400)
+        local text = prefix .. target .. suffix
+        -- Total: 805 chars, label at 401-405
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 401)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(401, 405):with_message("found here"))
+            :render(ariadne.Source.new(text))
+        )
+
+        -- Available for content = 80 - 5 = 75
+        -- With ellipsis: 72 chars of content
+        -- Label is 5 chars wide, at position 401-405
+        -- Ideally center the label: show some context before and after
+        -- Could show chars ~370-441 (72 chars centered around 401-405)
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:401 ]
+   |
+ 1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaaerrorbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...
+   |                              ^^|^^
+   |                                `---- found here
+---'
+]])
+    end
+
+    function TestLineWindowing.test_small_msg()
+        local text = ("a"):rep(400) .. "error" .. ("b"):rep(400)
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 401)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(401, 405):with_message("1"))
+            :render(ariadne.Source.new(text))
+        )
+
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:401 ]
+   |
+ 1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaerrorbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...
+   |                                  ^^|^^
+   |                                    `---- 1
+---'
+]])
+    end
+
+    function TestLineWindowing.test_minimum_line_width()
+        -- Label at the start of a long line
+        -- Should NOT show ellipsis, just truncate the end
+        local text = ("a"):rep(400) .. "error" .. ("b"):rep(400)
+        local msg = "a very long message that exceeds the line width significantly"
+        local cfg = no_color_ascii_width(10)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 401)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(401, 405):with_message(msg))
+            :render(ariadne.Source.new(text))
+        )
+
+        -- Label is at the start, so skip_chars = 0
+        -- Just show first 75 chars (no ellipsis needed)
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ ...unknown>:1:401 ]
+   |
+ 1 | ...errorbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...
+   |    ^^|^^
+   |      `---- a very long message that exceeds the line width significantly
+---'
+]])
+    end
+
+    function TestLineWindowing.test_fit_line_width()
+        -- Label at the start of a long line
+        -- Should NOT show ellipsis, just truncate the end
+        local text = ("a"):rep(55) .. "error" .. ("b"):rep(16)
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 401)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(56, 60):with_message "at start")
+            :render(ariadne.Source.new(text))
+        )
+
+        -- Label is at the start, so skip_chars = 0
+        -- Just show first 75 chars (no ellipsis needed)
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:401 ]
+   |
+ 1 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaerrorbbbbbbbbbbbb...
+   |                                                        ^^|^^
+   |                                                          `---- at start
+---'
+]])
+    end
+
+    function TestLineWindowing.test_single_label_at_start_of_long_line()
+        -- Label at the start of a long line
+        -- Should NOT show ellipsis, just truncate the end
+        local text = "error" .. string.rep("x", 900)
+        -- Label at 1-5
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(1, 5):with_message("at start"))
+            :render(ariadne.Source.new(text))
+        )
+
+        -- Label is at the start, so skip_chars = 0
+        -- Just show first 75 chars (no ellipsis needed)
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | errorxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...
+   | ^^|^^
+   |   `---- at start
+---'
+]])
+    end
+
+    function TestLineWindowing.test_no_windowing_when_line_fits()
+        -- Line is short enough to fit within line_width
+        -- Should NOT apply windowing
+        local text = "short line with error"
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 17)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(17, 21):with_message("here"))
+            :render(ariadne.Source.new(text))
+        )
+
+        -- Line is only 21 chars, fits easily in 75 available
+        -- No windowing needed
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:17 ]
+   |
+ 1 | short line with error
+   |                 ^^|^^
+   |                   `---- here
+---'
+]])
+    end
+
+    function TestLineWindowing.test_no_windowing_when_line_width_nil()
+        -- line_width = nil, should display full line
+        local text = string.rep("a", 200)
+        local cfg = no_color_ascii_width(nil)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 195)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(195, 200):with_message("end"))
+            :render(ariadne.Source.new(text))
+        )
+
+        -- Full line should be displayed (200 chars)
+        local expected_line = " 1 | " .. text
+        lu.assertTrue(msg:find(expected_line, 1, true) ~= nil, "Should show full line")
+    end
+end
+
 _G.TestSource = TestSource
 _G.TestColor = TestColor
 _G.TestWrite = TestWrite
 _G.TestLineWidth = TestLineWidth
+_G.TestLineWindowing = TestLineWindowing
 
 os.exit(lu.LuaUnit.run())

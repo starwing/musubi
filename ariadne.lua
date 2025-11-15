@@ -360,6 +360,7 @@ end
 --- @field end_pos?   integer
 --- @field source_id? string
 --- @field message?   string
+--- @field width?     integer
 --- @field color?     Color
 --- @field order      integer
 --- @field priority   integer
@@ -395,8 +396,9 @@ do
 
     ---@param msg string
     ---@return Label
-    function Label:with_message(msg)
+    function Label:with_message(msg, width)
         self.message = msg
+        self.width = width
         return self
     end
 
@@ -805,10 +807,11 @@ do -- report Rendering
     ---@param W Writer
     ---@param report Report
     ---@param line_no_width integer
+    ---@param ellipsis_width integer
     ---@param group_idx integer
     ---@param group SourceGroup
     ---@param src Source
-    local function render_reference(W, report, line_no_width, group_idx, group, src)
+    local function render_reference(W, report, line_no_width, ellipsis_width, group_idx, group, src)
         local cfg = report.config
         local draw = cfg.char_set
         local id = src.id:gsub("\t", " ")
@@ -818,7 +821,7 @@ do -- report Rendering
             -- assume draw's components' width are all 1
             local fixed_width = utf8.width(loc) + line_no_width + 9
             if id_width + fixed_width > cfg.line_width then
-                local avail = cfg.line_width - fixed_width - utf8.width(draw.ellipsis)
+                local avail = cfg.line_width - fixed_width - ellipsis_width
                 if avail < MIN_FILENAME_WIDTH then
                     avail = MIN_FILENAME_WIDTH
                 end
@@ -1153,16 +1156,20 @@ do -- report Rendering
     --- Render a line with highlights
     ---@param W Writer
     ---@param line Line
+    ---@param start_col integer
+    ---@param end_col? integer
     ---@param margin_label LineLabel?
     ---@param line_labels LineLabel[]
     ---@param multi_labels LineLabel[]
     ---@param src Source
     ---@param cfg Config
-    local function render_line(W, line, margin_label, line_labels, multi_labels, src, cfg)
+    local function render_line(W, line, start_col, end_col,
+                               margin_label, line_labels, multi_labels, src, cfg)
         --- @type Color?
         local cur_color
-        local cur_offset, cur_byte_offset = 1, line.byte_offset
-        for i = 1, line.len do
+        local cur_offset = start_col
+        local cur_byte_offset = assert((utf8.offset(src.text, start_col, line.byte_offset)))
+        for i = start_col, end_col or line.len do
             local highlight = get_highlight(
                 line.offset + i - 1,
                 margin_label,
@@ -1187,8 +1194,12 @@ do -- report Rendering
                 cur_byte_offset = next_start_bytes
             end
         end
+        local end_bytes = line.byte_offset + line.byte_len - 1
+        if end_col and end_col < line.len then
+            end_bytes = utf8.offset(src.text, end_col + 1, line.byte_offset) - 1
+        end
         W:label_or_unimportant(cur_color, (src.text:sub(
-            cur_byte_offset, line.byte_offset + line.byte_len - 1
+            cur_byte_offset, end_bytes
         ):gsub("\t", ""))):reset()
     end
 
@@ -1246,13 +1257,17 @@ do -- report Rendering
 
     --- Calculate the maximum arrow line length for a specific line
     ---@param line Line
+    ---@param margin_label LineLabel?
     ---@param line_labels LineLabel[]
     ---@param compact boolean
-    ---@return integer
-    local function calc_arrow_len(line, line_labels, compact)
+    ---@return integer arrow_len
+    ---@return integer min_col
+    ---@return integer max_label_width
+    local function calc_arrow_len(line, margin_label, line_labels, compact)
         local arrow_end_space = compact and 1 or 2
-        local arrow_len = 0
-        for l, ll in ipairs(line_labels) do
+        local arrow_len, max_width = 0, 0
+        local min_col
+        for _, ll in ipairs(line_labels) do
             if ll.info.multi then
                 arrow_len = line.len + (line.newline and 1 or 0)
             else
@@ -1261,8 +1276,93 @@ do -- report Rendering
                     arrow_len = cur
                 end
             end
+            local msg_width = ll.info.label.width
+            if not msg_width then
+                msg_width = utf8.width(ll.info.label.message or "")
+            end
+            if max_width < msg_width then
+                max_width = msg_width
+            end
+            local cur_col = ll.col
+            if not ll.info.multi then
+                cur_col = ll.info.start_char - line.offset + 1
+            end
+            if (not margin_label or ll.info ~= margin_label.info) and
+                (not min_col or cur_col < min_col)
+            then
+                min_col = cur_col
+            end
         end
-        return arrow_len + arrow_end_space
+        return arrow_len + arrow_end_space, min_col, max_width
+    end
+
+    --- Calculate the start position for rendering a line
+    ---@param line Line
+    ---@param arrow_len integer
+    ---@param min_col integer
+    ---@param max_label_width integer
+    ---@param line_no_width integer
+    ---@param multi_labels_with_message LabelInfo[]
+    ---@param src Source
+    ---@param cfg Config
+    ---@return integer start_col
+    ---@return integer? end_col
+    local function calc_col_range(line, arrow_len, min_col, max_label_width,
+                                  line_no_width, ellipsis_width,
+                                  multi_labels_with_message, src, cfg)
+        if not cfg.line_width then return 1 end
+        local margin_count = #multi_labels_with_message
+        if margin_count > 0 then margin_count = margin_count + 1 end
+        local fix_width = line_no_width + 4 +       -- line no and margin
+            margin_count * (cfg.compact and 1 or 2) -- margin arrows
+        local line_width = cfg.line_width - fix_width
+
+        -- the width of arrows line:
+        --                          |<-- min_width ->|
+        --  1 | ...aaaaaaaaaaaaaaaaaerrorbbbbbbbbbbbbbbbbbbbbbbbbbb...
+        --    |                     ^^|^^
+        --    |                       `---- found here
+        --                          ^ min_col  ...-->| arrow_limit
+        --                                ^ arrow_len (arrow_width)
+        -- line.len may be less than arrow_len
+        local extra = math.max(0, arrow_len - line.len)
+        local _, arrow_end = utf8.offset(src.text, arrow_len, line.byte_offset)
+        local line_end = line.byte_offset + line.byte_len - 1
+        if not arrow_end then arrow_end = line_end end
+        local arrow_width = utf8.width(src.text, line.byte_offset, arrow_end) + extra
+        local arrow_limit = arrow_width + 1 + max_label_width -- 1: space before msg
+
+        -- all line fits in line_width? No need to skip
+        local total_width = utf8.width(src.text, line.byte_offset, line_end)
+        if arrow_limit <= line_width and total_width <= line_width then return 1 end
+
+        -- min_col already overflow? Using min_col
+        local min_width = utf8.width(src.text,
+                utf8.offset(src.text, min_col, line.byte_offset), arrow_end) +
+            1 + max_label_width
+        if min_width + ellipsis_width >= line_width then
+            return min_col, math.min(line.len, arrow_len + (utf8.widthindex(src.text,
+                1 + max_label_width - ellipsis_width,
+                arrow_end + 1, line_end)))
+        end
+
+        local min_skip = arrow_limit - line_width + ellipsis_width + 1
+        if min_skip <= 0 then
+            return 1, math.min(line.len, arrow_len + (utf8.widthindex(src.text,
+                line_width - arrow_width - ellipsis_width,
+                arrow_end + 1, line_end)))
+        end
+        local balance_skip = 0
+        if total_width > arrow_limit then
+            local avail_width = total_width - arrow_limit
+            local right_width = (line_width - min_width) // 2
+            balance_skip = right_width + math.max(0, right_width - avail_width)
+        end
+        local start_col = (utf8.widthindex(src.text, min_skip + balance_skip,
+            line.byte_offset, arrow_end))
+        return start_col, math.min(line.len, arrow_len + (utf8.widthindex(src.text,
+            1 + max_label_width + balance_skip - ellipsis_width,
+            arrow_end + 1, line_end)))
     end
 
     --- Render arrows for a line
@@ -1270,18 +1370,19 @@ do -- report Rendering
     ---@param line_no_width integer
     ---@param line Line
     ---@param is_ellipsis boolean
+    ---@param arrow_len integer
+    ---@param start_col integer
+    ---@param ellipsis_width integer
     ---@param line_labels LineLabel[]
     ---@param margin_label LineLabel?
     ---@param multi_labels_with_message LineLabel[]
     ---@param src Source
     ---@param cfg Config
     local function render_arrows(W, line_no_width, line, is_ellipsis,
+                                 arrow_len, start_col, ellipsis_width,
                                  line_labels, margin_label,
                                  multi_labels_with_message, src, cfg)
         local draw = cfg.char_set
-
-        -- Determine label bounds so we know where to put error messages
-        local arrow_len = calc_arrow_len(line, line_labels, cfg.compact)
 
         -- Arrows
         for row, ll in ipairs(line_labels) do
@@ -1292,7 +1393,8 @@ do -- report Rendering
                     render_lineno(W, nil, line_no_width, is_ellipsis, cfg)
                     render_margin(W, false, is_ellipsis, line, ll, false, line_labels,
                         margin_label, multi_labels_with_message, cfg)
-                    for col = 1, arrow_len do
+                    if start_col > 1 then W:padding(ellipsis_width) end
+                    for col = start_col, arrow_len do
                         local width = 1
                         if col <= line.len then
                             width = char_width(src.text, line.byte_offset, col, cfg)
@@ -1340,7 +1442,8 @@ do -- report Rendering
                     margin_label, multi_labels_with_message, cfg)
 
                 -- Lines
-                for col = 1, arrow_len do
+                if start_col > 1 then W:padding(ellipsis_width) end
+                for col = start_col, arrow_len do
                     local width = 1
                     if col <= line.len then
                         width = char_width(src.text, line.byte_offset, col, cfg)
@@ -1423,12 +1526,15 @@ do -- report Rendering
         -- line number maximum width
         local line_no_width = calc_line_no_width(cache, groups)
 
+        local ellipsis_width = utf8.width(draw.ellipsis)
+
         -- source sections
         for group_idx, group in ipairs(groups) do
             local src = assert(cache:fetch(group.source_id), "source not found")
 
             -- Render reference line
-            render_reference(W, self, line_no_width, group_idx, group, src)
+            render_reference(W, self, line_no_width, ellipsis_width,
+                group_idx, group, src)
             if not cfg.compact then
                 W:padding(line_no_width + 2):margin(draw.vbar):reset "\n"
             end
@@ -1469,17 +1575,31 @@ do -- report Rendering
                     is_ellipsis, draw_line = true, false
                 end
                 if draw_line then
+                    -- Determine label bounds so we know where to put error messages
+                    local arrow_len, min_col, max_label_width =
+                        calc_arrow_len(line, margin_label, line_labels, cfg.compact)
+                    local start_col, end_col = calc_col_range(line, arrow_len, min_col,
+                        max_label_width, line_no_width, ellipsis_width,
+                        multi_labels_with_message, src, cfg)
+
                     render_lineno(W, idx + src.display_line_offset,
                         line_no_width, is_ellipsis, cfg)
                     render_margin(W, true, is_ellipsis, line, nil, false, nil,
                         margin_label, multi_labels_with_message, cfg)
                     if not is_ellipsis then
-                        render_line(W, line, margin_label, line_labels,
-                            multi_labels, src, cfg)
+                        if start_col > 1 then
+                            W:unimportant(draw.ellipsis):reset()
+                        end
+                        render_line(W, line, start_col, end_col,
+                            margin_label, line_labels, multi_labels, src, cfg)
+                        if end_col and end_col < line.len then
+                            W:unimportant(draw.ellipsis):reset()
+                        end
                     end
                     W "\n"
 
                     render_arrows(W, line_no_width, line, is_ellipsis,
+                        arrow_len, start_col, ellipsis_width,
                         line_labels, margin_label, multi_labels_with_message,
                         src, cfg)
                 end
