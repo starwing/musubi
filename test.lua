@@ -1894,6 +1894,93 @@ Error: test
         local expected_line = " 1 | " .. text
         lu.assertTrue(msg:find(expected_line, 1, true) ~= nil, "Should show full line")
     end
+
+    function TestLineWindowing.test_multiple_labels_on_long_line()
+        -- Multiple labels on same long line
+        -- Should window based on leftmost label (min_col)
+        local prefix = string.rep("a", 100)
+        local label1 = "error"
+        local middle = string.rep("b", 200)
+        local label2 = "warn"
+        local suffix = string.rep("c", 300)
+        local text = prefix .. label1 .. middle .. label2 .. suffix
+        -- Total: 609 chars
+        -- label1: 101-105, label2: 306-309
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 101)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(101, 105):with_message("first error"))
+            :add_label(ariadne.Label.new(306, 309):with_message("second warning"))
+            :render(ariadne.Source.new(text))
+        )
+
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:101 ]
+   |
+ 1 | ...errorbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbwarncccccccccccccc...
+   |    ^^|^^                                                                                                                                                                                                        ^^|^
+   |      `---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- first error
+   |                                                                                                                                                                                                                   |
+   |                                                                                                                                                                                                                   `--- second warning
+---'
+]])
+    end
+
+    function TestLineWindowing.test_cjk_characters_in_line()
+        -- Line with CJK characters (width 2 each)
+        -- Should correctly calculate display width
+        local text = string.rep("中", 50) .. "错误" .. string.rep("文", 50)
+        -- Total: 102 CJK chars = 204 display width
+        -- Label "错误" at position 51-52 (2 chars, 4 display width)
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 51)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(51, 52):with_message("这是错误"))
+            :render(ariadne.Source.new(text))
+        )
+
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:51 ]
+   |
+ 1 | ...中中中中中中中中中中中中中错误文文文文文文文文文文文文文文文文文文文文...
+   |                              ^^|^
+   |                                `----- 这是错误
+---'
+]])
+    end
+
+    function TestLineWindowing.test_mixed_ascii_cjk_characters()
+        -- Mixed ASCII and CJK characters
+        -- ASCII width 1, CJK width 2
+        local prefix = string.rep("a", 200)
+        local text = prefix .. "hello世界error错误test"
+        -- Label on "error错误" (5 ASCII + 2 CJK = 7 chars)
+        -- Position: 201-207 (char positions)
+        local cfg = no_color_ascii_width(80)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 201)
+            :with_config(cfg)
+            :set_message("test")
+            :add_label(ariadne.Label.new(206, 212):with_message("mixed error"))
+            :render(ariadne.Source.new(text))
+        )
+
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:201 ]
+   |
+ 1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaahello世界error错误test
+   |                                                   ^^^^^|^^^
+   |                                                        `------- mixed error
+---'
+]])
+    end
 end
 
 _G.TestSource = TestSource

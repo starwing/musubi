@@ -6,10 +6,11 @@ This document tracks the project's development status, active TODOs, completed w
 
 ### Project Maturity
 - ✅ **Core implementation complete**: All rendering logic ported and tested
-- ✅ **Test coverage**: 100% (all reachable code covered, 74 tests passing)
+- ✅ **Test coverage**: 100% (all reachable code covered, 77 tests passing)
 - ✅ **Pixel-perfect output**: All test cases produce identical output to reference implementation
 - ✅ **Performance optimized**: O(n) rendering vs original O(n²) nested loops
 - ✅ **Line width limiting**: Phase 0-2a complete (header truncation + line windowing)
+- ✅ **Unicode support**: Full CJK and mixed character width handling
 
 ### Known Limitations
 - Only supports `\n` newlines (not Unicode line separators)
@@ -130,7 +131,7 @@ This document tracks the project's development status, active TODOs, completed w
 - **Key functions**:
   - `calc_col_range()`: Returns `start_col, end_col` for windowing
   - Modified `render_line()` and `render_arrows()` to accept `start_col, end_col`
-- **Tests added** (8 new tests, all passing):
+- **Tests added** (11 new tests, all passing):
   - `test_single_label_at_end_of_long_line` - Label at line end (906 chars), centered
   - `test_single_label_in_middle_of_long_line` - Label in middle (805 chars), centered
   - `test_single_label_at_start_of_long_line` - Label at start, only right ellipsis
@@ -138,8 +139,11 @@ This document tracks the project's development status, active TODOs, completed w
   - `test_no_windowing_when_line_width_nil` - Disabled, full display
   - `test_fit_line_width` - Label in middle, fits with right truncation
   - `test_minimum_line_width` - Extreme narrow width (10), message overflow
-  - Additional edge case test (undocumented)
-- **Total tests**: 74 (66 baseline + 8 Phase 2a), 100% coverage maintained
+  - `test_small_msg` - Very short message (1 char)
+  - `test_multiple_labels_on_long_line` - Multiple labels, window based on leftmost
+  - `test_cjk_characters_in_line` - CJK characters (width 2), proper width calculation
+  - `test_mixed_ascii_cjk_characters` - Mixed ASCII/CJK, correct display width
+- **Total tests**: 77 (66 baseline + 11 Phase 2a), 100% coverage maintained
 
 ### Phase 2a Implementation Summary (Completed)
 
