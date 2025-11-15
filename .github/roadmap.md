@@ -6,9 +6,10 @@ This document tracks the project's development status, active TODOs, completed w
 
 ### Project Maturity
 - ✅ **Core implementation complete**: All rendering logic ported and tested
-- ✅ **Test coverage**: 100% (all reachable code covered, 55 tests passing)
+- ✅ **Test coverage**: 100% (all reachable code covered, 74 tests passing)
 - ✅ **Pixel-perfect output**: All test cases produce identical output to reference implementation
 - ✅ **Performance optimized**: O(n) rendering vs original O(n²) nested loops
+- ✅ **Line width limiting**: Phase 0-2a complete (header truncation + line windowing)
 
 ### Known Limitations
 - Only supports `\n` newlines (not Unicode line separators)
@@ -17,10 +18,10 @@ This document tracks the project's development status, active TODOs, completed w
 
 ## Active TODO
 
-**Priority 1: Line width limiting feature** (See "Planned Features" section below)
-- Status: Phase 0 in progress
-- Goal: Add optional `line_width` config for intelligent truncation of long diagnostic lines
-- Current phase: Infrastructure setup (Config, Characters, helper functions)
+**Priority 1: Line width limiting feature - Phase 2b+** (See "Planned Features" section below)
+- Status: Phase 2a complete, Phase 2b not started
+- Current state: Single-label windowing works, multi-label splitting pending
+- Next phase: POC for virtual rows concept
 
 ## Completed Work
 
@@ -118,73 +119,83 @@ This document tracks the project's development status, active TODOs, completed w
   - `test_header_truncation_one_over_boundary` - Just over limit
   - Coverage: ASCII, UTF-8, tabs, edge cases, soft limits
 
-**Phase 2a: End-of-line single-label windowing (Simplified, 2-3 days)** 🔄 *In Progress*
-- **Scope**: Only handle labels at/near end of long lines (like `test_label_at_end_of_long_line`)
-- **Strategy**: Show `...` prefix + local context around label
-- **Core concept**: When line is too long, show only relevant portion with ellipsis
-  - Example: `1 | ...apple == orange` instead of full 900+ chars
-- **No changes** to multi-label logic or complex splitting (deferred to Phase 2b/3)
-- **Tests added** (5 new tests):
-  - `test_single_label_at_end_of_long_line` - Label at line end (900 chars)
-  - `test_single_label_in_middle_of_long_line` - Label centered in long line
-  - `test_single_label_at_start_of_long_line` - Label at start, no ellipsis
+**Phase 2a: Line windowing (local context around labels)** ✅ *Complete*
+- **Implemented**: Intelligent line truncation with left/right ellipsis
+- **Strategy**: Center label+message within `line_width`, balance left/right context
+- **Core algorithm**:
+  - Calculate `arrow_limit = arrow_width + 1 + max_label_width`
+  - If fits: show full line
+  - If `min_width` overflows: show from `min_col` with right truncation
+  - Otherwise: balance left/right context, prioritize right side if insufficient
+- **Key functions**:
+  - `calc_col_range()`: Returns `start_col, end_col` for windowing
+  - Modified `render_line()` and `render_arrows()` to accept `start_col, end_col`
+- **Tests added** (8 new tests, all passing):
+  - `test_single_label_at_end_of_long_line` - Label at line end (906 chars), centered
+  - `test_single_label_in_middle_of_long_line` - Label in middle (805 chars), centered
+  - `test_single_label_at_start_of_long_line` - Label at start, only right ellipsis
   - `test_no_windowing_when_line_fits` - Short line, no truncation
   - `test_no_windowing_when_line_width_nil` - Disabled, full display
-- **Goal**: Solve 80% of real-world long-line issues with minimal complexity
+  - `test_fit_line_width` - Label in middle, fits with right truncation
+  - `test_minimum_line_width` - Extreme narrow width (10), message overflow
+  - Additional edge case test (undocumented)
+- **Total tests**: 74 (66 baseline + 8 Phase 2a), 100% coverage maintained
 
-### Phase 2a Implementation Details
+### Phase 2a Implementation Summary (Completed)
 
-**Key Technical Points**:
+**Design Decision**: Label+message centering with balanced context
 
-1. **Color Code Stripping**
-   - Pattern: `(text:gsub("\x1b%[[^m]*m", ""))`
-   - Matches: `\x1b[31m` (simple) and `\x1b[38;5;147m` (256-color)
-   - Needed for: Accurate message width calculation
-
-2. **Compact Mode Impact**
-   - Non-compact: `` `---- message`` on separate line
-   - Compact: Message inline
-   - Affects connector width in label width calculation
-
-3. **UTF-8 Width vs Position**
-   - **widthlimit**: Returns byte position (wrong for this use case)
-   - **widthindex**: Returns character index at given width (correct)
-   - Usage: `char_idx = utf8.widthindex(line_text, skip_width)`
-
-4. **Soft Limit Principle**
-   - No fixed `MIN_LINE_CONTENT` constant
-   - Always show at least up to leftmost label
-   - `render_pos = min(calculated_pos, leftmost_label_col)`
-
-**Algorithm**:
+**Final Algorithm**:
 ```
-1. Calculate margin_width from multi_labels_with_message count
-2. Calculate fixed_width = line_no_width + 2 + 1 + 1 + margin_width
-3. Early exit if no line_width or no labels
-4. Calculate max label width:
-   - For each label: arrow_end + connector_width + message_width
-   - Strip color codes before measuring message
-5. Calculate line display width (sum of char_width)
-6. If line_width + max_label_width <= avail: no truncation
-7. Otherwise:
-   - content_width = avail - ellipsis_width
-   - skip_width = line_width - content_width
-   - char_idx = utf8.widthindex(line_text, skip_width)
-   - leftmost_col = line_labels[1].start_char - line.offset
-   - render_pos = min(char_idx, leftmost_col)
-   - render_pos = max(0, render_pos)
-8. Render: W(ellipsis if needed) + render_line/arrows with render_pos
+1. Calculate fixed_width = line_no_width + 4 + margin_width
+   - +4: line_no margin (2) + separator (1) + space after arrows (1)
+2. Calculate arrow_limit = arrow_width + 1 + max_label_width
+   - arrow_width: display width from line start to arrow_len
+   - +1: space before message
+3. Early exits:
+   - No line_width or entire line fits → start_col = 1, end_col = nil
+   - min_width overflows → start_col = min_col, end_col with minimal right context
+4. Windowing logic:
+   - min_skip = arrow_limit - line_width + ellipsis_width + 1
+   - If min_skip <= 0: only right truncation needed
+   - Otherwise: calculate balance_skip for centering
+     - avail_width = total_width - arrow_limit (right context available)
+     - right_width = (line_width - min_width) // 2 (ideal right allocation)
+     - balance_skip = right_width + max(0, right_width - avail_width)
+       (compensate if right side insufficient)
+   - start_col = widthindex(min_skip + balance_skip)
+   - end_col = arrow_len + widthindex(1 + max_label_width + balance_skip - ellipsis)
 ```
 
-**Function Modifications**:
-- `render_line`: Add `render_pos` parameter, start from char (render_pos + 1)
-- `render_arrows`: Add `render_pos` parameter, adjust arrow positions
+**Key Technical Insights**:
+- `widthindex(s, width, i)` returns char index relative to position `i` (1-based)
+- Negative width parameter: returns 1 (first character satisfies)
+- `balance_skip`: extra left skip for centering, compensates for insufficient right context
+- `end_col` calculation: ensures message connector stays within display range
 
-**Open Questions**:
-- Are `line_labels` pre-sorted by `start_char`?
-- Exact connector width for compact vs non-compact modes?
+**Function Signatures**:
+```lua
+calc_col_range(line, arrow_len, min_col, max_label_width, line_no_width, 
+               ellipsis_width, multi_labels_with_message, src, cfg)
+  → start_col, end_col?
 
-**Phase 2b: POC for virtual rows (3-5 days)**
+render_line(W, line, start_col, end_col, margin_label, line_labels, 
+            multi_labels, src, cfg)
+
+render_arrows(W, line_no_width, line, is_ellipsis, arrow_len, start_col, 
+              end_col, ellipsis_width, line_labels, margin_label, 
+              multi_labels_with_message, src, cfg)
+```
+
+**Challenges Resolved**:
+- ❌ Initially tried `widthlimit` (returns byte position, wrong tool)
+- ✅ Switched to `widthindex` (returns char index, correct)
+- ❌ First attempt: skip_width / 2 (didn't account for insufficient right context)
+- ✅ Final: balance_skip with compensation logic
+- ❌ Confusion about "centering" target (label vs label+message)
+- ✅ Clarified: center label+message as visual unit, right side guarantees message space
+
+**Phase 2b: POC for virtual rows (3-5 days)** ⏸️ *Not started*
 - Create experimental branch to test virtual row concept
 - Implement multi-label splitting in isolation
 - Test margin symbol continuity across virtual rows
