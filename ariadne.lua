@@ -1360,9 +1360,12 @@ do -- report Rendering
         end
         local start_col = (utf8.widthindex(src.text, min_skip + balance_skip,
             line.byte_offset, arrow_end))
-        return start_col, math.min(line.len, arrow_len + (utf8.widthindex(src.text,
+        local end_col, idx, chwidth = utf8.widthindex(src.text,
             1 + max_label_width + balance_skip - ellipsis_width,
-            arrow_end + 1, line_end)))
+            arrow_end + 1, line_end)
+        -- multi width in the end_col edge?
+        if idx ~= chwidth then end_col = end_col - 1 end
+        return start_col, math.min(line.len, arrow_len + end_col)
     end
 
     --- Render arrows for a line
