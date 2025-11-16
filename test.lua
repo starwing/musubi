@@ -21,14 +21,10 @@ do
         for i, line in ipairs(lines) do
             lu.assertEquals(src[i].offset, chars + 1)
             lu.assertEquals(src[i].byte_offset, bytes + 1)
-            lu.assertEquals(src[i].len, utf8.len(line))
-            lu.assertEquals(src[i].byte_len, #line)
             lu.assertEquals(get_line_text(src, src[i]), line)
             chars = chars + utf8.len(line) + 1
             bytes = bytes + #line + 1
         end
-        lu.assertEquals(src.len, chars - 1)
-        lu.assertEquals(src.byte_len, bytes - 1)
     end
 
     function TestSource.test_empty()
@@ -104,7 +100,7 @@ do
         local msg = remove_trailing(
             ariadne.Report.build("Error", 0)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
+            :with_message("can't compare apples with oranges")
             :render(ariadne.Source.new(""))
         )
 
@@ -118,9 +114,9 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 5))
-            :add_label(ariadne.Label.new(10, 15))
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 5))
+            :with_label(ariadne.Label.new(10, 15))
             :render(ariadne.Source.new(text))
         )
 
@@ -140,9 +136,9 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
-            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :with_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
             :render(ariadne.Source.new(text))
         )
 
@@ -166,9 +162,9 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii(nil, true))
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
-            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :with_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
             :render(ariadne.Source.new(text))
         )
 
@@ -186,9 +182,9 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii "char")
-            :set_message("can't compare äpplës with örängës")
-            :add_label(ariadne.Label.new(1, 5):with_message("This is an äpplë"))
-            :add_label(ariadne.Label.new(10, 15):with_message("This is an örängë"))
+            :with_message("can't compare äpplës with örängës")
+            :with_label(ariadne.Label.new(1, 5):with_message("This is an äpplë"))
+            :with_label(ariadne.Label.new(10, 15):with_message("This is an örängë"))
             :render(ariadne.Source.new(text))
         )
 
@@ -210,9 +206,9 @@ Error: can't compare äpplës with örängës
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii "byte")
-            :set_message("can't compare äpplës with örängës")
-            :add_label(ariadne.Label.new(1, 7):with_message("This is an äpplë"))
-            :add_label(ariadne.Label.new(12, 20):with_message("This is an örängë"))
+            :with_message("can't compare äpplës with örängës")
+            :with_label(ariadne.Label.new(1, 7):with_message("This is an äpplë"))
+            :with_label(ariadne.Label.new(12, 20):with_message("This is an örängë"))
             :render(ariadne.Source.new(text))
         )
 
@@ -234,9 +230,9 @@ Error: can't compare äpplës with örängës
         local msg = remove_trailing(
             ariadne.Report.build("Error", 12)
             :with_config(no_color_ascii "byte")
-            :set_message("can't compare äpplës with örängës")
-            :add_label(ariadne.Label.new(1, 7):with_message("This is an äpplë"))
-            :add_label(ariadne.Label.new(12, 20):with_message("This is an örängë"))
+            :with_message("can't compare äpplës with örängës")
+            :with_label(ariadne.Label.new(1, 7):with_message("This is an äpplë"))
+            :with_label(ariadne.Label.new(12, 20):with_message("This is an örängë"))
             :render(ariadne.Source.new(text))
         )
 
@@ -258,8 +254,8 @@ Error: can't compare äpplës with örängës
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(#text - 5, #text):with_message("This is an orange"))
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(#text - 5, #text):with_message("This is an orange"))
             :render(ariadne.Source.new(text))
         )
 
@@ -279,8 +275,8 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii "byte")
-            :set_message("unexpected end of file")
-            :add_label(ariadne.Label.new(9):with_message("Unexpected end of file"))
+            :with_message("unexpected end of file")
+            :with_label(ariadne.Label.new(9):with_message("Unexpected end of file"))
             :render(ariadne.Source.new(text))
         )
 
@@ -300,8 +296,8 @@ Error: unexpected end of file
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("unexpected end of file")
-            :add_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
+            :with_message("unexpected end of file")
+            :with_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
             :render(ariadne.Source.new(text))
         )
 
@@ -321,9 +317,9 @@ Error: unexpected end of file
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("unexpected end of file")
-            :add_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
-            :add_help("have you tried going to the farmer's market?")
+            :with_message("unexpected end of file")
+            :with_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
+            :with_help("have you tried going to the farmer's market?")
             :render(ariadne.Source.new(text))
         )
 
@@ -345,9 +341,9 @@ Error: unexpected end of file
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("unexpected end of file")
-            :add_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
-            :add_note("eat your greens!")
+            :with_message("unexpected end of file")
+            :with_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
+            :with_note("eat your greens!")
             :render(ariadne.Source.new(text))
         )
 
@@ -369,10 +365,10 @@ Error: unexpected end of file
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("unexpected end of file")
-            :add_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
-            :add_note("eat your greens!")
-            :add_help("have you tried going to the farmer's market?")
+            :with_message("unexpected end of file")
+            :with_label(ariadne.Label.new(1, 0):with_message("No more fruit!"))
+            :with_note("eat your greens!")
+            :with_help("have you tried going to the farmer's market?")
             :render(ariadne.Source.new(text))
         )
 
@@ -399,8 +395,8 @@ Error: unexpected end of file
                 local ok, result = pcall(function()
                     return ariadne.Report.build("Error", 1)
                         :with_config(no_color_ascii "byte")
-                        :set_message("Label")
-                        :add_label(ariadne.Label.new(i, j):with_message("Label"))
+                        :with_message("Label")
+                        :with_label(ariadne.Label.new(i, j):with_message("Label"))
                         :render(ariadne.Source.new(text))
                 end)
                 lu.assertTrue(ok)
@@ -414,7 +410,7 @@ Error: unexpected end of file
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :add_label(ariadne.Label.new(1, #text):with_message("illegal comparison"))
+            :with_label(ariadne.Label.new(1, #text):with_message("illegal comparison"))
             :render(ariadne.Source.new(text))
         )
 
@@ -437,8 +433,8 @@ Error:
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :add_label(ariadne.Label.new(1, #text):with_message("URL"))
-            :add_label(ariadne.Label.new(1, colon_start):with_message("scheme"))
+            :with_label(ariadne.Label.new(1, #text):with_message("URL"))
+            :with_label(ariadne.Label.new(1, colon_start):with_message("scheme"))
             :render(ariadne.Source.new(text))
         )
 
@@ -460,13 +456,13 @@ Error:
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
-            :add_label(ariadne.Label.new(1, 5):with_message("Have I mentioned that this is an apple?"))
-            :add_label(ariadne.Label.new(1, 5):with_message("No really, have I mentioned that?"))
-            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
-            :add_label(ariadne.Label.new(10, 15):with_message("Have I mentioned that this is an orange?"))
-            :add_label(ariadne.Label.new(10, 15):with_message("No really, have I mentioned that?"))
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :with_label(ariadne.Label.new(1, 5):with_message("Have I mentioned that this is an apple?"))
+            :with_label(ariadne.Label.new(1, 5):with_message("No really, have I mentioned that?"))
+            :with_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :with_label(ariadne.Label.new(10, 15):with_message("Have I mentioned that this is an orange?"))
+            :with_label(ariadne.Label.new(10, 15):with_message("No really, have I mentioned that?"))
             :render(ariadne.Source.new(text))
         )
 
@@ -496,10 +492,10 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
-            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
-            :add_note("stop trying ... this is a fruitless endeavor")
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :with_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :with_note("stop trying ... this is a fruitless endeavor")
             :render(ariadne.Source.new(text))
         )
 
@@ -523,10 +519,10 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii(nil, true))
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
-            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
-            :add_note("stop trying ... this is a fruitless endeavor")
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :with_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :with_note("stop trying ... this is a fruitless endeavor")
             :render(ariadne.Source.new(text))
         )
 
@@ -545,10 +541,10 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
-            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
-            :add_help("have you tried peeling the orange?")
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :with_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :with_help("have you tried peeling the orange?")
             :render(ariadne.Source.new(text))
         )
 
@@ -572,11 +568,11 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
-            :add_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
-            :add_help("have you tried peeling the orange?")
-            :add_note("stop trying ... this is a fruitless endeavor")
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 5):with_message("This is an apple"))
+            :with_label(ariadne.Label.new(10, 15):with_message("This is an orange"))
+            :with_help("have you tried peeling the orange?")
+            :with_note("stop trying ... this is a fruitless endeavor")
             :render(ariadne.Source.new(text))
         )
 
@@ -602,9 +598,9 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
-            :add_note("No need to try, they can't be compared.")
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
+            :with_note("No need to try, they can't be compared.")
             :render(ariadne.Source.new(text))
         )
 
@@ -626,10 +622,10 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
-            :add_note("No need to try, they can't be compared.")
-            :add_note("Yeah, really, please stop.")
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
+            :with_note("No need to try, they can't be compared.")
+            :with_note("Yeah, really, please stop.")
             :render(ariadne.Source.new(text))
         )
 
@@ -653,10 +649,10 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
-            :add_note("No need to try, they can't be compared.")
-            :add_note("Yeah, really, please stop.\nIt has no resemblance.")
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
+            :with_note("No need to try, they can't be compared.")
+            :with_note("Yeah, really, please stop.\nIt has no resemblance.")
             :render(ariadne.Source.new(text))
         )
 
@@ -681,10 +677,10 @@ Error: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Advice", 1)
             :with_config(no_color_ascii())
-            :set_message("can't compare apples with oranges")
-            :add_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
-            :add_help("No need to try, they can't be compared.")
-            :add_help("Yeah, really, please stop.\nIt has no resemblance.")
+            :with_message("can't compare apples with oranges")
+            :with_label(ariadne.Label.new(1, 15):with_message("This is a strange comparison"))
+            :with_help("No need to try, they can't be compared.")
+            :with_help("Yeah, really, please stop.\nIt has no resemblance.")
             :render(ariadne.Source.new(text))
         )
 
@@ -709,8 +705,8 @@ Advice: can't compare apples with oranges
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("line offset demo")
-            :add_label(ariadne.Label.new(12, 22):with_message("Second line"))
+            :with_message("line offset demo")
+            :with_label(ariadne.Label.new(12, 22):with_message("Second line"))
             :render(ariadne.Source.new(text, nil, 9))
         )
 
@@ -730,9 +726,9 @@ Error: line offset demo
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("ordered labels")
-            :add_label(ariadne.Label.new(1, 3):with_message("Left"))
-            :add_label(ariadne.Label.new(4, 6):with_order(-10):with_message("Right"))
+            :with_message("ordered labels")
+            :with_label(ariadne.Label.new(1, 3):with_message("Left"))
+            :with_label(ariadne.Label.new(4, 6):with_order(-10):with_message("Right"))
             :render(ariadne.Source.new(text))
         )
 
@@ -756,9 +752,9 @@ Error: ordered labels
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("gaps between labels")
-            :add_label(ariadne.Label.new(1, 5):with_message("first"))
-            :add_label(ariadne.Label.new(13, 19):with_message("third"))
+            :with_message("gaps between labels")
+            :with_label(ariadne.Label.new(1, 5):with_message("first"))
+            :with_label(ariadne.Label.new(13, 19):with_message("third"))
             :render(ariadne.Source.new(text))
         )
 
@@ -784,8 +780,8 @@ Error: gaps between labels
         local msg = remove_trailing(
             ariadne.Report.build("Error", 3)
             :with_config(cfg)
-            :set_message("zero length span")
-            :add_label(ariadne.Label.new(3, 2):with_message("point"))
+            :with_message("zero length span")
+            :with_label(ariadne.Label.new(3, 2):with_message("point"))
             :render(ariadne.Source.new(text))
         )
 
@@ -811,9 +807,9 @@ Error: zero length span
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("overlap priorities")
-            :add_label(weak)
-            :add_label(strong)
+            :with_message("overlap priorities")
+            :with_label(weak)
+            :with_label(strong)
             :render(ariadne.Source.new(text))
         )
 
@@ -835,9 +831,9 @@ Error: overlap priorities
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("stacked arrows")
-            :add_label(ariadne.Label.new(1, 3):with_message("left"))
-            :add_label(ariadne.Label.new(5, 8):with_message("right"))
+            :with_message("stacked arrows")
+            :with_label(ariadne.Label.new(1, 3):with_message("left"))
+            :with_label(ariadne.Label.new(5, 8):with_message("right"))
             :render(ariadne.Source.new(text))
         )
 
@@ -859,7 +855,7 @@ Error: stacked arrows
             ariadne.Report.build("Notice", 1)
             :with_config(no_color_ascii())
             :with_code("E100")
-            :set_message("custom kind")
+            :with_message("custom kind")
             :render(ariadne.Source.new("x"))
         )
 
@@ -872,13 +868,13 @@ Error: stacked arrows
         local warning = remove_trailing(
             ariadne.Report.build("Warning", 1)
             :with_config(no_color_ascii())
-            :set_message("careful")
+            :with_message("careful")
             :render(ariadne.Source.new("w"))
         )
         local advice = remove_trailing(
             ariadne.Report.build("Advice", 1)
             :with_config(no_color_ascii())
-            :set_message("consider")
+            :with_message("consider")
             :render(ariadne.Source.new("a"))
         )
 
@@ -895,7 +891,7 @@ Advice: consider
         local msg = remove_trailing(
             ariadne.Report.build("Error", 100)
             :with_config(cfg)
-            :set_message("unknown position")
+            :with_message("unknown position")
             :render(ariadne.Source.new("hi"))
         )
 
@@ -908,8 +904,8 @@ Error: unknown position
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("invalid label")
-            :add_label(ariadne.Label.new(999, 1000):with_message("ignored"))
+            :with_message("invalid label")
+            :with_label(ariadne.Label.new(999, 1000):with_message("ignored"))
             :render(ariadne.Source.new("short"))
         )
 
@@ -925,8 +921,8 @@ Error: invalid label
         local msg = remove_trailing(
             ariadne.Report.build("Error", 100)
             :with_config(cfg)
-            :set_message("oob location with label")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("oob location with label")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text))
         )
 
@@ -948,9 +944,9 @@ Error: oob location with label
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("multiline sort & padding")
-            :add_label(ariadne.Label.new(5, 13):with_message("outer")) -- from trailing spaces into last line
-            :add_label(ariadne.Label.new(9, 13):with_message("inner")) -- spans mid->x
+            :with_message("multiline sort & padding")
+            :with_label(ariadne.Label.new(5, 13):with_message("outer")) -- from trailing spaces into last line
+            :with_label(ariadne.Label.new(9, 13):with_message("inner")) -- spans mid->x
             :render(ariadne.Source.new(text))
         )
 
@@ -976,9 +972,9 @@ Error: multiline sort & padding
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
-            :set_message("pointer and connectors")
-            :add_label(ariadne.Label.new(2, 8):with_message("multi")) -- multi spanning line1->line2
-            :add_label(ariadne.Label.new(9, 10):with_message("inline"))
+            :with_message("pointer and connectors")
+            :with_label(ariadne.Label.new(2, 8):with_message("multi")) -- multi spanning line1->line2
+            :with_label(ariadne.Label.new(9, 10):with_message("inline"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1012,13 +1008,13 @@ def six =
             ariadne.Report.build("Error", 12)
             :with_config(no_color_ascii())
             :with_code "3"
-            :set_message("Incompatible types")
-            :add_label(ariadne.Label.new(33, 33):with_message("This is of type Nat"))
-            :add_label(ariadne.Label.new(43, 45):with_message("This is of type Str"))
-            :add_label(ariadne.Label.new(12, 48):with_message("This values are outputs of this match expression"))
-            :add_label(ariadne.Label.new(1, 48):with_message("The definition has a problem"))
-            :add_label(ariadne.Label.new(51, 76):with_message("Usage of definition here"))
-            :add_note("Outputs of match expressions must coerce to the same type")
+            :with_message("Incompatible types")
+            :with_label(ariadne.Label.new(33, 33):with_message("This is of type Nat"))
+            :with_label(ariadne.Label.new(43, 45):with_message("This is of type Str"))
+            :with_label(ariadne.Label.new(12, 48):with_message("This values are outputs of this match expression"))
+            :with_label(ariadne.Label.new(1, 48):with_message("The definition has a problem"))
+            :with_label(ariadne.Label.new(51, 76):with_message("Usage of definition here"))
+            :with_note("Outputs of match expressions must coerce to the same type")
             :render(ariadne.Source.new(text, "sample.tao"))
         )
 
@@ -1062,9 +1058,9 @@ def six =
 
         local msg = remove_trailing(ariadne.Report.build("Error", 1, "file1.lua")
             :with_config(no_color_ascii())
-            :set_message("cross-file error")
-            :add_label(ariadne.Label.new(1, 5, "file1.lua"))
-            :add_label(ariadne.Label.new(1, 6, "file2.lua"))
+            :with_message("cross-file error")
+            :with_label(ariadne.Label.new(1, 5, "file1.lua"))
+            :with_label(ariadne.Label.new(1, 6, "file2.lua"))
             :render(cache))
         lu.assertEquals(msg, [[
 Error: cross-file error
@@ -1087,8 +1083,8 @@ Error: cross-file error
         local src = ariadne.Source.new("apple\norange\nbanana")
         local msg = ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("multiline span")
-            :add_label(ariadne.Label.new(1, 12):with_message("crosses lines"))
+            :with_message("multiline span")
+            :with_label(ariadne.Label.new(1, 12):with_message("crosses lines"))
             :render(src)
         lu.assertEquals(msg, [=[
 Error: multiline span
@@ -1106,9 +1102,9 @@ Error: multiline span
         local src = ariadne.Source.new("apple\norange\nbanana\ngrape")
         local msg = ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test cross_gap")
-            :add_label(ariadne.Label.new(1, 19):with_message("span 1"))
-            :add_label(ariadne.Label.new(21, 25):with_message("span 2"))
+            :with_message("test cross_gap")
+            :with_label(ariadne.Label.new(1, 19):with_message("span 1"))
+            :with_label(ariadne.Label.new(21, 25):with_message("span 2"))
             :render(src)
         lu.assertEquals(msg, "Error: test cross_gap\
    ,-[ <unknown>:1:1 ]\
@@ -1133,9 +1129,9 @@ Error: multiline span
         local src = ariadne.Source.new("apple\n\n\norange")
         local msg = ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test default colors")
-            :add_label(ariadne.Label.new(1, 6):with_message("spans multiple lines"))
-            :add_note("note with default colors")
+            :with_message("test default colors")
+            :with_label(ariadne.Label.new(1, 6):with_message("spans multiple lines"))
+            :with_note("note with default colors")
             :render(src)
         -- Expected: "Error:" in red, skipped margin ":" in dim gray
         msg = ("%q"):format(msg)
@@ -1154,7 +1150,7 @@ Error: multiline span
         msg = ("%q"):format(remove_trailing(
             ariadne.Report.build("Advice", 1)
             :with_config(cfg)
-            :set_message("test default colors")
+            :with_message("test default colors")
             :render(src)
         ))
         lu.assertEquals(msg, [[
@@ -1164,7 +1160,7 @@ Error: multiline span
         msg = ("%q"):format(remove_trailing(
             ariadne.Report.build("Warning", 1)
             :with_config(cfg)
-            :set_message("test default colors")
+            :with_message("test default colors")
             :render(src)
         ))
         lu.assertEquals(msg, [[
@@ -1179,8 +1175,8 @@ Error: multiline span
         local src = ariadne.Source.new("apple\norange\nbanana")
         local msg = ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("multiline span")
-            :add_label(ariadne.Label.new(1, 12):with_message("crosses lines"))
+            :with_message("multiline span")
+            :with_label(ariadne.Label.new(1, 12):with_message("crosses lines"))
             :render(src)
         lu.assertEquals(msg, [=[
 Error: multiline span
@@ -1198,9 +1194,9 @@ Error: multiline span
         local src = ariadne.Source.new("apple\norange\nbanana\ngrape")
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test cross_gap")
-            :add_label(ariadne.Label.new(1, 19):with_message("span 1"))
-            :add_label(ariadne.Label.new(21, 25):with_message("span 2"))
+            :with_message("test cross_gap")
+            :with_label(ariadne.Label.new(1, 19):with_message("span 1"))
+            :with_label(ariadne.Label.new(21, 25):with_message("span 2"))
             :render(src))
         lu.assertEquals(msg, [[
 Error: test cross_gap
@@ -1225,8 +1221,8 @@ Error: test cross_gap
         local src = ariadne.Source.new("apple orange")
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("no underlines")
-            :add_label(ariadne.Label.new(1, 5):with_message("label"))
+            :with_message("no underlines")
+            :with_label(ariadne.Label.new(1, 5):with_message("label"))
             :render(src))
         lu.assertEquals(msg, [[
 Error: no underlines
@@ -1246,11 +1242,11 @@ Error: no underlines
         local src = ariadne.Source.new("apple orange banana")
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("overlapping same priority")
+            :with_message("overlapping same priority")
             -- Add shorter label first, then longer - to ensure ll_len < res_len triggers
-            :add_label(ariadne.Label.new(3, 7):with_message("short"):with_priority(1))
-            :add_label(ariadne.Label.new(4, 7):with_message("short2"):with_priority(1))
-            :add_label(ariadne.Label.new(1, 10):with_message("long"):with_priority(1))
+            :with_label(ariadne.Label.new(3, 7):with_message("short"):with_priority(1))
+            :with_label(ariadne.Label.new(4, 7):with_message("short2"):with_priority(1))
+            :with_label(ariadne.Label.new(1, 10):with_message("long"):with_priority(1))
             :render(src))
         -- The shorter label should win when priority is the same
         lu.assertEquals(msg, [[
@@ -1276,8 +1272,8 @@ Error: overlapping same priority
         local src = ariadne.Source.new("apple\norange\nbanana")
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("compact uarrow")
-            :add_label(ariadne.Label.new(1, 12):with_message("multiline"))
+            :with_message("compact uarrow")
+            :with_label(ariadne.Label.new(1, 12):with_message("multiline"))
             :render(src))
         lu.assertEquals(msg, [[
 Error: compact uarrow
@@ -1297,9 +1293,9 @@ Error: compact uarrow
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("xbar test")
-            :add_label(ariadne.Label.new(2, 8):with_message("multi"))
-            :add_label(ariadne.Label.new(9, 10):with_message("inline"))
+            :with_message("xbar test")
+            :with_label(ariadne.Label.new(2, 8):with_message("multi"))
+            :with_label(ariadne.Label.new(9, 10):with_message("inline"))
             :render(ariadne.Source.new(text))
         )
         -- With cross_gap=false, we should see '+' in the message connector line
@@ -1326,9 +1322,9 @@ Error: xbar test
         local src = ariadne.Source.new("abcdefgh\nijklmnop\nqrstuvwx")
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("two multiline labels")
-            :add_label(ariadne.Label.new(1, 18):with_message("outer"))
-            :add_label(ariadne.Label.new(3, 19):with_message("inner"))
+            :with_message("two multiline labels")
+            :with_label(ariadne.Label.new(1, 18):with_message("outer"))
+            :with_label(ariadne.Label.new(3, 19):with_message("inner"))
             :render(src))
         lu.assertEquals(msg, [[
 Error: two multiline labels
@@ -1353,9 +1349,9 @@ Error: two multiline labels
         local src = ariadne.Source.new("abcd\nefgh\nijkl\n")
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test two multiline labels ending at same col")
-            :add_label(ariadne.Label.new(1, 6):with_message("labelA spans 1-6"))
-            :add_label(ariadne.Label.new(2, 6):with_message("labelB spans 2-6"))
+            :with_message("test two multiline labels ending at same col")
+            :with_label(ariadne.Label.new(1, 6):with_message("labelA spans 1-6"))
+            :with_label(ariadne.Label.new(2, 6):with_message("labelB spans 2-6"))
             :render(src))
         lu.assertEquals(msg, [[
 Error: test two multiline labels ending at same col
@@ -1372,10 +1368,10 @@ Error: test two multiline labels ending at same col
         local src = ariadne.Source.new("apple\norange\nbanana")
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii(nil, true))
-            :set_message("uarrow test")
-            :add_label(ariadne.Label.new(1, 7):with_message("inner"))
-            :add_label(ariadne.Label.new(2, 14):with_message("outer"):with_order(1))
-            :add_label(ariadne.Label.new(1, 8):with_message("outer outer"):with_order(2))
+            :with_message("uarrow test")
+            :with_label(ariadne.Label.new(1, 7):with_message("inner"))
+            :with_label(ariadne.Label.new(2, 14):with_message("outer"):with_order(1))
+            :with_label(ariadne.Label.new(1, 8):with_message("outer outer"):with_order(2))
             :render(src))
         lu.assertEquals(msg, [=[
 Error: uarrow test
@@ -1397,9 +1393,9 @@ Error: uarrow test
         local src = ariadne.Source.new("apple\norange\nbanana\nstrawberry")
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("margin xbar test")
-            :add_label(ariadne.Label.new(1, 14):with_message("outer"):with_order(0))
-            :add_label(ariadne.Label.new(7, 21):with_message("inner"):with_order(1))
+            :with_message("margin xbar test")
+            :with_label(ariadne.Label.new(1, 14):with_message("outer"):with_order(0))
+            :with_label(ariadne.Label.new(7, 21):with_message("inner"):with_order(1))
             :render(src))
         lu.assertEquals(msg, [[
 Error: margin xbar test
@@ -1449,8 +1445,8 @@ do
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text, "file.lua"))
         )
         lu.assertEquals(msg, [[
@@ -1478,8 +1474,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text, long_path))
         )
         lu.assertEquals(msg, [[
@@ -1504,8 +1500,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1001)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1001, 1001):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1001, 1001):with_message("label"))
             :render(ariadne.Source.new(text, long_path))
         )
         -- Available = 45 - 9 - 3 = 33, loc = 5, ellipsis = 3, suffix = 25
@@ -1536,8 +1532,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text, utf8_path))
         )
         lu.assertEquals(msg, [[
@@ -1565,8 +1561,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text, tab_path))
         )
         -- Expected: tabs normalized to spaces, then suffix truncated
@@ -1590,8 +1586,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text, long_path))
         )
         -- Available = 25 - 9 - 1 = 15, loc = 3, ellipsis = 3, suffix = 9
@@ -1615,8 +1611,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text, long_path))
         )
         -- Full path should be displayed (80 chars total)
@@ -1643,8 +1639,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text, "short/path.lua"))
         )
         -- "short/path.lua:1:1" = 18 chars, under 21, no truncation
@@ -1672,8 +1668,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 1):with_message("label"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 1):with_message("label"))
             :render(ariadne.Source.new(text, long_name))
         )
         -- Expected suffix: last 18 chars of "xxxxxxxxxxxxxxx.lua:1:1" = "xxxxxxxxxx.lua:1:1"
@@ -1701,8 +1697,8 @@ do
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(901, 906):with_message("This is an orange"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(901, 906):with_message("This is an orange"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1729,8 +1725,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 401)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(401, 405):with_message("found here"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(401, 405):with_message("found here"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1756,8 +1752,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 401)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(401, 405):with_message("1"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(401, 405):with_message("1"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1781,8 +1777,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 401)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(401, 405):with_message(msg))
+            :with_message("test")
+            :with_label(ariadne.Label.new(401, 405):with_message(msg))
             :render(ariadne.Source.new(text))
         )
 
@@ -1807,8 +1803,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 401)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(56, 60):with_message "at start")
+            :with_message("test")
+            :with_label(ariadne.Label.new(56, 60):with_message "at start")
             :render(ariadne.Source.new(text))
         )
 
@@ -1834,8 +1830,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(1, 5):with_message("at start"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(1, 5):with_message("at start"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1860,8 +1856,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 17)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(17, 21):with_message("here"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(17, 21):with_message("here"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1885,8 +1881,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 195)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(195, 200):with_message("end"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(195, 200):with_message("end"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1910,9 +1906,9 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 101)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(101, 105):with_message("first error"))
-            :add_label(ariadne.Label.new(306, 309):with_message("second warning"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(101, 105):with_message("first error"))
+            :with_label(ariadne.Label.new(306, 309):with_message("second warning"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1939,8 +1935,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 51)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(51, 52):with_message("这是错误"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(51, 52):with_message("这是错误"))
             :render(ariadne.Source.new(text))
         )
 
@@ -1966,8 +1962,8 @@ Error: test
         local msg = remove_trailing(
             ariadne.Report.build("Error", 201)
             :with_config(cfg)
-            :set_message("test")
-            :add_label(ariadne.Label.new(206, 212):with_message("mixed error"))
+            :with_message("test")
+            :with_label(ariadne.Label.new(206, 212):with_message("mixed error"))
             :render(ariadne.Source.new(text))
         )
 
