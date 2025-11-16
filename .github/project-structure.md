@@ -32,16 +32,20 @@ This document describes the technical architecture, data structures, and design 
 
 ```
 Report:render(source)
-  └─> compute_source_groups()     -- Group labels by source_id and char spans
-      └─> render_report(W, ...)   -- Main rendering loop
-          ├─> render_header(W, ...) -- Output: ,-[ file.lua:line:col ]
-          ├─> (for each source line)
-          │   ├─> render_margin(W, ...)   -- Output: left margin symbols (vbar, hbar, corner)
-          │   ├─> render_line(W, ...)     -- Output: line number + source code
-          │   ├─> render_arrows(W, ...)   -- Output: label arrows (^^^, |, ,->)
-          │   └─> render_messages(W, ...) -- Output: label messages with colors
-          └─> render_notes(W, ...)  -- Output: Help:/Note: sections
+  └─> compute_source_groups()           -- Group labels by source_id
+      └─> (Phase 3+) cluster_labels()   -- Split long multi-label lines into clusters
+          └─> render_report(W, ...)     -- Main rendering loop
+              ├─> render_header(W, ...) -- ,-[ file.lua:line:col ] (Phase 2 truncation)
+              ├─> for each source line
+              │   ├─> for each cluster (virtual row)       <-- NEW (Phase 3)
+              │   │   ├─> render_margin(W, ...)           -- vbar / corner continuity
+              │   │   ├─> render_line(W, ...)             -- line number + (windowed) code
+              │   │   ├─> render_arrows(W, ...)           -- arrows within cluster window
+              │   │   └─> render_messages(W, ...)         -- messages for cluster labels
+              └─> render_notes(W, ...)                    -- Help:/Note:
 ```
+
+Phase 2 introduced line windowing (context cropping). Phase 3 will add an intermediate **cluster** layer creating *virtual rows* for improved multi-label readability while reusing existing rendering primitives.
 
 ## Key Data Structures
 
@@ -333,7 +337,7 @@ cfg.color = color_fn
 report:with_config(cfg):render(source)
 ```
 
-## Line Width Limiting (Planned Feature)
+## Line Width Limiting (Implemented Feature – Phase 2)
 
 ### UTF-8 Width Calculation Dependency
 
@@ -378,7 +382,7 @@ local pos, width = utf8.widthlimit("/path/to/file.lua", 1, 17, -8)
 1. **Measuring**: Calculate label width to determine available space for context
 2. **Truncating**: Find safe truncation points for prefix/suffix with ellipsis
 
-### Soft Limit Strategy
+### Soft Limit Strategy (Recap)
 
 `line_width` is treated as a **soft limit**:
 
@@ -388,9 +392,66 @@ local pos, width = utf8.widthlimit("/path/to/file.lua", 1, 17, -8)
 
 **Rationale**: Users may resize terminal after viewing output; forcing truncation of essential information would require recompilation.
 
-**Implementation approach**:
+**Implementation approach** (completed in Phase 2):
 - Reference headers: Truncate file path from start, keep filename + location
 - Code lines: Show local context around labels with ellipsis
 - Messages: Always display fully (no truncation or wrapping)
 - Tab characters in file paths: Normalized to spaces before width calculation
+
+## Cluster & Virtual Row Design (Phase 3)
+
+### Motivation
+Multiple distant labels on very long lines create unreadable horizontal spans. Clusters partition labels so each virtual row shows a focused subset with balanced context, improving clarity without losing messages.
+
+### New Abstractions
+- `LabelCluster`: Logical grouping of labels rendered together; holds aggregated window metrics.
+- `VirtualRow`: A rendering pass for one cluster; shares physical line number with siblings.
+
+### Planned Data Structure Fields
+`LabelCluster`:
+- `labels`: array of `LabelInfo`
+- `min_col`, `max_col`: display column bounds after width expansion
+- `window_start_col`, `window_end_col`: cropping window from `calc_col_range`
+- `needs_prefix_ellipsis`, `needs_suffix_ellipsis`: booleans
+- `row_index`: virtual row ordinal
+
+`SourceGroup` (refactor):
+- `clusters_per_line`: { line_no => { cluster1, cluster2, ... } }
+- `multi_labels_with_message`, `multi_labels`: migrated under instance scope
+- Methods: `build_clusters_for_line(line_no)`, `iter_virtual_rows(line_no)`
+
+### Parameter Hierarchy Refactor
+- Report-level (`RenderCtx`): config, `line_no_width`, glyph tables, ellipsis width.
+- Group-level (`GroupCtx`): source-specific caches, collections of labels.
+- Cluster-level (`ClusterCtx`): cluster window bounds, local label list, ellipsis flags.
+- Reduces long argument lists in `render_line`, `render_arrows`, etc.
+
+### Greedy Clustering Heuristic (Initial)
+1. Sort labels by start column.
+2. Initialize first cluster with first label.
+3. For each subsequent label:
+    - Compute merged minimal width = span(min_col, new_end) + arrow/message overhead.
+    - If merged width > `line_width` AND distance from previous label > `context_gap` (e.g. 8 display columns) → start new cluster.
+    - Else append to current cluster.
+4. After clusters built, apply existing `calc_col_range` using cluster-wide min/max and max label width.
+
+### Window Reuse
+`calc_col_range` remains authoritative; cluster provides aggregated metrics so no new window algorithm required.
+
+### Soft Limit Interaction
+If a cluster’s minimal meaningful width (labels + context + messages) exceeds `line_width`, exceed soft limit instead of truncating essential data.
+
+### Margin Continuity Across Virtual Rows
+Maintain per-line active vertical bars; re-emit them in subsequent virtual rows to visually connect related multiline labels.
+
+### Testing Matrix (Planned)
+- Two far labels → two clusters
+- Three labels forming two clusters
+- Close labels remain one cluster
+- CJK wide labels across clusters
+- Cluster exceeding soft limit still shows full messages
+- Compact mode may merge clusters (verify behavior)
+
+### Phase 4 Preview: Forced Multiline / Intra-Cluster Splitting
+Extremely wide single spans inside a cluster can convert to multiline arrows (`label.multi = true`) or sub-clusters. Cluster isolation simplifies transformation without impacting unrelated labels.
 

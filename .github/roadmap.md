@@ -9,8 +9,10 @@ This document tracks the project's development status, active TODOs, completed w
 - ✅ **Test coverage**: 100% (all reachable code covered, 77 tests passing)
 - ✅ **Pixel-perfect output**: All test cases produce identical output to reference implementation
 - ✅ **Performance optimized**: O(n) rendering vs original O(n²) nested loops
-- ✅ **Line width limiting**: Phase 0-2a complete (header truncation + line windowing)
+- ✅ **Line width limiting (Phase 2)**: Header truncation + single-line windowing finished (renamed from “Phase 2a”).
 - ✅ **Unicode support**: Full CJK and mixed character width handling
+- ⏳ **Cluster & Virtual Rows (Phase 3)**: Pending design/implementation
+- ⏳ **Forced Multiline via Cluster Splitting (Phase 4)**: Planned (simplified by cluster abstraction)
 
 ### Known Limitations
 - Only supports `\n` newlines (not Unicode line separators)
@@ -19,10 +21,20 @@ This document tracks the project's development status, active TODOs, completed w
 
 ## Active TODO
 
-**Priority 1: Line width limiting feature - Phase 2b+** (See "Planned Features" section below)
-- Status: Phase 2a complete, Phase 2b not started
-- Current state: Single-label windowing works, multi-label splitting pending
-- Next phase: POC for virtual rows concept
+**Phase 3: Cluster & Virtual Rows Implementation**
+- Status: Not started (design finalized in documentation)
+- Goal: Introduce `LabelCluster` abstraction, render long multi-label lines as multiple “virtual rows” to improve readability.
+- Scope:
+  - Cluster heuristic (distance/width based greedy grouping)
+  - Virtual row rendering (reusing existing margin + arrow logic)
+  - Parameter hierarchy refactor (reduce argument explosion in render functions)
+
+**Phase 4: Forced Multiline / Intra-Cluster Splitting**
+- Status: Planned
+- Goal: Allow oversize labels inside a cluster to split into multiple virtual rows or multiline label form, leveraging existing multiline margin mechanics.
+- Scope:
+  - Detect span width > soft limit (post-window) at cluster level
+  - Convert to multiline arrows or sub-cluster splits without disturbing other clusters
 
 ## Completed Work
 
@@ -43,7 +55,60 @@ This document tracks the project's development status, active TODOs, completed w
 
 ## Planned Features
 
-### Line Width Limiting
+### Phase 3: Cluster & Virtual Rows
+
+**Overview**: Improve readability when multiple distant labels share a very long source line. Current Phase 2 window centers around earliest label; other labels may appear truncated or with excessively long horizontal arrows.
+
+**Motivation**: Multi-label lines spanning hundreds of columns become visually noisy. Splitting them into focused virtual rows preserves context and messages without overwhelming width.
+
+**Core Concepts**:
+- `LabelCluster`: Logical grouping of labels that can share one window.
+- `VirtualRow`: Rendering pass for a single cluster (same physical line number, distinct subset of labels).
+- Soft limit retained: If minimal meaningful width of a cluster exceeds `line_width`, exceed limit rather than truncating messages.
+
+**Heuristic (initial)**:
+1. Sort labels by start column.
+2. Start first cluster with first label.
+3. For each next label: compute projected minimal window width (span from cluster.min_col to label.end plus arrow/message overhead). If > `line_width * 1.0` (or configurable factor) AND distance from previous label > `context_gap` (e.g. 8 display columns), start new cluster; else merge.
+4. After clustering, render each cluster with existing `calc_col_range` (applied to cluster-local min/max) producing independent virtual rows.
+
+**Rendering Adjustments**:
+- Margin continuity: `vbar` must connect across consecutive virtual rows of the same source line.
+- Line number: repeated for each virtual row (consistent with typical diagnostic tools).
+- Ellipsis logic: cluster-local; prefix ellipsis if left context trimmed, suffix ellipsis if right trimmed.
+
+**Parameter Hierarchy Refactor**:
+- Report-level: `line_no_width`, config, global character set.
+- Group-level (SourceGroup): `multi_labels_with_message`, `multi_labels` collections.
+- Cluster-level: `line_labels` subset, computed window range, local min/max columns.
+- Label-level: existing `LabelInfo` unchanged for now.
+
+**Tests (to add)**:
+- `test_cluster_two_far_labels_virtual_rows`
+- `test_cluster_three_labels_two_clusters`
+- `test_cluster_close_labels_no_split`
+- `test_cluster_cjk_wide_labels`
+- `test_cluster_exceeds_width_soft_limit`
+- `test_cluster_compact_mode_behavior`
+
+### Phase 4: Forced Multiline / Intra-Cluster Label Splitting
+
+**Overview**: When a single label’s span width + message cannot fit a practical window (and would create excessive horizontal arrows), convert it to multiline form or split its span into multiple virtual rows.
+
+**Simplification via Clusters**: Because clusters isolate label sets, converting one label to multiline does not affect unrelated labels outside the cluster.
+
+**Strategy**:
+1. During cluster render: measure label span width vs `line_width`.
+2. If span alone requires surpassing limit drastically (e.g. > 1.5 * line_width), set `label.multi = true` temporarily.
+3. Reuse existing multiline margin logic (already used for `multi_labels_with_message`).
+4. Optional second pass: if multiline still overwhelms width, allow sub-splitting into multiple VirtualRows (future enhancement).
+
+**Tests (to add)**:
+- `test_forced_multiline_long_span`
+- `test_forced_multiline_preserves_message`
+- `test_forced_multiline_cluster_isolation`
+
+### (Existing) Line Width Limiting (Completed as Phase 2)
 
 **Overview**: Add optional `line_width` config to intelligently truncate/split long diagnostic lines while preserving readability.
 
@@ -89,7 +154,7 @@ This document tracks the project's development status, active TODOs, completed w
       `--- msg
   ```
 
-### Implementation Phases
+### Implementation Phases (Updated)
 
 **Phase 0: Infrastructure** ✅ *Completed 2025-11-14*
 - ✅ `Config.line_width` field added (default `nil` = no limit)
@@ -120,7 +185,7 @@ This document tracks the project's development status, active TODOs, completed w
   - `test_header_truncation_one_over_boundary` - Just over limit
   - Coverage: ASCII, UTF-8, tabs, edge cases, soft limits
 
-**Phase 2a: Line windowing (local context around labels)** ✅ *Complete*
+**Phase 2: Line windowing (local context around labels)** ✅ *Complete* (previously referred to as Phase 2a)
 - **Implemented**: Intelligent line truncation with left/right ellipsis
 - **Strategy**: Center label+message within `line_width`, balance left/right context
 - **Core algorithm**:
@@ -145,7 +210,7 @@ This document tracks the project's development status, active TODOs, completed w
   - `test_mixed_ascii_cjk_characters` - Mixed ASCII/CJK, correct display width
 - **Total tests**: 77 (66 baseline + 11 Phase 2a), 100% coverage maintained
 
-### Phase 2a Implementation Summary (Completed)
+### Phase 2 Implementation Summary (Completed)
 
 **Design Decision**: Label+message centering with balanced context
 
@@ -199,34 +264,17 @@ render_arrows(W, line_no_width, line, is_ellipsis, arrow_len, start_col,
 - ❌ Confusion about "centering" target (label vs label+message)
 - ✅ Clarified: center label+message as visual unit, right side guarantees message space
 
-**Phase 2b: POC for virtual rows (3-5 days)** ⏸️ *Not started*
-- Create experimental branch to test virtual row concept
-- Implement multi-label splitting in isolation
-- Test margin symbol continuity across virtual rows
-- Evaluate architectural fit and complexity
-- **Decision point**: Proceed with Phase 3 or adjust approach
+**Phase 3: Cluster & Virtual Rows (Design Finalized, Implementation Pending)**
+- Implement clustering + virtual rows + parameter hierarchy refactor.
+- Tests listed in Phase 3 planned features.
 
-**Phase 3: Multi-label splitting (5-7 days)** ⏸️ *Pending Phase 2b results*
-- Implement "virtual row" concept: same source line rendered multiple times
-- Split labels into groups that fit within `line_width`
-- Preserve `vbar` continuity across groups
-- **Test**: Add `test_multi_label_split` with 3+ overlapping labels
-- **Challenges**:
-  - Greedy vs optimal splitting (start with greedy)
-  - Message alignment across virtual rows
-  - Interaction with existing "skipped lines" logic
+**Phase 4: Forced Multiline / Intra-Cluster Splitting (Planned)**
+- Implement span-based conversion to multiline arrows; reuse existing logic.
 
-**Phase 4: Forced multiline (2-3 days)** ⏸️ *Optional - evaluate after Phase 3*
-- Detect "unsplittable" oversized labels
-- Runtime conversion: set `label.multi = true` during rendering
-- **Test**: Add `test_force_multiline` with 200-char single label
-- **Note**: May not be needed if Phase 3 provides sufficient solutions
+**Phase 5: Edge cases & polish**
+- Extreme widths, combining marks, emoji, ANSI color width pre-scan (strip codes for width).
 
-**Phase 5: Edge cases & polish (2-3 days)**
-- Handle extreme widths: `line_width < 40`, very large widths
-- UTF-8 safety: verify truncation respects character boundaries (handled by luautf8)
-- Color code handling: ensure ANSI escapes are stripped before width calculation
-- **Test**: Edge cases with combining characters, emoji, zero-width characters
+**(Renamed) Former Phase 2b**: Removed — absorbed into Phase 3.
 
 ### Technical Challenges
 
