@@ -31,38 +31,118 @@ This document describes the technical architecture, data structures, and design 
 ## Rendering Pipeline
 
 ```
-Report:render(source)
-  └─> compute_source_groups()           -- Group labels by source_id
-      └─> (Phase 3+) cluster_labels()   -- Split long multi-label lines into clusters
-          └─> render_report(W, ...)     -- Main rendering loop
-              ├─> render_header(W, ...) -- ,-[ file.lua:line:col ] (Phase 2 truncation)
-              ├─> for each source line
-              │   ├─> for each cluster (virtual row)       <-- NEW (Phase 3)
-              │   │   ├─> render_margin(W, ...)           -- vbar / corner continuity
-              │   │   ├─> render_line(W, ...)             -- line number + (windowed) code
-              │   │   ├─> render_arrows(W, ...)           -- arrows within cluster window
-              │   │   └─> render_messages(W, ...)         -- messages for cluster labels
-              └─> render_notes(W, ...)                    -- Help:/Note:
+Report:render(cache)
+  └─> RenderContext.new(id, pos, cache, labels, cfg)
+      ├─ Group labels by source_id → SourceGroup[]
+      ├─ Calculate line_no_width, ellipsis_width
+      └─> RenderContext:render_header() + render_footer()
+          └─> for each SourceGroup
+              ├─> SourceGroup:collect_multi_labels()
+              ├─> SourceGroup:render_reference()  -- ,-[ file.lua:line:col ]
+              └─> SourceGroup:render_lines()
+                  └─> for each line in range
+                      ├─> LabelCluster.new()      -- Build cluster for this line
+                      └─> LabelCluster:render()
+                          ├─> render_line()       -- Source code with windowing
+                          └─> render_arrows()     -- Label arrows + messages
 ```
 
-Phase 2 introduced line windowing (context cropping). Phase 3 will add an intermediate **cluster** layer creating *virtual rows* for improved multi-label readability while reusing existing rendering primitives.
+### Three-Tier Architecture (Post-Refactor)
+
+**RenderContext** (Top-level coordinator):
+- Holds global rendering state: `line_no_width`, `ellipsis_width`
+- Groups labels by source into `SourceGroup[]`
+- Renders report header/footer and line numbers
+- **Does not** perform line-level rendering
+
+**SourceGroup** (Source file manager):
+- Manages all labels for a single source file
+- Encapsulates margin-related data: `multi_labels`, `multi_labels_with_message`
+- Iterates over source lines and builds `LabelCluster` per line
+- Renders margin symbols (vertical/horizontal bars)
+- **Does not** access cluster internals directly
+
+**LabelCluster** (Virtual row renderer):
+- Represents a single rendered line (current: one cluster per physical line)
+- Holds window bounds: `start_col`, `end_col`, `arrow_len`
+- Renders source code, arrows, and messages for its labels
+- **Self-contained**: computes all layout from injected parameters
+- **Phase 3 ready**: designed to support multiple clusters per line
+
+### Layer Independence
+
+- `LabelCluster` does **not** hold references to `SourceGroup` or `RenderContext`
+- Required data passed explicitly via constructor and `render()` parameters
+- `SourceGroup` provides accessor methods for internal collections:
+  - `:iter_margin_labels()`, `:iter_multi_labels()`, `:iter_labels()`
+  - `:margin_len()`, `:get_source()`
+- Encapsulation enforced through `@field private` annotations
 
 ## Key Data Structures
 
-### `Line`
-Pre-computed line metadata:
-- `offset`: 1-based char offset of line start in source
-- `len`: character length (excluding newline)
-- `byte_offset`: byte offset for `string.sub`
-- `byte_len`: byte length (excluding newline)
-- `newline`: boolean, whether line ends with `\n`
+### `RenderContext`
+Top-level rendering coordinator:
+- `id`: Report source ID (for location calculation)
+- `pos`: Report position (for location calculation)
+- `groups`: Array of `SourceGroup` objects
+- `line_no_width`: Maximum width of line numbers across all sources
+- `ellipsis_width`: Display width of ellipsis character
+
+**Responsibilities**:
+- Group labels by source file
+- Render report header (Error/Warning + message)
+- Render line numbers via `:render_lineno()`
+- Render footer (Help/Note sections)
+
+### `SourceGroup`
+Source file label manager:
+- `src`: `Source` object (private)
+- `labels`: All `LabelInfo` for this source (private)
+- `multi_labels`: Multiline labels (private)
+- `multi_labels_with_message`: Multiline labels with messages (private)
+- `start_char`, `end_char`: Label span boundaries
+
+**Responsibilities**:
+- Collect and sort multiline labels
+- Calculate reference location string
+- Render reference header: `,-[ file.lua:123:45 ]`
+- Render margin symbols (vbar, hbar, corner)
+- Iterate over source lines and create `LabelCluster` instances
+
+**Public accessors**:
+- `:iter_margin_labels()`, `:iter_multi_labels()`, `:iter_labels()`
+- `:margin_len()`, `:get_source()`, `:last_line_no()`
+
+### `LabelCluster`
+Virtual row rendering unit (one cluster per line in Phase 2):
+- `line`: `Line` object (private)
+- `line_no`: Display line number (private)
+- `margin_label`: The primary margin label for this line (private)
+- `line_labels`: Labels to render on this line (private)
+- `arrow_len`, `start_col`, `end_col`: Window bounds (private)
+
+**Responsibilities**:
+- Compute window range via `calc_col_range()`
+- Render source code line with optional ellipsis
+- Render label arrows and messages
+
+**Phase 3 extension**:
+- `SourceGroup:render_lines()` will build multiple clusters per line
+- Each cluster represents a "virtual row" with distinct label subset
+- Margin symbols will connect across virtual rows
 
 ### `LabelInfo`
-Internal label representation during rendering:
+Internal label representation:
 - `start_char`: 1-based char offset (inclusive)
 - `end_char`: 1-based char offset (inclusive, `nil` for zero-width spans)
 - `multi`: boolean, whether this is a multiline label
 - `label`: reference to original `Label` object (has `message`, `color`, `priority`)
+
+### `LineLabel`
+Label positioned on a specific line:
+- `col`: Display column where label appears
+- `info`: Reference to `LabelInfo`
+- `draw_msg`: Boolean, whether to draw message on this line
 
 ### `Config`
 Plain table with fields:
@@ -75,6 +155,21 @@ Plain table with fields:
 - `multiline_arrows`: boolean (default true)
 - `cross_gap`: boolean (default false)
 - `underlines`: boolean (default true)
+
+### `Line`
+Pre-computed line metadata (part of `Source`):
+- `offset`: 1-based char offset of line start in source
+- `len`: character length (excluding newline)
+- `byte_offset`: byte offset for `string.sub`
+- `byte_len`: byte length (excluding newline)
+- `newline`: boolean, whether line ends with `\n`
+
+**Helper methods**:
+- `:span()` - returns `(offset, offset + len - 1)`
+- `:byte_span()` - returns `(byte_offset, byte_offset + byte_len - 1)`
+- `:span_contains(char_pos)` - checks if position within line
+- `:col(char_pos)` - converts character position to column (1-based)
+- `:is_within_label(multi_labels)` - checks if line intersects multiline labels
 
 ## Key Design Decisions
 
@@ -101,10 +196,29 @@ Plain table with fields:
 
 **Equivalence verified**: All tests pass, output is pixel-perfect.
 
-#### 2. Simplified Margin Rendering
+#### 2. Layered Architecture with Clear Boundaries
+
+**Three-tier separation** (implemented 2025-11-17):
+- **RenderContext**: Global state + header/footer rendering
+- **SourceGroup**: Per-source logic + margin rendering
+- **LabelCluster**: Per-line rendering + window management
+
+**Benefits**:
+- Each layer encapsulates its own data (via `@field private`)
+- No upward references: `LabelCluster` doesn't reference `SourceGroup`
+- Data flows downward through explicit parameters
+- Easy to extend: Phase 3 multi-cluster just modifies `SourceGroup:render_lines()`
+
+**Parameter passing strategy**:
+- Context objects (`RenderContext`, `SourceGroup`) passed to methods that need them
+- Cluster-specific data (margin_label, line_labels) passed as parameters
+- Avoids "context explosion" while maintaining encapsulation
+
+#### 3. Simplified Margin Rendering
 - Eliminated complex pointer comparisons and multi-stage filtering
 - Removed no-op code (where `hbar` is set then immediately filtered away)
 - Consolidated conditions using early returns and direct logic flow
+- Encapsulated in `SourceGroup:render_margin()` with clear parameters
 
 #### 3. No `continue` or `goto`
 - All control flow uses nested `if-elseif-else` chains
@@ -114,6 +228,16 @@ Plain table with fields:
 - Original (0-based): `tab_width - col % tab_width`
 - This implementation (1-based): `tab_width - ((col - 1) % tab_width)`
 - Equivalent forms verified with `tab_width = 4` across `col = 1, 2, 5, 8`
+
+#### 5. Encapsulation via Accessor Methods
+- `SourceGroup` fields marked `@field private` to prevent external access
+- Public accessors provide controlled read-only access:
+  - `:iter_margin_labels()` - iterate multiline labels with messages
+  - `:iter_multi_labels()` - iterate all multiline labels
+  - `:iter_labels()` - iterate all labels
+  - `:margin_len()` - count of margin labels
+  - `:get_source()` - access to Source object
+- Maintains flexibility to change internal representation without breaking API
 
 ### Index Type Conversions
 
