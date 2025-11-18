@@ -1,12 +1,14 @@
----@class utf8
----@field len fun(s: string, i?: integer, j?: integer): integer?
----@field offset fun(s: string, n: integer, i?: integer): integer?, integer?
----@field width fun(s: string, i?: integer, j?:integer, ambiwidth?: integer, fallback: integer?): integer
----@field width fun(ch: integer, ambiwidth?: integer, fallback: integer?): integer
----@field widthindex fun(s: string, width?: integer, i?: integer, j?:integer, ambiwidth?: integer, fallback: integer?): integer, integer, integer
----@field widthlimit fun(s: string, limit?: integer, i?: integer, j?:integer, ambiwidth?: integer, fallback: integer?): integer, integer
----@field codepoint fun(s: string, i?: integer, j?: integer, lax?: boolean): integer
 local utf8 = require "lua-utf8"
+---@type fun(s: string, i?: integer, j?: integer): integer?
+local utf8_len = utf8.len
+---@type fun(s: string, n: integer, i?: integer): integer?, integer?
+local utf8_offset = utf8.offset
+---@type fun(s: string|integer, i?: integer, j?:integer, ambiwidth?: integer, fallback: integer?): integer
+local utf8_width = utf8.width
+---@type fun(s: string, width?: integer, i?: integer, j?:integer, ambiwidth?: integer, fallback: integer?): integer, integer, integer
+local utf8_widthindex = utf8.widthindex
+---@type fun(s: string, i?: integer, j?: integer, lax?: boolean): integer
+local utf8_codepoint = utf8.codepoint
 
 -- #region charset
 --- @class (exact) CharSet
@@ -138,9 +140,7 @@ end
 --- @field [string] Source
 
 ---@type fun(): Cache
-local function cache_new()
-    return {}
-end
+local function cache_new() return {} end
 
 --- @type fun(self: Cache, id: string): Source?
 local function cache_fetch(self, id)
@@ -168,12 +168,6 @@ local function line_new(offset, len, byte_offset, byte_len, newline)
         byte_len = byte_len,
         newline = newline,
     }
-end
-
---- Return the length of this line including the newline character
---- @type fun(self: Line): integer
-local function line_len_with_newline(self)
-    return self.len + (self.newline and 1 or 0)
 end
 
 --- returns the span of this line in the original [`Source`]
@@ -224,13 +218,13 @@ local function split_code(code)
     local chars, bytes = 0, 0
 
     for ends in code:gmatch "()\n" do
-        local chars_len = assert(utf8.len(code, bytes + 1, ends - 1))
+        local chars_len = assert(utf8_len(code, bytes + 1, ends - 1))
         local bytes_len = ends - bytes - 1
         lines[#lines + 1] = line_new(chars + 1, chars_len, bytes + 1, bytes_len, true)
         chars = chars + chars_len + 1
         bytes = ends --[[@as integer]]
     end
-    local chars_len = assert(utf8.len(code, bytes + 1, #code))
+    local chars_len = assert(utf8_len(code, bytes + 1, #code))
     local bytes_len = #code - bytes
     lines[#lines + 1] = line_new(chars + 1, chars_len, bytes + 1, bytes_len, false)
     return lines
@@ -239,7 +233,6 @@ end
 --- creates a new Source
 --- @type fun(code: string, name?: string, offset?: integer): Source
 local function src_new(code, name, offset)
-    ---@type Source
     local src = split_code(code) --[[@as Source]]
     src.text = code
     src.id = name or "<unknown>"
@@ -262,6 +255,7 @@ local function binary_search(lines, target, key)
     end
     return l - 1
 end
+
 --- Returns the line contains the given offset
 --- @type fun(self: Source, offset: integer): integer index
 local function src_offset_line(self, offset)
@@ -274,44 +268,24 @@ local function src_byte_line(self, byte_offset)
     return binary_search(self, byte_offset, "byte_offset")
 end
 
---- Get the line number offseted by display_line_offset
+--- Get the line number shifted by display_line_offset
 --- @type fun(self: Source, line_no: integer): integer
-local function src_offseted_line_no(self, line_no)
+local function src_shifted_line_no(self, line_no)
     return line_no + self.display_line_offset
 end
 
 --- Find the character and repeat count that should be drawn
 --- @type fun(self: Source, byte_offset: integer, col: integer, cfg: Config): integer, integer
 local function src_char_width(self, byte_offset, col, cfg)
-    local c = utf8.codepoint(self.text, utf8.offset(self.text, col, byte_offset))
+    local c = utf8_codepoint(self.text, utf8_offset(self.text, col, byte_offset))
     if c == 9 then -- tab
         return cfg.tab_width - ((col - 1) % cfg.tab_width), 32
     elseif c == 32 then
         return 1, 32
     else
-        return utf8.width(c), c
+        return utf8_width(c), c
     end
 end
-
---- @type fun(self: Source, i: integer, j: integer): integer?
-local function src_utf8_len(self, i, j) return utf8.len(self.text, i, j) end
-
---- @type fun(self: Source, i: integer, j: integer): integer?
-local function src_utf8_width(self, i, j) return utf8.width(self.text, i, j) end
-
---- @type fun(self: Source, n: integer, i: integer): integer?, integer?
-
-local function src_utf8_offset(self, n, i) return utf8.offset(self.text, n, i) end
-
---- @type fun(self: Source, i: integer, j: integer): string
-local function src_utf8_sub(self, i, j) return self.text:sub(i, j) end
-
---- @type fun(self: Source, width: integer, i: integer, j: integer,
----           ambiwidth?: integer, fallback?: integer): integer, integer, integer
-local function src_utf8_widthindex(self, width, i, j, ambiwidth, fallback)
-    return utf8.widthindex(self.text, width, i, j, ambiwidth, fallback)
-end
-
 --- #endregion
 
 -- #region config
@@ -444,18 +418,6 @@ end
 ---@field cur_color_code string?
 ---@field line_no_width integer
 ---@field ellipsis_width integer
----
----@field reset fun(self: Writer, s?: any): Writer
----@field error fun(self: Writer, s?: any): Writer
----@field warning fun(self: Writer, s?: any): Writer
----@field kind fun(self: Writer, s?: any): Writer
----@field margin fun(self: Writer, s?: any): Writer
----@field skipped_margin fun(self: Writer, s?: any): Writer
----@field unimportant fun(self: Writer, s?: any): Writer
----@field note fun(self: Writer, s?: any): Writer
----@field label fun(self: Writer, s?: any): Writer
----@field tostring fun(self: Writer): string
----
 ---@operator call(string): Writer
 local Writer = {}
 Writer.__name, Writer.__index = "Writer", Writer
@@ -490,21 +452,10 @@ function Writer:use_color(color)
     return self
 end
 
-for _, category in ipairs {
-    "error",
-    "warning",
-    "kind",
-    "margin",
-    "skipped_margin",
-    "unimportant",
-    "note",
-    "label",
-    "default",
-} do
-    ---@param self Writer
-    ---@param s any
-    ---@return Writer
-    Writer[category] = function(self, s)
+--- Generates color functions for each category
+--- @type fun(category: ColorCategory): fun(self: Writer, s: any): Writer
+local function gen_color_func(category)
+    return function(self, s)
         local color = self.cur_color or self.config.color
         if color then
             local color_code = color(category)
@@ -521,6 +472,15 @@ for _, category in ipairs {
         return self
     end
 end
+
+Writer.error = gen_color_func "error"
+Writer.warning = gen_color_func "warning"
+Writer.kind = gen_color_func "kind"
+Writer.margin = gen_color_func "margin"
+Writer.skipped_margin = gen_color_func "skipped_margin"
+Writer.unimportant = gen_color_func "unimportant"
+Writer.note = gen_color_func "note"
+Writer.label = gen_color_func "label"
 
 --- Resets the current color and appends s to the writer
 --- @type fun(self: Writer, s: any): Writer
@@ -598,12 +558,12 @@ local function info_new(label, src, index_type)
         local line_no = src_byte_line(src, given_start)
         start_line = assert(src[line_no], "start byte offset out of range")
         label_start_char = start_line.offset +
-            assert(src_utf8_len(src, start_line.byte_offset, given_start - 1))
+            assert(utf8_len(src.text, start_line.byte_offset, given_start - 1))
         if given_end and given_start <= given_end then
             line_no = src_byte_line(src, given_end)
             end_line = assert(src[line_no], "end byte offset out of range")
             label_end_char = end_line.offset +
-                assert(src_utf8_len(src, end_line.byte_offset, given_end)) - 1
+                assert(utf8_len(src.text, end_line.byte_offset, given_end)) - 1
         else
             end_line = start_line
         end
@@ -664,16 +624,18 @@ local function get_margin_label(line, group)
     return { col = assert(col), info = assert(info), draw_msg = draw_msg }
 end
 
+--- Check if the given label info is the margin label
+--- @type fun(lc: LabelCluster, info: LabelInfo): boolean
+local function is_margin_label(lc, info)
+    return lc.margin_label and lc.margin_label.info == info or false
+end
+
 --- Collect multiline labels for a specific line
---- @type fun(lc: LabelCluster, group: SourceGroup)
-local function collect_multi_labels_in_line(lc, group)
-    local line, margin_label, line_labels =
-        lc.line, lc.margin_label, lc.line_labels
-    for i, info in ipairs(group.multi_labels_with_message) do
-        local col, draw_msg
-        if line_contains(line, info.start_char)
-            and (not margin_label or info ~= margin_label.info)
-        then
+--- @type fun(lc: LabelCluster, multi_labels: LabelInfo[])
+local function collect_margin_labels(lc, margin_labels)
+    local line, line_labels = lc.line, lc.line_labels
+    for i, info in ipairs(margin_labels) do
+        if line_contains(line, info.start_char) and not is_margin_label(lc, info) then
             line_labels[#line_labels + 1] = {
                 col = line_col(line, info.start_char),
                 info = info,
@@ -690,11 +652,11 @@ local function collect_multi_labels_in_line(lc, group)
 end
 
 --- Collect inline labels for a specific line
---- @type fun(lc: LabelCluster, group: SourceGroup, label_attach: LabelAttach)
-local function collect_labels_in_line(lc, group, label_attach)
+--- @type fun(lc: LabelCluster, labels: LabelInfo[], label_attach: LabelAttach)
+local function collect_inline_labels(lc, labels, label_attach)
     local line, line_labels = lc.line, lc.line_labels
     local _, end_char = line_span(line)
-    for _, info in ipairs(group.labels) do
+    for _, info in ipairs(labels) do
         if not info.multi and info.start_char >= line.offset and
             (info.end_char or info.start_char) <= end_char + 1
         then
@@ -714,9 +676,9 @@ local function collect_labels_in_line(lc, group, label_attach)
 end
 
 --- Sort line labels by order, column and desc start position
---- @type fun(line_labels: LineLabel[])
-local function sort_line_labels(line_labels)
-    table.sort(line_labels, function(a, b)
+--- @type fun(lc: LabelCluster)
+local function sort_line_labels(lc)
+    table.sort(lc.line_labels, function(a, b)
         if a.info.label.order ~= b.info.label.order then
             return a.info.label.order < b.info.label.order
         elseif a.col ~= b.col then
@@ -726,21 +688,14 @@ local function sort_line_labels(line_labels)
     end)
 end
 
---- Check if the given label info is the margin label
---- @type fun(lc: {margin_label?: LineLabel}, info: LabelInfo): boolean
-local function lc_is_margin_label(lc, info)
-    return lc.margin_label and lc.margin_label.info == info or false
-end
-
 --- Calculate the maximum arrow line length for a specific line
 --- @type fun(lc: LabelCluster, compact: boolean)
 local function calc_arrow_len(lc, compact)
     local line, line_labels = lc.line, lc.line_labels
-    local arrow_end_space = compact and 1 or 2
     local arrow_len, min_col, max_width = 0, nil, 0
     for _, ll in ipairs(line_labels) do
         if ll.info.multi then
-            arrow_len = line_len_with_newline(line)
+            arrow_len = line.len + (line.newline and 1 or 0)
         else
             local cur = line_col(line, ll.info.end_char or ll.info.start_char - 1)
             if arrow_len < cur then
@@ -758,14 +713,15 @@ local function calc_arrow_len(lc, compact)
         if not ll.info.multi then
             cur_col = line_col(line, ll.info.start_char)
         end
-        if not lc_is_margin_label(lc, ll.info) and
+        if not is_margin_label(lc, ll.info) and
             (not min_col or cur_col < min_col)
         then
             min_col = cur_col
         end
     end
-    lc.arrow_len, lc.min_col, lc.max_msg_width =
-        arrow_len + arrow_end_space, min_col or 1, max_width
+    lc.arrow_len = arrow_len + (compact and 1 or 2)
+    lc.min_col = min_col or 1
+    lc.max_msg_width = max_width
 end
 
 --- creates a new LabelCluster
@@ -774,7 +730,7 @@ local function lc_new(idx, line, group, cfg)
     --- @type LabelCluster
     local lc = {
         line = line,
-        line_no = src_offseted_line_no(group.src, idx),
+        line_no = src_shifted_line_no(group.src, idx),
         margin_label = get_margin_label(line, group),
         line_labels = {},
         arrow_len = 0,
@@ -785,11 +741,10 @@ local function lc_new(idx, line, group, cfg)
     }
 
     -- Generate a list of labels for this line, along with their label columns
-    collect_multi_labels_in_line(lc, group)
-    collect_labels_in_line(lc, group, cfg.label_attach)
-    sort_line_labels(lc.line_labels)
-
+    collect_margin_labels(lc, group.multi_labels_with_message)
+    collect_inline_labels(lc, group.labels, cfg.label_attach)
     if #lc.line_labels == 0 and not lc.margin_label then return nil end
+    sort_line_labels(lc)
     calc_arrow_len(lc, cfg.compact)
     return lc
 end
@@ -818,23 +773,23 @@ local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
     --                                ^ arrow_len (arrow_width)
     -- line.len may be less than arrow_len
     local extra = math.max(0, arrow_len - line.len)
-    local _, arrow_end = src_utf8_offset(src, arrow_len, line.byte_offset)
+    local _, arrow_end = utf8_offset(src.text, arrow_len, line.byte_offset)
     local _, line_end = line_span_byte(line)
     if not arrow_end then arrow_end = line_end end
-    local arrow_width = src_utf8_width(src, line.byte_offset, arrow_end) + extra
+    local arrow_width = utf8_width(src.text, line.byte_offset, arrow_end) + extra
     local arrow_limit = arrow_width + 1 + max_msg_width -- 1: space before msg
 
     -- all line fits in line_width? No need to skip
-    local total_width = src_utf8_width(src, line.byte_offset, line_end)
+    local total_width = utf8_width(src.text, line.byte_offset, line_end)
     if arrow_limit <= line_width and total_width <= line_width then return end
 
     -- min_col already overflow? Using min_col
-    local min_width = src_utf8_width(src,
-            assert(src_utf8_offset(src, min_col, line.byte_offset)), arrow_end) +
+    local min_width = utf8_width(src.text,
+            assert(utf8_offset(src.text, min_col, line.byte_offset)), arrow_end) +
         1 + max_msg_width
     if min_width + ellipsis_width >= line_width then
         lc.start_col = min_col
-        lc.end_col = math.min(line.len, arrow_len + (src_utf8_widthindex(src,
+        lc.end_col = math.min(line.len, arrow_len + (utf8_widthindex(src.text,
             1 + max_msg_width - ellipsis_width,
             arrow_end + 1, line_end)))
         return
@@ -843,7 +798,7 @@ local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
     local min_skip = arrow_limit - line_width + ellipsis_width + 1
     if min_skip <= 0 then
         lc.start_col, lc.end_col = 1, math.min(line.len,
-            arrow_len + (src_utf8_widthindex(src,
+            arrow_len + (utf8_widthindex(src.text,
                 line_width - arrow_width - ellipsis_width,
                 arrow_end + 1, line_end)))
         return
@@ -854,9 +809,9 @@ local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
         local right_width = (line_width - min_width) // 2
         balance_skip = right_width + math.max(0, right_width - avail_width)
     end
-    lc.start_col = (src_utf8_widthindex(src, min_skip + balance_skip,
+    lc.start_col = (utf8_widthindex(src.text, min_skip + balance_skip,
         line.byte_offset, arrow_end))
-    local end_col, idx, chwidth = src_utf8_widthindex(src,
+    local end_col, idx, chwidth = utf8_widthindex(src.text,
         1 + max_msg_width + balance_skip - ellipsis_width,
         arrow_end + 1, line_end)
     -- multi width in the end_col edge?
@@ -904,7 +859,7 @@ end
 --- @type fun(lc: LabelCluster, col: integer, row: integer): LineLabel?
 local function lc_get_vbar(lc, col, row)
     for i, ll in ipairs(lc.line_labels) do
-        if ll.info.label.message and not lc_is_margin_label(lc, ll.info) and
+        if ll.info.label.message and not is_margin_label(lc, ll.info) and
             ll.col == col and row <= i then
             return ll
         end
@@ -950,17 +905,17 @@ function Writer.render_line(W, lc, group, cfg)
     --- @type Color?
     local cur_color
     local cur_offset = lc.start_col
-    local cur_offset_byte = assert(src_utf8_offset(src,
+    local cur_offset_byte = assert(utf8_offset(src.text,
         lc.start_col, line.byte_offset))
     for i = lc.start_col, lc.end_col or line.len do
         local highlight = lc_get_highlight(lc, i, group)
         local next_color = highlight and highlight.label.color
         local repeat_count, cp = src_char_width(src, line.byte_offset, i, cfg)
         if cur_color ~= next_color or (cp == 32 and repeat_count > 1) then
-            local next_start_bytes = assert(src_utf8_offset(
-                src, i - cur_offset + 1, cur_offset_byte))
+            local next_start_bytes = assert(utf8_offset(src.text,
+                i - cur_offset + 1, cur_offset_byte))
             if i > cur_offset then
-                W:label_or_unimportant(cur_color, (src_utf8_sub(src,
+                W:label_or_unimportant(cur_color, (src.text:sub(
                     cur_offset_byte, next_start_bytes - 1
                 ):gsub("\t", ""))):reset()
             end
@@ -974,9 +929,9 @@ function Writer.render_line(W, lc, group, cfg)
     end
     local _, end_bytes = line_span_byte(line)
     if lc.end_col and lc.end_col < line.len then
-        end_bytes = assert(src_utf8_offset(src, lc.end_col + 1, line.byte_offset)) - 1
+        end_bytes = assert(utf8_offset(src.text, lc.end_col + 1, line.byte_offset)) - 1
     end
-    W:label_or_unimportant(cur_color, (src_utf8_sub(src,
+    W:label_or_unimportant(cur_color, (src.text:sub(
         cur_offset_byte, end_bytes
     ):gsub("\t", ""))):reset()
 end
@@ -1042,7 +997,7 @@ function Writer.render_arrows(W, lc, group)
                 local is_hbar = (col > ll.col) ~= ll.info.multi or
                     ll.draw_msg and col > ll.col
                 local vbar = lc_get_vbar(lc, col, row)
-                if col == ll.col and not lc_is_margin_label(lc, ll.info) then
+                if col == ll.col and not is_margin_label(lc, ll.info) then
                     local a = draw.rbot
                     if not ll.info.multi then
                         a = draw.lbot
@@ -1141,7 +1096,6 @@ end
 local function sg_collect_multi_labels(group)
     local multi_labels = group.multi_labels
     local multi_labels_with_message = group.multi_labels_with_message
-
     for _, info in ipairs(group.labels) do
         if info.multi then
             multi_labels[#multi_labels + 1] = info
@@ -1150,7 +1104,6 @@ local function sg_collect_multi_labels(group)
             end
         end
     end
-
     -- Sort labels by length
     table.sort(multi_labels_with_message, function(a, b)
         local alen = a.end_char - a.start_char + 1
@@ -1159,12 +1112,11 @@ local function sg_collect_multi_labels(group)
     end)
 end
 
-
 --- Get the last line number of the source group
 --- @type fun(group: SourceGroup): integer
 local function sg_last_line_no(group)
     local src = group.src
-    return src_offseted_line_no(src,
+    return src_shifted_line_no(src,
         src_offset_line(src, group.end_char or group.start_char))
 end
 
@@ -1180,7 +1132,7 @@ local function sg_calc_location(group, ctx_id, ctx_pos, cfg)
             line = assert(src[line_no], "byte offset out of range")
             local _, line_byte_end = line_span_byte(line)
             if line and ctx_pos <= line_byte_end then
-                col_no = assert(src_utf8_len(src, line.byte_offset, ctx_pos - 1)) + 1
+                col_no = assert(utf8_len(src.text, line.byte_offset, ctx_pos - 1)) + 1
             else
                 line_no = nil
             end
@@ -1200,9 +1152,8 @@ local function sg_calc_location(group, ctx_id, ctx_pos, cfg)
         end
     end
     if not line_no then return "?:?" end
-    return ("%d:%d"):format(src_offseted_line_no(src, line_no), col_no)
+    return ("%d:%d"):format(src_shifted_line_no(src, line_no), col_no)
 end
-
 
 --- Render the reference line for a source group
 --- @type fun(W: Writer, idx: integer, group: SourceGroup, report_id: string?, report_pos: integer)
@@ -1230,17 +1181,14 @@ function Writer.render_reference(W, idx, group, report_id, report_pos)
 end
 
 --- Render the margin arrows for a specific line
---- @type fun(W: Writer, lc: LabelCluster | { line: Line }, group: SourceGroup,
+--- @type fun(W: Writer, lc: LabelCluster, group: SourceGroup,
 ---           is_line: boolean, is_ellipsis: boolean,
 ---           report_row?: LineLabel, report_row_is_arrow: boolean)
 function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
                               report_row, report_row_is_arrow)
-    if #group.multi_labels_with_message == 0 then
-        return
-    end
-
+    if #group.multi_labels_with_message == 0 then return end
     local draw = W.config.char_set
-    local _, end_char = line_span(lc.line)
+    local start_char, end_char = line_span(lc.line)
 
     ---@type LabelInfo?, LabelInfo?
     local hbar, margin_ptr
@@ -1249,10 +1197,9 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
     for _, info in ipairs(group.multi_labels_with_message) do
         ---@type LabelInfo?, LabelInfo?
         local vbar, corner
-
         local is_start = line_contains(lc.line, info.start_char)
-        if info.start_char <= end_char and info.end_char >= lc.line.offset then
-            local is_margin = lc_is_margin_label(lc, info)
+        if info.start_char <= end_char and info.end_char >= start_char then
+            local is_margin = is_margin_label(lc, info)
             local is_end = line_contains(lc.line, info.end_char)
             if is_margin and is_line then
                 margin_ptr, margin_ptr_is_start = info, is_start
@@ -1340,6 +1287,7 @@ function Writer.render_lines(W, group)
             W:render_label_cluster(cluster, group)
         elseif not is_ellipsis and line_within_label(line, group.multi_labels) then
             W:render_lineno(nil, true)
+            --- @diagnostic disable-next-line missing-fields
             W:render_margin({ line = line }, group, false, true, nil, false)
             W "\n"
         elseif not W.config.compact and not is_ellipsis then
