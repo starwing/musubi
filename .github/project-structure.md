@@ -28,106 +28,119 @@ This document describes the technical architecture, data structures, and design 
 
 - **`serpent.lua`** and **`luaunit.lua`**: Vendored dependencies used by the tests; remain untouched unless upgrading.
 
-## Rendering Pipeline
+## Rendering Pipeline (Writer-Orchestrated)
 
 ```
 Report:render(cache)
-  └─> RenderContext.new(id, pos, cache, labels, cfg)
-      ├─ Group labels by source_id → SourceGroup[]
-      ├─ Calculate line_no_width, ellipsis_width
-      └─> RenderContext:render_header() + render_footer()
-          └─> for each SourceGroup
-              ├─> SourceGroup:collect_multi_labels()
-              ├─> SourceGroup:render_reference()  -- ,-[ file.lua:line:col ]
-              └─> SourceGroup:render_lines()
-                  └─> for each line in range
-                      ├─> LabelCluster.new()      -- Build cluster for this line
-                      └─> LabelCluster:render()
-                          ├─> render_line()       -- Source code with windowing
-                          └─> render_arrows()     -- Label arrows + messages
+  ├─> context_new(id, cache, labels, cfg)
+  │   ├─ Group labels by source_id → SourceGroup[]
+  │   ├─ Calculate line_no_width, ellipsis_width
+  │   └─> Create Writer with config and line_no_width
+  ├─> Writer:render_header(kind, code, message)
+  ├─> for each SourceGroup
+  │   ├─ sg_collect_multi_labels(group)
+  │   ├─ Writer:render_reference(idx, group, report_id, report_pos)
+  │   ├─ Writer:render_empty_line()
+  │   ├─ Writer:render_lines(group)
+  │   │  └─> for each line in range
+  │   │      ├─> lc_new(idx, line, group, cfg)  -- Build cluster
+  │   │      ├─> lc_calc_col_range(cluster, group, ...)
+  │   │      └─> Writer:render_label_cluster(cluster, group)
+  │   │          ├─> Writer:render_line(...)
+  │   │          └─> Writer:render_arrows(...)
+  │   └─> Writer:render_empty_line()
+  └─> Writer:render_footer(#groups, helps, notes)
 ```
 
-### Three-Tier Architecture (Post-Refactor)
+### Writer-Orchestrated Architecture
 
-**RenderContext** (Top-level coordinator):
-- Holds global rendering state: `line_no_width`, `ellipsis_width`
-- Groups labels by source into `SourceGroup[]`
-- Renders report header/footer and line numbers
-- **Does not** perform line-level rendering
+**Writer** (Top-level orchestrator):
+- Holds global rendering state: `config`, `line_no_width`, `ellipsis_width`
+- Orchestrates all rendering via methods: `render_header`, `render_reference`, `render_lines`, `render_footer`
+- Manages color state and output buffer
+- **Does not** hold references to SourceGroup/LabelCluster structures
+- All data passed via parameters
 
-**SourceGroup** (Source file manager):
-- Manages all labels for a single source file
-- Encapsulates margin-related data: `multi_labels`, `multi_labels_with_message`
-- Iterates over source lines and builds `LabelCluster` per line
-- Renders margin symbols (vertical/horizontal bars)
-- **Does not** access cluster internals directly
+**SourceGroup** (Per-source data container):
+- Encapsulates source-specific data: `src`, `labels`, `multi_labels`, `multi_labels_with_message`
+- Provides C-style functions: `sg_new`, `sg_add_label_info`, `sg_collect_multi_labels`, `sg_last_line_no`, `sg_calc_location`
+- **Does not** perform rendering directly (Writer handles output)
+- **Does not** hold references to Writer or LabelCluster
 
-**LabelCluster** (Virtual row renderer):
-- Represents a single rendered line (current: one cluster per physical line)
+**LabelCluster** (Virtual row/window manager):
+- Represents a single rendered cluster (current: one cluster per physical line)
 - Holds window bounds: `start_col`, `end_col`, `arrow_len`
-- Renders source code, arrows, and messages for its labels
+- Holds cluster-specific data: `line`, `line_labels`, `margin_label`
+- Created via `lc_new`, window calculated via `lc_calc_col_range`
 - **Self-contained**: computes all layout from injected parameters
 - **Phase 3 ready**: designed to support multiple clusters per line
 
 ### Layer Independence
 
-- `LabelCluster` does **not** hold references to `SourceGroup` or `RenderContext`
-- Required data passed explicitly via constructor and `render()` parameters
-- `SourceGroup` provides accessor methods for internal collections:
-  - `:iter_margin_labels()`, `:iter_multi_labels()`, `:iter_labels()`
-  - `:margin_len()`, `:get_source()`
-- Encapsulation enforced through `@field private` annotations
+- **Writer** only holds global parameters, passes all data via method parameters
+- **LabelCluster** does not reference SourceGroup or Writer, all data passed explicitly
+- **SourceGroup** exposes data only via C-style functions (sg_*, not methods)
+- Data flows: Report → context_new → Writer + SourceGroup[] → Writer orchestrates rendering
+- Encapsulation enforced through pure functions and explicit parameter passing
 
 ## Key Data Structures
 
-### `RenderContext`
-Top-level rendering coordinator:
-- `id`: Report source ID (for location calculation)
-- `pos`: Report position (for location calculation)
-- `groups`: Array of `SourceGroup` objects
+### `Writer`
+Top-level rendering orchestrator:
+- Array part: Output buffer (array of strings)
+- `config`: Rendering configuration (Config object)
 - `line_no_width`: Maximum width of line numbers across all sources
-- `ellipsis_width`: Display width of ellipsis character
+- `ellipsis_width`: Display width of ellipsis character (computed from config.char_set)
+- `cur_color` / `cur_color_code`: Current foreground color state
 
-**Responsibilities**:
-- Group labels by source file
-- Render report header (Error/Warning + message)
-- Render line numbers via `:render_lineno()`
-- Render footer (Help/Note sections)
+**Key Methods**:
+- `render_header(kind, code, message)`: Render report header
+- `render_reference(idx, group, report_id, report_pos)`: Render file reference header
+- `render_lines(group)`: Iterate lines and render clusters
+- `render_label_cluster(cluster, group)`: Render one cluster's line and arrows
+- `render_line(...)`: Render source code with windowing
+- `render_arrows(...)`: Render label arrows and messages
+- `render_margin(...)`: Render margin symbols (vbar/hbar/corner)
+- `render_lineno(line_no, is_ellipsis)`: Render line number
+- `render_footer(group_count, helps, notes)`: Render help/note sections
 
 ### `SourceGroup`
-Source file label manager:
-- `src`: `Source` object (private)
-- `labels`: All `LabelInfo` for this source (private)
-- `multi_labels`: Multiline labels (private)
-- `multi_labels_with_message`: Multiline labels with messages (private)
+Per-source data container:
+- `src`: `Source` object
+- `labels`: All `LabelInfo` for this source
+- `multi_labels`: Multiline labels (populated by sg_collect_multi_labels)
+- `multi_labels_with_message`: Multiline labels with messages (populated by sg_collect_multi_labels)
 - `start_char`, `end_char`: Label span boundaries
 
-**Responsibilities**:
-- Collect and sort multiline labels
-- Calculate reference location string
-- Render reference header: `,-[ file.lua:123:45 ]`
-- Render margin symbols (vbar, hbar, corner)
-- Iterate over source lines and create `LabelCluster` instances
+**C-style Functions** (not methods):
+- `sg_new(src, info)`: Create new SourceGroup with first label
+- `sg_add_label_info(group, info)`: Add label to existing group
+- `sg_collect_multi_labels(group)`: Collect and sort multiline labels
+- `sg_last_line_no(group)`: Get last line number in group
+- `sg_calc_location(group, ctx_id, ctx_pos, cfg)`: Calculate location string (line:col)
 
-**Public accessors**:
-- `:iter_margin_labels()`, `:iter_multi_labels()`, `:iter_labels()`
-- `:margin_len()`, `:get_source()`, `:last_line_no()`
+**Note**: SourceGroup has no methods (`:` syntax), only C-style functions that take `group` as first parameter
 
 ### `LabelCluster`
-Virtual row rendering unit (one cluster per line in Phase 2):
-- `line`: `Line` object (private)
-- `line_no`: Display line number (private)
-- `margin_label`: The primary margin label for this line (private)
-- `line_labels`: Labels to render on this line (private)
-- `arrow_len`, `start_col`, `end_col`: Window bounds (private)
+Virtual row/window manager (one cluster per line in Phase 2):
+- `line`: `Line` object
+- `line_labels`: Labels to render in this cluster
+- `margin_label`: The primary margin label for this line
+- `arrow_len`, `start_col`, `end_col`: Window bounds (computed by lc_calc_col_range)
 
-**Responsibilities**:
-- Compute window range via `calc_col_range()`
-- Render source code line with optional ellipsis
-- Render label arrows and messages
+**C-style Functions**:
+- `lc_new(idx, line, group, cfg)`: Create cluster for a line
+- `lc_calc_col_range(cluster, group, line_no_width, ellipsis_width, cfg)`: Calculate window bounds
+- `lc_get_highlight(cluster, col, group)`: Get highlight label at column
+- `lc_get_vbar(cluster, col, row)`: Get vbar label at column/row
+- `lc_get_underline(cluster, col, cfg)`: Get underline label at column
+- `lc_is_margin_label(cluster, info)`: Check if label is margin label
+- `get_margin_label(line, group)`: Select margin label for line
+- `collect_multi_labels_in_line(cluster, group)`: Collect multiline labels
+- `collect_labels_in_line(cluster, group, attach)`: Collect all labels for line
 
 **Phase 3 extension**:
-- `SourceGroup:render_lines()` will build multiple clusters per line
+- `Writer:render_lines()` will build multiple clusters per line
 - Each cluster represents a "virtual row" with distinct label subset
 - Margin symbols will connect across virtual rows
 
@@ -196,31 +209,33 @@ Pre-computed line metadata (part of `Source`):
 
 **Equivalence verified**: All tests pass, output is pixel-perfect.
 
-#### 2. Layered Architecture with Clear Boundaries
+#### 2. Writer-Orchestrated Architecture with Clear Boundaries
 
-**Three-tier separation** (implemented 2025-11-17):
-- **RenderContext**: Global state + header/footer rendering
-- **SourceGroup**: Per-source logic + margin rendering
-- **LabelCluster**: Per-line rendering + window management
+**Three-layer separation** (Writer-orchestrated, implemented 2025-11-18):
+- **Writer**: Top-level orchestrator with rendering methods
+- **SourceGroup**: Per-source data container with C-style functions
+- **LabelCluster**: Per-line window manager with C-style functions
 
 **Benefits**:
-- Each layer encapsulates its own data (via `@field private`)
-- No upward references: `LabelCluster` doesn't reference `SourceGroup`
-- Data flows downward through explicit parameters
-- Easy to extend: Phase 3 multi-cluster just modifies `SourceGroup:render_lines()`
+- Each layer has clear, single responsibility
+- No upward references: LabelCluster and SourceGroup don't reference Writer
+- All data flows via explicit parameter passing
+- Easy to extend: Phase 3 multi-cluster just modifies cluster creation logic in Writer:render_lines()
+- C-migration ready: Writer becomes C orchestrator, SourceGroup/LabelCluster become C structs + functions
 
 **Parameter passing strategy**:
-- Context objects (`RenderContext`, `SourceGroup`) passed to methods that need them
-- Cluster-specific data (margin_label, line_labels) passed as parameters
+- Writer holds global state (config, line_no_width, ellipsis_width)
+- SourceGroup/LabelCluster passed as parameters to functions that need them
+- No implicit context, all dependencies explicit
 - Avoids "context explosion" while maintaining encapsulation
 
 #### 3. Simplified Margin Rendering
 - Eliminated complex pointer comparisons and multi-stage filtering
 - Removed no-op code (where `hbar` is set then immediately filtered away)
 - Consolidated conditions using early returns and direct logic flow
-- Encapsulated in `SourceGroup:render_margin()` with clear parameters
+- Encapsulated in `Writer:render_margin()` with clear parameters
 
-#### 3. No `continue` or `goto`
+#### 4. No `continue` or `goto`
 - All control flow uses nested `if-elseif-else` chains
 - Maintains readability without Lua 5.2+ `goto` or multiple `return` points
 
@@ -229,15 +244,12 @@ Pre-computed line metadata (part of `Source`):
 - This implementation (1-based): `tab_width - ((col - 1) % tab_width)`
 - Equivalent forms verified with `tab_width = 4` across `col = 1, 2, 5, 8`
 
-#### 5. Encapsulation via Accessor Methods
-- `SourceGroup` fields marked `@field private` to prevent external access
-- Public accessors provide controlled read-only access:
-  - `:iter_margin_labels()` - iterate multiline labels with messages
-  - `:iter_multi_labels()` - iterate all multiline labels
-  - `:iter_labels()` - iterate all labels
-  - `:margin_len()` - count of margin labels
-  - `:get_source()` - access to Source object
-- Maintains flexibility to change internal representation without breaking API
+#### 5. Encapsulation via C-style Functions
+- SourceGroup and LabelCluster use C-style functions (not methods)
+- All functions take the structure as first parameter (e.g., `sg_new(src, info)`, `lc_new(idx, line, group, cfg)`)
+- No hidden state or implicit context
+- Clear data flow: caller passes all required parameters
+- Easy to port to C: functions map directly to C functions taking struct pointers
 
 ### Index Type Conversions
 
@@ -522,20 +534,21 @@ local pos, width = utf8.widthlimit("/path/to/file.lua", 1, 17, -8)
 - Messages: Always display fully (no truncation or wrapping)
 - Tab characters in file paths: Normalized to spaces before width calculation
 
-## Cluster & Virtual Row Design (Phase 3)
 
-### Motivation
+### Cluster & Virtual Row Design (Phase 3)
+
+#### Motivation
 Multiple distant labels on very long lines create unreadable horizontal spans. Clusters partition labels so each virtual row shows a focused subset with balanced context, improving clarity without losing messages.
 
-### New Abstractions
+#### New Abstractions
 - `LabelCluster`: Logical grouping of labels rendered together; holds aggregated window metrics.
 - `VirtualRow`: A rendering pass for one cluster; shares physical line number with siblings.
 
-### Planned Data Structure Fields
+#### Planned Data Structure Fields
 `LabelCluster`:
-- `labels`: array of `LabelInfo`
+- `line_labels`: subset of labels
 - `min_col`, `max_col`: display column bounds after width expansion
-- `window_start_col`, `window_end_col`: cropping window from `calc_col_range`
+- `window_start_col`, `window_end_col`: cropping window from `lc_calc_col_range`
 - `needs_prefix_ellipsis`, `needs_suffix_ellipsis`: booleans
 - `row_index`: virtual row ordinal
 
