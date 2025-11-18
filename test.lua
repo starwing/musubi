@@ -965,6 +965,79 @@ Error: oob location with label
 ]=]))
     end
 
+    function TestWrite.test_multiline_without_msg()
+        local text = "line1\nline2"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(no_color_ascii())
+            :with_message("multiline label without message")
+            :with_label(ariadne.Label.new(1, #text))
+            :render(ariadne.Source.new(text))
+        )
+
+        lu.assertEquals(msg, ([=[
+Error: multiline label without message
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ,-> line1
+ 2 | `-> line2
+---'
+]=]))
+    end
+
+    function TestWrite.test_two_multiline_without_msg()
+        local text = "first second\nline2"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(no_color_ascii())
+            :with_message("two multiline label without message")
+            :with_label(ariadne.Label.new(1, #text))
+            :with_label(ariadne.Label.new(7, #text))
+            :render(ariadne.Source.new(text))
+        )
+
+        lu.assertEquals(msg, ([=[
+Error: two multiline label without message
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ,---> first second
+   | |           ^
+   | | ,---------'
+ 2 | | `-> line2
+   | |         ^
+   | `---------'
+---'
+]=]))
+    end
+
+    function TestWrite.test_mix_multiline_without_msg()
+        local text = "first second\nline2"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 1)
+            :with_config(no_color_ascii())
+            :with_message("mix multiline label without message")
+            :with_label(ariadne.Label.new(1, #text))
+            :with_label(ariadne.Label.new(14, #text):with_message("inline"))
+            :with_label(ariadne.Label.new(7, #text))
+            :render(ariadne.Source.new(text))
+        )
+
+        lu.assertEquals(msg, ([=[
+Error: mix multiline label without message
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ,---> first second
+   | |           ^
+   | | ,---------'
+ 2 | | `-> line2
+   | |     ^^|^|
+   | |       `---- inline
+   | |         |
+   | `---------'
+---'
+]=]))
+    end
+
     function TestWrite.test_multiline_sort_and_padding()
         -- First line has trailing spaces to exercise split_at_column padding; two
         -- multiline labels with messages ensure sorting comparators run.

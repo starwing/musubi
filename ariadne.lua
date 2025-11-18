@@ -568,7 +568,7 @@ local function info_new(label, src, index_type)
             end_line = start_line
         end
     end
-    if label_start_char > start_line.offset + start_line.len then return nil end
+    if label_start_char > start_line.offset + start_line.len then return end
     return {
         multi = start_line ~= end_line,
         start_char = label_start_char,
@@ -600,11 +600,11 @@ end
 --- Which is the most significant multiline label on this line.
 --- It's the multiline label with the minimum column (start or end),
 --- if columns are equal, the one with the maximum start position is chosen.
---- @type fun(line: Line, group: SourceGroup): LineLabel?
-local function get_margin_label(line, group)
+--- @type fun(line: Line, multi_labels: LabelInfo[]): LineLabel?
+local function get_margin_label(line, multi_labels)
     ---@type integer?, LabelInfo, boolean
     local col, info, draw_msg
-    for i, cur_info in ipairs(group.multi_labels_with_message) do
+    for i, cur_info in ipairs(multi_labels) do
         local cur_col, cur_draw_msg
         if line_contains(line, cur_info.start_char) then
             cur_col = line_col(line, cur_info.start_char)
@@ -731,7 +731,7 @@ local function lc_new(idx, line, group, cfg)
     local lc = {
         line = line,
         line_no = src_shifted_line_no(group.src, idx),
-        margin_label = get_margin_label(line, group),
+        margin_label = get_margin_label(line, group.multi_labels),
         line_labels = {},
         arrow_len = 0,
         min_col = 0,
@@ -741,7 +741,7 @@ local function lc_new(idx, line, group, cfg)
     }
 
     -- Generate a list of labels for this line, along with their label columns
-    collect_margin_labels(lc, group.multi_labels_with_message)
+    collect_margin_labels(lc, group.multi_labels)
     collect_inline_labels(lc, group.labels, cfg.label_attach)
     if #lc.line_labels == 0 and not lc.margin_label then return nil end
     sort_line_labels(lc)
@@ -758,7 +758,7 @@ local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
         lc.line, lc.arrow_len, lc.min_col, lc.max_msg_width
     local src = group.src
 
-    local margin_count = #group.multi_labels_with_message
+    local margin_count = #group.multi_labels
     if margin_count > 0 then margin_count = margin_count + 1 end
     local fix_width = line_no_width + 4 +       -- line no and margin
         margin_count * (cfg.compact and 1 or 2) -- margin arrows
@@ -859,8 +859,9 @@ end
 --- @type fun(lc: LabelCluster, col: integer, row: integer): LineLabel?
 local function lc_get_vbar(lc, col, row)
     for i, ll in ipairs(lc.line_labels) do
-        if ll.info.label.message and not is_margin_label(lc, ll.info) and
-            ll.col == col and row <= i then
+        if (ll.info.label.message or ll.info.multi) and
+            not is_margin_label(lc, ll.info) and ll.col == col and row <= i
+        then
             return ll
         end
     end
@@ -944,9 +945,10 @@ function Writer.render_arrows(W, lc, group)
     local src = group.src
 
     -- Arrows
+    local first = true
     for row, ll in ipairs(lc.line_labels) do
         -- No message to draw thus no arrow to draw
-        if ll.info.label.message then
+        if ll.info.label.message or (ll.info.multi and not is_margin_label(lc, ll.info)) then
             if not W.config.compact then
                 -- Margin alternate
                 W:render_lineno(nil, false)
@@ -959,7 +961,7 @@ function Writer.render_arrows(W, lc, group)
                     end
                     local vbar = lc_get_vbar(lc, col, row)
                     local underline
-                    if row == 1 then
+                    if first then
                         underline = lc_get_underline(lc, col, cfg)
                     end
                     if vbar and underline then
@@ -968,7 +970,7 @@ function Writer.render_arrows(W, lc, group)
                         W:padding(width - 1, draw.underline)
                     elseif vbar then
                         local a = draw.vbar
-                        if vbar.info.multi and row == 1 and cfg.multiline_arrows then
+                        if vbar.info.multi and first and cfg.multiline_arrows then
                             a = draw.uarrow
                         end
                         W:use_color(vbar.info.label.color):label(a):reset()
@@ -995,14 +997,14 @@ function Writer.render_arrows(W, lc, group)
                     width = src_char_width(src, lc.line.byte_offset, col, cfg)
                 end
                 local is_hbar = (col > ll.col) ~= ll.info.multi or
-                    ll.draw_msg and col > ll.col
+                    ll.draw_msg and ll.info.label.message and col > ll.col
                 local vbar = lc_get_vbar(lc, col, row)
                 if col == ll.col and not is_margin_label(lc, ll.info) then
                     local a = draw.rbot
                     if not ll.info.multi then
                         a = draw.lbot
                     elseif ll.draw_msg then
-                        a = draw.mbot
+                        a = ll.info.label.message and draw.mbot or draw.rbot
                     end
                     W:use_color(ll.info.label.color):label(a):padding(width - 1, draw.hbar)
                 elseif vbar and col ~= ll.col then
@@ -1012,7 +1014,7 @@ function Writer.render_arrows(W, lc, group)
                         if cfg.cross_gap then
                             a, b = draw.hbar, draw.hbar
                         end
-                    elseif vbar.info.multi and row == 1 and cfg.compact then
+                    elseif vbar.info.multi and first and cfg.compact then
                         a = draw.uarrow
                     end
                     W:use_color(vbar.info.label.color):label(a):padding(width - 1, b)
@@ -1022,6 +1024,7 @@ function Writer.render_arrows(W, lc, group)
                     W:reset():padding(width)
                 end
             end
+            first = false
             W:reset()
             if ll.draw_msg then
                 W " " (ll.info.label.message)
@@ -1063,7 +1066,6 @@ local MIN_FILENAME_WIDTH = 8
 ---@field end_char? integer
 ---@field labels LabelInfo[]
 ---@field multi_labels LabelInfo[]
----@field multi_labels_with_message LabelInfo[]
 
 --- creates a new SourceGroup
 --- @type fun(src: Source, info: LabelInfo): SourceGroup
@@ -1074,7 +1076,6 @@ local function sg_new(src, info)
         end_char = info.end_char,
         labels = { info },
         multi_labels = {},
-        multi_labels_with_message = {},
     }
 end
 
@@ -1095,17 +1096,13 @@ end
 --- @type fun(group: SourceGroup)
 local function sg_collect_multi_labels(group)
     local multi_labels = group.multi_labels
-    local multi_labels_with_message = group.multi_labels_with_message
     for _, info in ipairs(group.labels) do
         if info.multi then
             multi_labels[#multi_labels + 1] = info
-            if info.label.message then
-                multi_labels_with_message[#multi_labels_with_message + 1] = info
-            end
         end
     end
     -- Sort labels by length
-    table.sort(multi_labels_with_message, function(a, b)
+    table.sort(multi_labels, function(a, b)
         local alen = a.end_char - a.start_char + 1
         local blen = b.end_char - b.start_char + 1
         return alen > blen
@@ -1186,7 +1183,7 @@ end
 ---           report_row?: LineLabel, report_row_is_arrow: boolean)
 function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
                               report_row, report_row_is_arrow)
-    if #group.multi_labels_with_message == 0 then return end
+    if #group.multi_labels == 0 then return end
     local draw = W.config.char_set
     local start_char, end_char = line_span(lc.line)
 
@@ -1194,7 +1191,7 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
     local hbar, margin_ptr
     local margin_ptr_is_start = false
 
-    for _, info in ipairs(group.multi_labels_with_message) do
+    for _, info in ipairs(group.multi_labels) do
         ---@type LabelInfo?, LabelInfo?
         local vbar, corner
         local is_start = line_contains(lc.line, info.start_char)
@@ -1228,7 +1225,8 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
                             break
                         end
                     end
-                    if is_start ~= (report_row_is_before == 1) then
+                    if is_start ~= (report_row_is_before == 1) and
+                        (is_start or not is_margin or info.label.message) then
                         vbar = info
                     end
                 end
@@ -1252,7 +1250,13 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
         elseif margin_ptr and is_line then
             local a, b = draw.hbar, draw.hbar
             if info and info == margin_ptr then
-                a = margin_ptr_is_start and draw.ltop or draw.lcross
+                if margin_ptr_is_start then
+                    a = draw.ltop
+                elseif not info.label.message then
+                    a = draw.lbot
+                else
+                    a = draw.lcross
+                end
             end
             W:use_color(margin_ptr.label.color):label(a):compact(b)
         else
@@ -1290,7 +1294,7 @@ function Writer.render_lines(W, group)
             --- @diagnostic disable-next-line missing-fields
             W:render_margin({ line = line }, group, false, true, nil, false)
             W "\n"
-        elseif not W.config.compact and not is_ellipsis then
+        elseif not is_ellipsis and not W.config.compact then
             -- Skip this line if we don't have labels for it
             W:render_lineno(nil, false)
             W "\n"
