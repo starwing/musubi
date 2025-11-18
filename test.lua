@@ -1,6 +1,34 @@
 local lu = require "luaunit"
 local ariadne = require "ariadne"
 
+-- print a demo
+local cg = ariadne.ColorGenerator.new()
+print(
+    ariadne.Report.build("Error", 12)
+    :with_code "3"
+    :with_message("Incompatible types")
+    :with_label(ariadne.Label.new(33, 33)
+        :with_message("This is of type Nat"):with_color(cg:next()))
+    :with_label(ariadne.Label.new(43, 45)
+        :with_message("This is of type Str"):with_color(cg:next()))
+    :with_label(ariadne.Label.new(12, 48)
+        :with_message("This values are outputs of this match expression"):with_color(cg:next()))
+    :with_label(ariadne.Label.new(1, 48)
+        :with_message("The definition has a problem"):with_color(cg:next()))
+    :with_label(ariadne.Label.new(51, 76)
+        :with_message("Usage of definition here"):with_color(cg:next()))
+    :with_note("Outputs of match expressions must coerce to the same type")
+    :render(ariadne.Source.new([[
+def five = match () in {
+	() => 5,
+	() => "5",
+}
+
+def six =
+    five
+    + 1
+]], "sample.tao")))
+
 ---@param text string
 ---@return string
 local function remove_trailing(text)
@@ -10,7 +38,7 @@ end
 local TestSource = {}
 do
     local function get_line_text(src, line)
-        return src.text:sub(line:byte_span())
+        return src:get_line(line)
     end
 
     local function test_with_lines(lines)
@@ -73,9 +101,9 @@ do
     function TestColor.test_colors()
         local gen = ariadne.ColorGenerator.new()
         local colors = {}
-        colors[#colors + 1] = gen:next()
-        colors[#colors + 1] = gen:next()
-        colors[#colors + 1] = gen:next()
+        colors[#colors + 1] = gen:next() "label"
+        colors[#colors + 1] = gen:next() "label"
+        colors[#colors + 1] = gen:next() "label"
         lu.assertNotEquals(colors[1], colors[2])
         lu.assertNotEquals(colors[2], colors[3])
         lu.assertNotEquals(colors[1], colors[3])
@@ -1095,32 +1123,6 @@ Error: multiline span
 ]=])
     end
 
-    -- Test 3: cross_gap disabled (line 1409)
-    function TestWrite.test_cross_gap_disabled()
-        local cfg = no_color_ascii()
-        cfg.cross_gap = false
-        local src = ariadne.Source.new("apple\norange\nbanana\ngrape")
-        local msg = ariadne.Report.build("Error", 1)
-            :with_config(cfg)
-            :with_message("test cross_gap")
-            :with_label(ariadne.Label.new(1, 19):with_message("span 1"))
-            :with_label(ariadne.Label.new(21, 25):with_message("span 2"))
-            :render(src)
-        lu.assertEquals(msg, "Error: test cross_gap\
-   ,-[ <unknown>:1:1 ]\
-   |\
- 1 | ,-> apple\
-   : :   \
- 3 | |-> banana\
-   | |            \
-   | `------------ span 1\
- 4 |     grape\
-   |     ^^|^^  \
-   |       `---- span 2\
----'\
-")
-    end
-
     -- Test 4: default_color for "error" and "skipped_margin" (lines 238-244)
     function TestWrite.test_default_color_categories()
         local cfg = ariadne.Config.new {
@@ -1167,25 +1169,6 @@ Error: multiline span
 "\27[33mWarning:\27[0m test default colors\
 "]])
     end -- Test 2: Compact mode with multiline arrows (line 1413)
-
-    function TestWrite.test_compact_multiline_arrows()
-        local cfg = no_color_ascii()
-        cfg.compact = true
-        cfg.multiline_arrows = true
-        local src = ariadne.Source.new("apple\norange\nbanana")
-        local msg = ariadne.Report.build("Error", 1)
-            :with_config(cfg)
-            :with_message("multiline span")
-            :with_label(ariadne.Label.new(1, 12):with_message("crosses lines"))
-            :render(src)
-        lu.assertEquals(msg, [=[
-Error: multiline span
-   ,-[ <unknown>:1:1 ]
- 1 |,>apple
- 2 ||>orange
-   |`--------- crosses lines
-]=])
-    end
 
     -- Test 3: cross_gap disabled (line 1409)
     function TestWrite.test_cross_gap_disabled()

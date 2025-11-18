@@ -5,6 +5,7 @@
     ],
     "runtime.version": "Lua 5.4",
     "workspace.ignoreDir": [
+        ".git",
         ".vscode",
         "luaunit.lua",
         "serpent.lua"
