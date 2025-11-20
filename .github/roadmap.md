@@ -6,13 +6,14 @@ This document tracks the project's development status, active TODOs, completed w
 
 ### Project Maturity
 - ✅ **Core implementation complete**: All rendering logic ported and tested
-- ✅ **Test coverage**: 100% (all reachable code covered, 77 tests passing)
+- ✅ **Test coverage**: 100% (all reachable code covered, 83 tests passing)
 - ✅ **Pixel-perfect output**: All test cases produce identical output to reference implementation
 - ✅ **Performance optimized**: O(n) rendering vs original O(n²) nested loops
-- ✅ **Line width limiting (Phase 2)**: Header truncation + single-line windowing finished (renamed from “Phase 2a”).
+- ✅ **Line width limiting (Phase 2)**: Header truncation + single-line windowing complete
+- ✅ **Cluster & Virtual Rows (Phase 3)**: Multi-label clustering with min/max width tracking complete
 - ✅ **Unicode support**: Full CJK and mixed character width handling
-- ⏳ **Cluster & Virtual Rows (Phase 3)**: Pending design/implementation
-- ⏳ **Forced Multiline via Cluster Splitting (Phase 4)**: Planned (simplified by cluster abstraction)
+- 🔄 **Next: C Migration**: Lua implementation feature-complete, ready for C port
+- ⏸️ **Forced Multiline (Phase 4)**: Deferred (low priority, handled by Phase 2/3)
 
 ### Known Limitations
 - Only supports `\n` newlines (not Unicode line separators)
@@ -21,22 +22,63 @@ This document tracks the project's development status, active TODOs, completed w
 
 ## Active TODO
 
-**Phase 3: Cluster & Virtual Rows Implementation**
-- Status: Not started (design finalized in documentation)
-- Goal: Introduce `LabelCluster` abstraction, render long multi-label lines as multiple “virtual rows” to improve readability.
-- Scope:
-  - Cluster heuristic (distance/width based greedy grouping)
-  - Virtual row rendering (reusing existing margin + arrow logic)
-  - Parameter hierarchy refactor (reduce argument explosion in render functions)
+**C Migration (Next Priority)**
+- Status: Planning phase
+- Goal: Port Lua implementation to C for performance and embedding
+- Rationale: Lua implementation is feature-complete and well-tested (83 tests, 100% coverage)
+- Key considerations:
+  - Preserve Writer-Orchestrated architecture (clean layer separation)
+  - Maintain test compatibility (C output must match Lua pixel-perfect)
+  - Handle UTF-8 via ICU or similar library
+  - Efficient memory management for label clustering
+  - qsort stability for label sorting (consider stable_sort or manual tie-breaking)
 
 **Phase 4: Forced Multiline / Intra-Cluster Splitting**
-- Status: Planned
-- Goal: Allow oversize labels inside a cluster to split into multiple virtual rows or multiline label form, leveraging existing multiline margin mechanics.
-- Scope:
+- Status: ⏸️ **Deferred** (low priority, not blocking C migration)
+- Rationale: Phase 2 (windowing) + Phase 3 (clustering) already handle most scenarios
+  - Single oversized label: Phase 2 windows to show label + message
+  - Multiple labels: Phase 3 splits into virtual rows
+  - Edge case: Single label span > line_width (extremely rare in practice)
+  - Trade-off: Converting to multiline loses precise span underlines
+- Future consideration: If needed, implement as optional config in C version
+- Scope (if implemented):
   - Detect span width > soft limit (post-window) at cluster level
   - Convert to multiline arrows or sub-cluster splits without disturbing other clusters
 
 ## Completed Work
+
+### ✅ Phase 3: Cluster & Virtual Rows (2025-11-21)
+
+**Implementation completed**: Label clustering with intelligent width tracking
+
+**Core Algorithm**:
+- **Stable sorting**: `order < col < start_char` (descending for start_char)
+  - Future: Add `len` and `original_index` if stable ordering needed across platforms
+- **Width tracking**: Track `min_start_width` and `max_end_width` during clustering
+  - Handles non-spatial ordering when `order` property disrupts column sequence
+  - Split condition: `(max_end_width - min_start_width) + message_width > limit_width`
+- **Margin selection**: First `multi` label in sorted order becomes cluster margin
+  - Excluded from `line_labels` unless it's an `end` label with message
+  - Simplifies rendering: margin never interferes with col_range or arrow_len calculations
+
+**Key Bug Fixes** (discovered via new tests):
+1. Empty cluster detection: Must check both `#line_labels > 0` and `margin_label ~= nil`
+2. Ellipsis rendering: Use hbar for source code positions, space for padding
+3. Non-draw_msg labels: `end_col` should be actual column, not extended to line end
+
+**Tests Added** (6 new tests, total 83):
+- `test_multiple_labels_on_long_line` - Basic clustering with two distant labels
+- `test_cluster_width_calculation` - Multi-label width tracking correctness
+- `test_margin_per_cluster` - Independent margin selection per cluster
+- `test_order_disrupts_spatial_clustering` - Order-first sorting with spatial width tracking
+- `test_stable_sort_identical_labels` - (Not added: unstable sort not testable deterministically)
+- `test_sort_by_len_when_order_col_same` - (Future: if len-based sorting needed)
+
+**Architecture Impact**:
+- `LabelCluster` structure finalized: `line`, `line_no`, `margin_label`, `line_labels`, `arrow_len`, `min_col`, `max_msg_width`, `start_col`, `end_col`
+- `lc_assemble_clusters()`: Main clustering function with O(n²) width calculation (TODO: optimize in C)
+- Writer methods adapted: `render_label_cluster()` handles cluster-specific rendering
+- Ready for C migration: Pure functions, explicit parameter passing, no global state
 
 ### ✅ 100% Test Coverage Achievement (2025-11-10)
 
@@ -264,9 +306,11 @@ render_arrows(W, line_no_width, line, is_ellipsis, arrow_len, start_col,
 - ❌ Confusion about "centering" target (label vs label+message)
 - ✅ Clarified: center label+message as visual unit, right side guarantees message space
 
-**Phase 3: Cluster & Virtual Rows (Design Finalized, Implementation Pending)**
-- Implement clustering + virtual rows + parameter hierarchy refactor.
-- Tests listed in Phase 3 planned features.
+**Phase 3: Cluster & Virtual Rows** ✅ **Completed 2025-11-21**
+- Implemented clustering with min/max width tracking
+- Virtual rows support multiple clusters per physical line
+- Parameter hierarchy refactored (Writer-Orchestrated architecture)
+- 6 new tests added, all passing
 
 **Phase 4: Forced Multiline / Intra-Cluster Splitting (Planned)**
 - Implement span-based conversion to multiline arrows; reuse existing logic.

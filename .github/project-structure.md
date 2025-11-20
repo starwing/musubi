@@ -11,11 +11,11 @@ This document describes the technical architecture, data structures, and design 
   - Optional `luacov` for coverage
 - Entry points: `ariadne.lua` exports the public API
 - Tests: run `lua test.lua` from the project root
-- Coverage: Currently at 100% test coverage (all reachable code covered)
+- Coverage: Currently at 100% test coverage (all reachable code covered, 83 tests passing)
 
 ## File Structure
 
-- **`ariadne.lua`**: All runtime code (~1500 lines), structured into sections:
+- **`ariadne.lua`**: All runtime code (~1650 lines), structured into sections:
   - **Classes**: `Cache`, `Line`, `Source` (source text parsing and line indexing)
   - **CharSet**: `Characters.unicode` and `Characters.ascii` (rendering glyphs)
   - **Config**: Configuration tables
@@ -43,11 +43,12 @@ Report:render(cache)
   │   ├─ Writer:render_empty_line()
   │   ├─ Writer:render_lines(group)
   │   │  └─> for each line in range
-  │   │      ├─> lc_new(idx, line, group, cfg)  -- Build cluster
-  │   │      ├─> lc_calc_col_range(cluster, group, ...)
-  │   │      └─> Writer:render_label_cluster(cluster, group)
-  │   │          ├─> Writer:render_line(...)
-  │   │          └─> Writer:render_arrows(...)
+  │   │      ├─> clusters = lc_assemble_clusters(line, line_no, group, ...)
+  │   │      └─> for each cluster in clusters  -- Phase 3: Multiple virtual rows
+  │   │          ├─> lc_calc_col_range(cluster, group, ...)
+  │   │          └─> Writer:render_label_cluster(cluster, group)
+  │   │              ├─> Writer:render_line(...)
+  │   │              └─> Writer:render_arrows(...)
   │   └─> Writer:render_empty_line()
   └─> Writer:render_footer(#groups, helps, notes)
 ```
@@ -68,12 +69,13 @@ Report:render(cache)
 - **Does not** hold references to Writer or LabelCluster
 
 **LabelCluster** (Virtual row/window manager):
-- Represents a single rendered cluster (current: one cluster per physical line)
-- Holds window bounds: `start_col`, `end_col`, `arrow_len`
-- Holds cluster-specific data: `line`, `line_labels`, `margin_label`
-- Created via `lc_new`, window calculated via `lc_calc_col_range`
+- Represents a single rendered cluster (Phase 3: supports multiple clusters per physical line)
+- Holds window bounds: `start_col`, `end_col`, `arrow_len`, `min_col`, `max_msg_width`
+- Holds cluster-specific data: `line`, `line_no`, `line_labels`, `margin_label`
+- Created via `lc_assemble_clusters` (builds all clusters for a line)
+- Window calculated via `lc_calc_col_range` (per-cluster windowing)
 - **Self-contained**: computes all layout from injected parameters
-- **Phase 3 ready**: designed to support multiple clusters per line
+- **Clustering complete**: min/max width tracking, order-first sorting, margin exclusion logic
 
 ### Layer Independence
 
@@ -122,11 +124,28 @@ Per-source data container:
 **Note**: SourceGroup has no methods (`:` syntax), only C-style functions that take `group` as first parameter
 
 ### `LabelCluster`
-Virtual row/window manager (one cluster per line in Phase 2):
-- `line`: `Line` object
-- `line_labels`: Labels to render in this cluster
-- `margin_label`: The primary margin label for this line
-- `arrow_len`, `start_col`, `end_col`: Window bounds (computed by lc_calc_col_range)
+Virtual row/window manager:
+- `line`: `Line` object (physical source line)
+- `line_no`: Line number for this cluster
+- `line_labels`: Labels to render in this cluster (inline + end-with-message labels)
+- `margin_label`: The primary margin label for this cluster (first multi in sorted order)
+- `arrow_len`: Maximum arrow length (rightmost label end + arrow spacing)
+- `min_col`: Leftmost label start column
+- `max_msg_width`: Maximum message width across all labels
+- `start_col`, `end_col`: Window bounds (computed by `lc_calc_col_range`)
+
+**Clustering Algorithm** (Phase 3):
+- Sort labels: `order < col < start_char` (start_char descending for tie-breaking)
+- Track `min_start_width` and `max_end_width` during iteration
+- Split when `(max_end_width - min_start_width) + message_width > limit_width`
+- Select first `multi` label as `margin_label`, exclude from `line_labels` unless it's `end` with message
+
+**C-style Functions**:
+- `lc_new(line, line_no)`: Create empty cluster
+- `lc_assemble_clusters(line, line_no, group, line_no_width, cfg)`: Build clusters from line labels
+- `lc_calc_col_range(cluster, group, line_no_width, ellipsis_width, cfg)`: Calculate window bounds
+
+**Future**: Multiple clusters per physical line (Phase 3 complete, ready for expansion)
 
 **C-style Functions**:
 - `lc_new(idx, line, group, cfg)`: Create cluster for a line
