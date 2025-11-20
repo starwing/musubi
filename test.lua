@@ -2,23 +2,24 @@ local lu = require "luaunit"
 local ariadne = require "ariadne"
 
 -- print a demo
-local cg = ariadne.ColorGenerator.new()
-print(
-    ariadne.Report.build("Error", 12)
-    :with_code "3"
-    :with_message("Incompatible types")
-    :with_label(ariadne.Label.new(33, 33)
-        :with_message("This is of type Nat"):with_color(cg:next()))
-    :with_label(ariadne.Label.new(43, 45)
-        :with_message("This is of type Str"):with_color(cg:next()))
-    :with_label(ariadne.Label.new(12, 48)
-        :with_message("This values are outputs of this match expression"):with_color(cg:next()))
-    :with_label(ariadne.Label.new(1, 48)
-        :with_message("The definition has a problem"):with_color(cg:next()))
-    :with_label(ariadne.Label.new(51, 76)
-        :with_message("Usage of definition here"):with_color(cg:next()))
-    :with_note("Outputs of match expressions must coerce to the same type")
-    :render(ariadne.Source.new([[
+if #arg == 0 then
+    local cg = ariadne.ColorGenerator.new()
+    print(
+        ariadne.Report.build("Error", 12)
+        :with_code "3"
+        :with_message("Incompatible types")
+        :with_label(ariadne.Label.new(33, 33)
+            :with_message("This is of type Nat"):with_color(cg:next()))
+        :with_label(ariadne.Label.new(43, 45)
+            :with_message("This is of type Str"):with_color(cg:next()))
+        :with_label(ariadne.Label.new(12, 48)
+            :with_message("This values are outputs of this match expression"):with_color(cg:next()))
+        :with_label(ariadne.Label.new(1, 48)
+            :with_message("The definition has a problem"):with_color(cg:next()))
+        :with_label(ariadne.Label.new(51, 76)
+            :with_message("Usage of definition here"):with_color(cg:next()))
+        :with_note("Outputs of match expressions must coerce to the same type")
+        :render(ariadne.Source.new([[
 def five = match () in {
 	() => 5,
 	() => "5",
@@ -28,6 +29,7 @@ def six =
     five
     + 1
 ]], "sample.tao")))
+end
 
 ---@param text string
 ---@return string
@@ -1425,9 +1427,9 @@ Error: test two multiline labels ending at same col
         local msg = remove_trailing(ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii(nil, true))
             :with_message("uarrow test")
-            :with_label(ariadne.Label.new(1, 7):with_message("inner"))
-            :with_label(ariadne.Label.new(2, 14):with_message("outer"):with_order(1))
-            :with_label(ariadne.Label.new(1, 8):with_message("outer outer"):with_order(2))
+            :with_label(ariadne.Label.new(1, 7):with_message("inner"):with_order(1))
+            :with_label(ariadne.Label.new(2, 14):with_message("outer"):with_order(2))
+            :with_label(ariadne.Label.new(1, 8):with_message("outer outer"):with_order(0))
             :render(src))
         lu.assertEquals(msg, [=[
 Error: uarrow test
@@ -1435,9 +1437,9 @@ Error: uarrow test
  1 | ,->apple
    | |,-'^
    |,----'
- 2 ||||>orange
-   |||`--------- inner
-   ||`---^------ outer outer
+ 2 |||->orange
+   ||`---------- outer outer
+   || `-^------- inner
  3 ||-->banana
    |`---------- outer
 ]=])
@@ -1972,11 +1974,12 @@ Error: test
 Error: test
    ,-[ <unknown>:1:101 ]
    |
- 1 | ...errorbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbwarncccccccccccccc...
-   |    ^^|^^                                                                                                                                                                                                        ^^|^
-   |      `---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- first error
-   |                                                                                                                                                                                                                   |
-   |                                                                                                                                                                                                                   `--- second warning
+ 1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaerrorbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...
+   |                             ^^|^^
+   |                               `---- first error
+ 1 | ...bbbbbbbbbbbbbbbbbbbbbbbbwarnccccccccccccccccccccccccccccccccccccccccc...
+   |                            ^^|^
+   |                              `--- second warning
 ---'
 ]])
     end
@@ -2030,6 +2033,83 @@ Error: test
  1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaahello世界error错误test
    |                                                   ^^^^^|^^^
    |                                                        `------- mixed error
+---'
+]])
+    end
+
+    function TestLineWindowing.test_order_disrupts_spatial_clustering()
+        local text = ("a"):rep(100)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 10)
+            :with_config(no_color_ascii_width(60))
+            :with_message("test")
+            :with_label(ariadne.Label.new(10):with_message("label2"):with_order(1))
+            :with_label(ariadne.Label.new(50):with_message("label1"):with_order(0))
+            :render(ariadne.Source.new(text))
+        )
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:10 ]
+   |
+ 1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+   |    |                                       |
+   |    |                                       `- label1
+   |    |
+   |    `----------------------------------------- label2
+---'
+]])
+    end
+
+    function TestLineWindowing.test_cluster_width_calculation()
+        local text = ("a"):rep(200)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 100)
+            :with_config(no_color_ascii_width(60))
+            :with_message("test")
+            :with_label(ariadne.Label.new(10, 10):with_message("labelA"))
+            :with_label(ariadne.Label.new(10, 60):with_message("labelB"))
+            :render(ariadne.Source.new(text))
+        )
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:100 ]
+   |
+ 1 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+   |          |
+   |          `-- labelA
+ 1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^^^^^^^^
+   |                             `--------------------------- labelB
+---'
+]])
+    end
+
+    function TestLineWindowing.test_margin_per_cluster()
+        local src = ("a"):rep(200) .. "\nbbbbb"
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 100)
+            :with_config(no_color_ascii_width(50))
+            :with_message("test")
+            :with_label(ariadne.Label.new(10, 204):with_message("labelA"))
+            :with_label(ariadne.Label.new(150, 205):with_message("labelB"))
+            :with_label(ariadne.Label.new(160, 206):with_message("labelC"))
+            :render(ariadne.Source.new(src))
+        )
+        lu.assertEquals(msg, [[
+Error: test
+   ,-[ <unknown>:1:100 ]
+   |
+ 1 | ,-----> aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+ 1 | | ,---> ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+   | | |                        ^
+   | | | ,----------------------'
+ 2 | |-----> bbbbb
+   | | | |      ^^
+   | `-------------- labelA
+   |   | |      ||
+   |   `--------^--- labelB
+   |     |       |
+   |     `-------^-- labelC
 ---'
 ]])
     end

@@ -202,9 +202,9 @@ end
 
 -- #region source
 --- @class (exact) Source
---- @field id        string
+--- @field id        string the source name
 --- @field text      string the original source text
---- @field display_line_offset integer
+--- @field display_line_offset integer the line offset for display
 --- @field fetch fun(self: Source, id: string): Source
 --- @field [integer] Line
 
@@ -356,14 +356,14 @@ end
 
 -- #region label
 --- @class (exact) Label
---- @field start_pos  integer
---- @field end_pos?   integer
---- @field source_id? string
---- @field message?   string
---- @field width?     integer
---- @field color?     Color
---- @field order      integer
---- @field priority   integer
+--- @field start_pos  integer start position in the source
+--- @field end_pos?   integer end position in the source, nil for single position
+--- @field source_id? string source id this label belongs to
+--- @field message?   string the message to display for this label
+--- @field width      integer display width of the message
+--- @field color?     Color the color for this label
+--- @field order      integer order of this label in vertical sorting
+--- @field priority   integer priority of this label when merging overlapping labels
 
 --- Creates a new Label
 --- @type fun(start_pos: integer, end_pos?: integer, source_id?: string): Label
@@ -373,10 +373,19 @@ local function label_new(start_pos, end_pos, source_id)
         end_pos = end_pos,
         source_id = source_id,
         message = nil,
+        width = 0,
         color = nil,
         order = 0,
         priority = 0,
     }
+end
+
+--- Sets the message and width for this label
+--- @type fun(self: Label, message: string, width?: integer): Label
+local function label_set_message(self, message, width)
+    self.message = message
+    self.width = width or utf8_width(message or "")
+    return self
 end
 -- #endregion
 
@@ -592,72 +601,39 @@ end
 ---@field arrow_len integer the length of the arrows line
 ---@field min_col integer the first column of labels in this line
 ---@field max_msg_width integer the maximum message width in this line
----@field start_col integer the start column for rendering
+---@field start_col? integer the start column for rendering
 ---@field end_col? integer the end column for rendering
 
---- Get the margin label for a line.
----
---- Which is the most significant multiline label on this line.
---- It's the multiline label with the minimum column (start or end),
---- if columns are equal, the one with the maximum start position is chosen.
---- @type fun(line: Line, multi_labels: LabelInfo[]): LineLabel?
-local function get_margin_label(line, multi_labels)
-    ---@type integer?, LabelInfo, boolean
-    local col, info, draw_msg
-    for i, cur_info in ipairs(multi_labels) do
-        local cur_col, cur_draw_msg
-        if line_contains(line, cur_info.start_char) then
-            cur_col = line_col(line, cur_info.start_char)
-            cur_draw_msg = false
-        elseif cur_info.end_char and line_contains(line, cur_info.end_char) then
-            cur_col = line_col(line, cur_info.end_char)
-            cur_draw_msg = true
-        end
-        -- find the minimum column or maximum start pos if columns are equal
-        -- label as the margin label
-        if cur_col and (not col or not info or cur_col < col or (cur_col == col
-                and cur_info.start_char > info.start_char)) then
-            col, info, draw_msg = cur_col, cur_info, cur_draw_msg
-        end
-    end
-    if not col then return nil end
-    return { col = assert(col), info = assert(info), draw_msg = draw_msg }
-end
-
---- Check if the given label info is the margin label
---- @type fun(lc: LabelCluster, info: LabelInfo): boolean
-local function is_margin_label(lc, info)
-    return lc.margin_label and lc.margin_label.info == info or false
+--- Length of margin area
+--- @type fun(group: SourceGroup, cfg: Config): integer
+local function margin_len(group, cfg)
+    local len = #group.multi_labels
+    return (len > 0 and len + 1 or 0) * (cfg.compact and 2 or 1)
 end
 
 --- Collect multiline labels for a specific line
---- @type fun(lc: LabelCluster, multi_labels: LabelInfo[])
-local function collect_margin_labels(lc, margin_labels)
-    local line, line_labels = lc.line, lc.line_labels
-    for i, info in ipairs(margin_labels) do
-        if line_contains(line, info.start_char) and not is_margin_label(lc, info) then
-            line_labels[#line_labels + 1] = {
-                col = line_col(line, info.start_char),
-                info = info,
-                draw_msg = false,
-            }
+--- @type fun(line_labels: LineLabel[], line: Line, multi_labels: LabelInfo[])
+local function collect_multi_labels(line_labels, line, multi_labels)
+    for _, info in ipairs(multi_labels) do
+        local ll --[[@as LineLabel?]]
+        if line_contains(line, info.start_char) then
+            ll = { col = line_col(line, info.start_char), draw_msg = false }
         elseif info.end_char and line_contains(line, info.end_char) then
-            line_labels[#line_labels + 1] = {
-                col = line_col(line, info.end_char),
-                info = info,
-                draw_msg = true,
-            }
+            ll = { col = line_col(line, info.end_char), draw_msg = true }
+        end
+        if ll then
+            ll.info = info
+            line_labels[#line_labels + 1] = ll
         end
     end
 end
 
 --- Collect inline labels for a specific line
---- @type fun(lc: LabelCluster, labels: LabelInfo[], label_attach: LabelAttach)
-local function collect_inline_labels(lc, labels, label_attach)
-    local line, line_labels = lc.line, lc.line_labels
-    local _, end_char = line_span(line)
+--- @type fun(line_labels: LineLabel[], line: Line, labels: LabelInfo[], label_attach: LabelAttach)
+local function collect_inline_labels(line_labels, line, labels, label_attach)
+    local start_char, end_char = line_span(line)
     for _, info in ipairs(labels) do
-        if not info.multi and info.start_char >= line.offset and
+        if not info.multi and info.start_char >= start_char and
             (info.end_char or info.start_char) <= end_char + 1
         then
             local col = info.start_char
@@ -676,9 +652,9 @@ local function collect_inline_labels(lc, labels, label_attach)
 end
 
 --- Sort line labels by order, column and desc start position
---- @type fun(lc: LabelCluster)
-local function sort_line_labels(lc)
-    table.sort(lc.line_labels, function(a, b)
+--- @type fun(line_labels: LineLabel[])
+local function sort_line_labels(line_labels)
+    table.sort(line_labels, function(a, b)
         if a.info.label.order ~= b.info.label.order then
             return a.info.label.order < b.info.label.order
         elseif a.col ~= b.col then
@@ -688,50 +664,13 @@ local function sort_line_labels(lc)
     end)
 end
 
---- Calculate the maximum arrow line length for a specific line
---- @type fun(lc: LabelCluster, compact: boolean)
-local function calc_arrow_len(lc, compact)
-    local line, line_labels = lc.line, lc.line_labels
-    local arrow_len, min_col, max_width = 0, nil, 0
-    for _, ll in ipairs(line_labels) do
-        if ll.info.multi then
-            arrow_len = line.len + (line.newline and 1 or 0)
-        else
-            local cur = line_col(line, ll.info.end_char or ll.info.start_char - 1)
-            if arrow_len < cur then
-                arrow_len = cur
-            end
-        end
-        local msg_width = ll.info.label.width
-        if not msg_width then
-            msg_width = utf8.width(ll.info.label.message or "")
-        end
-        if max_width < msg_width then
-            max_width = msg_width
-        end
-        local cur_col = ll.col
-        if not ll.info.multi then
-            cur_col = line_col(line, ll.info.start_char)
-        end
-        if not is_margin_label(lc, ll.info) and
-            (not min_col or cur_col < min_col)
-        then
-            min_col = cur_col
-        end
-    end
-    lc.arrow_len = arrow_len + (compact and 1 or 2)
-    lc.min_col = min_col or 1
-    lc.max_msg_width = max_width
-end
-
---- creates a new LabelCluster
---- @type fun(idx: integer, line: Line, group: SourceGroup, cfg: Config): LabelCluster?
-local function lc_new(idx, line, group, cfg)
-    --- @type LabelCluster
-    local lc = {
+--- Creates a empty LabelCluster
+--- @type fun(line: Line, line_no: integer): LabelCluster
+local function lc_new(line, line_no)
+    return {
         line = line,
-        line_no = src_shifted_line_no(group.src, idx),
-        margin_label = get_margin_label(line, group.multi_labels),
+        line_no = line_no,
+        margin_label = nil,
         line_labels = {},
         arrow_len = 0,
         min_col = 0,
@@ -739,14 +678,65 @@ local function lc_new(idx, line, group, cfg)
         start_col = 1,
         end_col = nil,
     }
+end
 
-    -- Generate a list of labels for this line, along with their label columns
-    collect_margin_labels(lc, group.multi_labels)
-    collect_inline_labels(lc, group.labels, cfg.label_attach)
-    if #lc.line_labels == 0 and not lc.margin_label then return nil end
-    sort_line_labels(lc)
-    calc_arrow_len(lc, cfg.compact)
-    return lc
+--- @type fun(line: Line, line_no: integer, group: SourceGroup,
+---           line_no_width: integer, cfg: Config): LabelCluster[]
+local function lc_assemble_clusters(line, line_no, group, line_no_width, cfg)
+    --- @type LineLabel[]
+    local line_labels = {}
+    collect_multi_labels(line_labels, line, group.multi_labels)
+    collect_inline_labels(line_labels, line, group.labels, cfg.label_attach)
+    if #line_labels == 0 then return {} end
+    sort_line_labels(line_labels)
+
+    local lc              = lc_new(line, line_no)
+    lc.min_col            = nil
+
+    local clusters        = { lc } --[=[@as LabelCluster[]]=]
+    local min_start_width, max_end_width
+    local extra_arrow_len = cfg.compact and 1 or 2
+    local limit_width     = cfg.line_width and
+        cfg.line_width - line_no_width - 4 - margin_len(group, cfg) or nil
+    for _, ll in ipairs(line_labels) do
+        local end_col = ll.info.multi and ll.col or
+            line_col(line, ll.info.end_char or ll.info.start_char - 1)
+        if limit_width then
+            -- TODO: O(n^2) need optimize
+            local start_col = ll.info.multi and ll.col or
+                line_col(line, ll.info.start_char)
+            local start_width = utf8_width(group.src.text, line.byte_offset,
+                utf8_offset(group.src.text, start_col, line.byte_offset) - 1)
+            local _, cur_end_byte = utf8_offset(group.src.text,
+                end_col, line.byte_offset)
+            local end_width = utf8_width(group.src.text, line.byte_offset,
+                cur_end_byte)
+            min_start_width = math.min(min_start_width or start_width, start_width)
+            max_end_width = math.max(max_end_width or end_width, end_width)
+            local cur_width = (max_end_width - min_start_width) +
+                (ll.draw_msg and ll.info.label.message and
+                    extra_arrow_len + 1 + ll.info.label.width or 0)
+            if (#lc.line_labels > 0 or lc.margin_label) and cur_width > limit_width then
+                min_start_width, max_end_width = nil, nil
+                lc = lc_new(line, line_no)
+                lc.min_col = nil
+                clusters[#clusters + 1] = lc
+            end
+        end
+        if ll.info.multi then
+            if ll.draw_msg then
+                end_col = lc.line.len + (line.newline and 1 or 0)
+            end
+            if not lc.margin_label then lc.margin_label = ll end
+        end
+        if lc.margin_label ~= ll or (ll.draw_msg and ll.info.label.message) then
+            lc.line_labels[#lc.line_labels + 1] = ll
+        end
+        lc.arrow_len = math.max(lc.arrow_len, end_col + extra_arrow_len)
+        lc.min_col = math.min(lc.min_col or ll.info.start_char, ll.info.start_char)
+        lc.max_msg_width = math.max(lc.max_msg_width, ll.info.label.width)
+    end
+    return clusters
 end
 
 --- Calculate the start position for rendering a line
@@ -758,8 +748,7 @@ local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
         lc.line, lc.arrow_len, lc.min_col, lc.max_msg_width
     local src = group.src
 
-    local margin_count = #group.multi_labels
-    if margin_count > 0 then margin_count = margin_count + 1 end
+    local margin_count = margin_len(group, cfg)
     local fix_width = line_no_width + 4 +       -- line no and margin
         margin_count * (cfg.compact and 1 or 2) -- margin arrows
     local line_width = cfg.line_width - fix_width
@@ -860,7 +849,7 @@ end
 local function lc_get_vbar(lc, col, row)
     for i, ll in ipairs(lc.line_labels) do
         if (ll.info.label.message or ll.info.multi) and
-            not is_margin_label(lc, ll.info) and ll.col == col and row <= i
+            lc.margin_label ~= ll and ll.col == col and row <= i
         then
             return ll
         end
@@ -948,7 +937,7 @@ function Writer.render_arrows(W, lc, group)
     local first = true
     for row, ll in ipairs(lc.line_labels) do
         -- No message to draw thus no arrow to draw
-        if ll.info.label.message or (ll.info.multi and not is_margin_label(lc, ll.info)) then
+        if ll.info.label.message or (ll.info.multi and lc.margin_label ~= ll) then
             if not W.config.compact then
                 -- Margin alternate
                 W:render_lineno(nil, false)
@@ -990,7 +979,9 @@ function Writer.render_arrows(W, lc, group)
             W:render_margin(lc, group, false, false, ll, true)
 
             -- Lines
-            if lc.start_col > 1 then W:padding(W.ellipsis_width) end
+            if lc.start_col > 1 then
+                W:padding(W.ellipsis_width, ll.draw_msg and " " or draw.hbar)
+            end
             for col = lc.start_col, lc.arrow_len do
                 local width = 1
                 if col <= lc.line.len then
@@ -999,7 +990,7 @@ function Writer.render_arrows(W, lc, group)
                 local is_hbar = (col > ll.col) ~= ll.info.multi or
                     ll.draw_msg and ll.info.label.message and col > ll.col
                 local vbar = lc_get_vbar(lc, col, row)
-                if col == ll.col and not is_margin_label(lc, ll.info) then
+                if col == ll.col and lc.margin_label ~= ll then
                     local a = draw.rbot
                     if not ll.info.multi then
                         a = draw.lbot
@@ -1054,7 +1045,7 @@ function Writer.render_label_cluster(W, lc, group)
     W:render_arrows(lc, group)
 end
 
---#endregion
+-- #endregion
 
 -- #region source_group
 
@@ -1185,7 +1176,8 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
                               report_row, report_row_is_arrow)
     if #group.multi_labels == 0 then return end
     local draw = W.config.char_set
-    local start_char, end_char = line_span(lc.line)
+    local start_char = lc.line.offset + (lc.start_col or 1) - 1
+    local end_char = lc.line.offset + (lc.end_col or lc.line.len) -- without -1
 
     ---@type LabelInfo?, LabelInfo?
     local hbar, margin_ptr
@@ -1194,10 +1186,10 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
     for _, info in ipairs(group.multi_labels) do
         ---@type LabelInfo?, LabelInfo?
         local vbar, corner
-        local is_start = line_contains(lc.line, info.start_char)
-        if info.start_char <= end_char and info.end_char >= start_char then
-            local is_margin = is_margin_label(lc, info)
-            local is_end = line_contains(lc.line, info.end_char)
+        local is_start = info.start_char >= start_char and info.start_char <= end_char
+        if info.end_char >= start_char and info.start_char <= end_char then
+            local is_margin = lc.margin_label and lc.margin_label.info == info
+            local is_end = info.end_char >= start_char and info.end_char <= end_char
             if is_margin and is_line then
                 margin_ptr, margin_ptr_is_start = info, is_start
             elseif not is_start and (not is_end or is_line) then
@@ -1215,9 +1207,7 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
                 else
                     local report_row_is_before = 0
                     for j, ll in ipairs(assert(lc.line_labels)) do
-                        if ll.info == report_row.info then
-                            report_row_is_before = 2
-                        end
+                        if ll == report_row then report_row_is_before = 2 end
                         if ll.info == info then
                             if report_row_is_before == 2 then
                                 report_row_is_before = 1
@@ -1284,11 +1274,15 @@ function Writer.render_lines(W, group)
         line_end = src_offset_line(src, group.end_char)
     end
     for idx = line_start, line_end do
+        local line_no = src_shifted_line_no(src, idx)
         local line = assert(src[idx], "group line out of range")
-        local cluster = lc_new(idx, line, group, cfg)
-        if cluster then
-            lc_calc_col_range(cluster, group, W.line_no_width, W.ellipsis_width, cfg)
-            W:render_label_cluster(cluster, group)
+        local clusters = lc_assemble_clusters(line, line_no, group,
+            W.line_no_width, cfg)
+        if #clusters > 0 then
+            for _, cluster in ipairs(clusters) do
+                lc_calc_col_range(cluster, group, W.line_no_width, W.ellipsis_width, cfg)
+                W:render_label_cluster(cluster, group)
+            end
         elseif not is_ellipsis and line_within_label(line, group.multi_labels) then
             W:render_lineno(nil, true)
             --- @diagnostic disable-next-line missing-fields
@@ -1299,7 +1293,7 @@ function Writer.render_lines(W, group)
             W:render_lineno(nil, false)
             W "\n"
         end
-        is_ellipsis = not cluster
+        is_ellipsis = #clusters == 0
     end
 end
 
@@ -1519,9 +1513,9 @@ function Label.new(start_pos, end_pos, id)
     return setmetatable(label_new(start_pos, end_pos, id), Label)
 end
 
---- @type fun(self: LabelAPI, message: string): LabelAPI
-function Label:with_message(message)
-    self.message = message
+--- @type fun(self: LabelAPI, message: string, width?: integer): LabelAPI
+function Label:with_message(message, width)
+    label_set_message(self, message, width)
     return self
 end
 
@@ -1549,6 +1543,7 @@ function Report.build(kind, pos, id)
     return setmetatable(report_new(kind, pos, id), Report)
 end
 
+--- @type fun(self: ReportAPI, label: Label): ReportAPI
 function Report:with_label(label)
     self.labels[#self.labels + 1] = label
     return self
