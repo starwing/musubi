@@ -633,7 +633,7 @@ end
 local function collect_inline_labels(line_labels, line, labels, label_attach)
     local start_char, end_char = line_span(line)
     for _, info in ipairs(labels) do
-        if not info.multi and info.start_char >= start_char and
+        if info.start_char >= start_char and
             (info.end_char or info.start_char) <= end_char + 1
         then
             local col = info.start_char
@@ -1065,39 +1065,24 @@ local function sg_new(src, info)
         src = src,
         start_char = info.start_char,
         end_char = info.end_char,
-        labels = { info },
-        multi_labels = {},
+        labels = { not info.multi and info or nil },
+        multi_labels = { info.multi and info or nil }
     }
 end
 
 --- Add label information to the source group
 --- @type fun(group: SourceGroup, info: LabelInfo)
 local function sg_add_label_info(group, info)
-    if not group.start_char or info.start_char < group.start_char then
-        group.start_char = info.start_char
-    end
+    group.start_char = math.min(group.start_char, info.start_char)
     if info.end_char and (not group.end_char
             or info.end_char > group.end_char) then
         group.end_char = info.end_char
     end
-    group.labels[#group.labels + 1] = info
-end
-
---- Collect multiline labels
---- @type fun(group: SourceGroup)
-local function sg_collect_multi_labels(group)
-    local multi_labels = group.multi_labels
-    for _, info in ipairs(group.labels) do
-        if info.multi then
-            multi_labels[#multi_labels + 1] = info
-        end
+    if info.multi then
+        group.multi_labels[#group.multi_labels + 1] = info
+    else
+        group.labels[#group.labels + 1] = info
     end
-    -- Sort labels by length
-    table.sort(multi_labels, function(a, b)
-        local alen = a.end_char - a.start_char + 1
-        local blen = b.end_char - b.start_char + 1
-        return alen > blen
-    end)
 end
 
 --- Get the last line number of the source group
@@ -1132,7 +1117,7 @@ local function sg_calc_location(group, ctx_id, ctx_pos, cfg)
             end
         end
     else
-        local start = group.labels[1].start_char
+        local start = (group.labels[1] or group.multi_labels[1]).start_char
         line_no = src_offset_line(src, start)
         line = src[line_no]
         if line then
@@ -1341,7 +1326,14 @@ local function context_new(id, cache, labels, cfg)
             end
         end
     end
-
+    for _, group in ipairs(groups) do
+        -- Sort labels by length
+        table.sort(group.multi_labels, function(a, b)
+            local alen = a.end_char - a.start_char + 1
+            local blen = b.end_char - b.start_char + 1
+            return alen > blen
+        end)
+    end
     -- line number maximum width
     local line_no_width = calc_line_no_width(groups)
     return writer_new(cfg, line_no_width), groups
@@ -1436,7 +1428,6 @@ local function render(report, cache)
     local W, groups = context_new(report.id, cache, report.labels, cfg)
     W:render_header(report.kind, report.code, report.message)
     for idx, group in ipairs(groups) do
-        sg_collect_multi_labels(group)
         W:render_reference(idx, group, report.id, report.pos)
         W:render_empty_line()
         W:render_lines(group)
