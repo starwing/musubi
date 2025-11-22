@@ -2113,6 +2113,27 @@ Error: test
 ---'
 ]])
     end
+
+    function TestLineWindowing.test_multiline()
+        local src = ("first line\n") .. ("a"):rep(200)
+        local msg = remove_trailing(
+            ariadne.Report.build("Error", 15)
+            :with_config(no_color_ascii_width(50))
+            :with_message("test_multiline")
+            :with_label(ariadne.Label.new(7, #src):with_message("multiline label"))
+            :render(ariadne.Source.new(src))
+        )
+        lu.assertEquals(msg, [[
+Error: test_multiline
+   ,-[ <unknown>:2:4 ]
+   |
+ 1 | ,-> first line
+ 2 | |-> ...aaaaaaaaaaaaaaaaaaaa
+   | |
+   | `---------------------------- multiline label
+---'
+]])
+    end
 end
 
 _G.TestSource = TestSource

@@ -47,6 +47,39 @@ This document tracks the project's development status, active TODOs, completed w
 
 ## Completed Work
 
+### ✅ Bug Fixes: Virtual Line Windowing with Multiline Labels (2025-11-23)
+
+**Context**: During C migration, discovered three subtle bugs in multiline label rendering logic when combined with line width limiting (virtual line windowing). All bugs involve edge cases where multiline labels interact with window truncation.
+
+**Bug 1: Margin label line-end extension in virtual rows** (Line 727)
+- **Problem**: Margin labels with messages always extended to line end, even in virtual rows with width limits
+- **Fix**: Only extend to line end when no line width limit OR label is not the margin label
+- **Impact**: Proper window bounds for margin labels in truncated views
+
+**Bug 2: Incorrect `min_col` calculation using absolute offset** (Line 736)
+- **Problem**: Used `start_char` (absolute character offset) directly instead of converting to relative column
+- **Hidden by**: Inline labels on same line where `start_char - line.offset == col` accidentally worked
+- **Exposed by**: Multiline labels where `start_char` from previous lines caused wrong `min_col`
+- **Fix**: For multiline labels use `ll.col`, for inline labels convert via `line_col(line, start_char)`
+- **Impact**: Correct cluster bounds calculation for multiline labels across multiple lines
+
+**Bug 3: Arrow ellipsis padding logic too broad** (Line 985)
+- **Problem**: Only checked `draw_msg` flag, missing margin label end case
+- **Rationale**:
+  - `draw_msg = false` → multiline start (needs hbar for routing back to margin)
+  - `draw_msg = true` → inline OR multiline end (originally assumed no hbar needed)
+  - **Missing**: Margin label end with message also needs hbar for visual continuity
+- **Fix**: Check `ll == lc.margin_label OR not ll.draw_msg` for hbar fill condition
+- **Impact**: Correct ellipsis padding for margin labels with messages
+
+**Test coverage**: All three bugs verified by new test case `TestLineWindowing.test_multiline`
+
+**Total tests**: 83 (77 Phase 2 + 6 Phase 3), 100% coverage maintained
+
+**Discovery method**: Careful tracing through C port implementation revealed edge case interactions
+
+**Documentation**: Detailed analysis added to `project-structure.md` under "Bug Fixes (2025-11-23)"
+
 ### ✅ Phase 3: Cluster & Virtual Rows (2025-11-21)
 
 **Implementation completed**: Label clustering with intelligent width tracking

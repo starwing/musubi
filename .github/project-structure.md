@@ -466,6 +466,169 @@ When `margin_ptr` is set and we're on a line where it ends (`is_line = true`):
 
 **Test implementation**: See `test_margin_xbar` in `test.lua`.
 
+### Bug Fixes (2025-11-23): Virtual Line Windowing with Multiline Labels
+
+During C migration, three subtle bugs were discovered in the multiline label rendering logic when combined with line width limiting (virtual line windowing). All three bugs involve edge cases where multiline labels interact with window truncation.
+
+#### Bug 1: Line 727 – Margin Label Line-End Extension in Virtual Rows
+
+**Location**: `lc_assemble_clusters()`, line 724-730:
+
+**Original code**:
+```lua
+if ll.info.multi then
+    if ll.draw_msg then
+        end_col = lc.line.len + (line.newline and 1 or 0)
+    end
+    if not lc.margin_label then lc.margin_label = ll end
+end
+```
+
+**Problem**: 
+- Multiline labels with messages (`draw_msg = true`) always extended to line end
+- In virtual rows (with line width limits), margin labels should NOT extend beyond the window
+- But non-margin multiline labels still need to extend to show proper arrow routing
+
+**Root cause**:
+- Code checked `ll.draw_msg` before setting `lc.margin_label`
+- Thus couldn't distinguish "is this label the margin label?" at decision time
+
+**Fix**:
+```lua
+if ll.info.multi then
+    if not lc.margin_label then lc.margin_label = ll end
+    if (not cfg.line_width or lc.margin_label ~= ll) and ll.draw_msg then
+        end_col = lc.line.len + (line.newline and 1 or 0)
+    end
+end
+```
+
+**Solution**:
+1. Set `margin_label` first (line 725)
+2. Only extend to line end when:
+   - No line width limit (`not cfg.line_width`), OR
+   - Current label is NOT the margin label (`lc.margin_label ~= ll`)
+3. Margin labels in virtual rows stay within window bounds
+
+**Test case**: `TestLineWindowing.test_multiline` – Verifies margin label doesn't extend beyond window
+
+---
+
+#### Bug 2: Line 736 – Incorrect `min_col` Calculation Using Absolute Offset
+
+**Location**: `lc_assemble_clusters()`, line 735-737:
+
+**Original code**:
+```lua
+lc.min_col = math.min(lc.min_col or ll.info.start_char, ll.info.start_char)
+```
+
+**Problem**:
+- `ll.info.start_char` is an **absolute character offset** in the source (e.g., char 150 in file)
+- `min_col` should be a **column number** relative to current line (e.g., column 5)
+- For inline labels on same line: `start_char - line.offset` happens to equal column number (bug hidden)
+- For multiline labels: `start_char` from previous lines causes completely wrong `min_col`
+
+**Root cause**:
+- Direct use of `start_char` without coordinate conversion
+- Multiline labels have `ll.col` already computed (relative column)
+- Inline labels need conversion via `line_col(line, start_char)`
+
+**Fix**:
+```lua
+local min_col = ll.info.multi and ll.col or
+    line_col(line, ll.info.start_char)
+lc.min_col = math.min(lc.min_col or min_col, min_col)
+```
+
+**Solution**:
+1. For multiline labels: Use `ll.col` (already relative to current line)
+2. For inline labels: Convert via `line_col(line, start_char)` (absolute → relative)
+3. Use converted `min_col` for tracking cluster bounds
+
+**Impact**: This bug could cause negative window positions or incorrect context rendering when multiline labels span across multiple lines.
+
+**Test case**: `TestLineWindowing.test_multiline` – Verifies correct column calculation for multiline labels
+
+---
+
+#### Bug 3: Line 985 – Arrow Ellipsis Padding Logic Too Broad
+
+**Location**: `Writer:render_arrows()`, line 982-989:
+
+**Original code**:
+```lua
+if lc.start_col > 1 then
+    W:padding(W.ellipsis_width, ll.draw_msg and " " or draw.hbar)
+end
+```
+
+**Problem**:
+- Logic: `ll.draw_msg == true` → fill with space; `ll.draw_msg == false` → fill with `hbar`
+- `draw_msg = false` only for multiline **start** labels (set in `collect_multi_labels` line 620)
+- Missing case: **Margin label end** with message (`draw_msg = true`) also needs `hbar` fill
+
+**Root cause**:
+Understanding `draw_msg` semantics:
+```lua
+-- In collect_multi_labels (line 616-626)
+if line_contains(line, info.start_char) then
+    ll = { col = ..., draw_msg = false }  -- Start: no message here
+elseif info.end_char and line_contains(line, info.end_char) then
+    ll = { col = ..., draw_msg = true }   -- End: show message here
+end
+```
+
+So:
+- `draw_msg = false` ⟺ Multiline start (has hbar routing back to margin)
+- `draw_msg = true` ⟺ Inline labels OR multiline end
+- **Margin label end** has `draw_msg = true` BUT also needs `hbar` under ellipsis
+
+**Why margin end needs hbar**:
+- Visual continuity: hbar starts from before ellipsis, extends to margin
+- Without hbar fill: gap appears between ellipsis and margin arrow
+- Only applies when `lc.start_col > 1` (window was truncated with ellipsis)
+
+**Fix**:
+```lua
+if lc.start_col > 1 then
+    local a = " "
+    if ll == lc.margin_label or not ll.draw_msg then
+        a = draw.hbar
+    end
+    W:padding(W.ellipsis_width, a)
+end
+```
+
+**Solution**:
+Two conditions for hbar fill:
+1. `ll == lc.margin_label` – Current label is the margin label (new condition)
+2. `not ll.draw_msg` – Multiline start label (original condition)
+
+**Why this works**:
+- **Margin start**: `draw_msg = false` → covered by condition 2
+- **Margin end**: `ll == lc.margin_label` → covered by condition 1
+- **Other inline/multiline**: Neither condition → fills with space
+
+**Note on "margin without message"**: 
+If margin label has no message, it has `draw_msg = false` (start) or filtered out (end), so never enters the arrow rendering loop (`if ll.draw_msg` guard at line ~975). Thus no special handling needed.
+
+**Test case**: `TestLineWindowing.test_multiline` – Verifies correct ellipsis padding for margin labels
+
+---
+
+**Common theme**: All three bugs involve the interaction between:
+- Multiline label state tracking (`margin_label`, `draw_msg`)
+- Coordinate systems (absolute `start_char` vs. relative `col`)
+- Virtual row windowing (line width limits triggering ellipsis rendering)
+
+**Discovery context**: Found during C port when carefully tracing through `render_arrows()` and `lc_assemble_clusters()` logic. The bugs were latent in the Lua implementation but only triggered by specific combinations of:
+- Long lines with width limits
+- Multiline labels spanning the windowed region
+- Labels positioned as margin labels
+
+**Test coverage**: All three bugs are verified by `TestLineWindowing.test_multiline`, added 2025-11-23.
+
 ## Code Examples
 
 ### Basic Error Report

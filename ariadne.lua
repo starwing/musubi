@@ -724,16 +724,18 @@ local function lc_assemble_clusters(line, line_no, group, line_no_width, cfg)
             end
         end
         if ll.info.multi then
-            if ll.draw_msg then
+            if not lc.margin_label then lc.margin_label = ll end
+            if (not cfg.line_width or lc.margin_label ~= ll) and ll.draw_msg then
                 end_col = lc.line.len + (line.newline and 1 or 0)
             end
-            if not lc.margin_label then lc.margin_label = ll end
         end
         if lc.margin_label ~= ll or (ll.draw_msg and ll.info.label.message) then
             lc.line_labels[#lc.line_labels + 1] = ll
         end
         lc.arrow_len = math.max(lc.arrow_len, end_col + extra_arrow_len)
-        lc.min_col = math.min(lc.min_col or ll.info.start_char, ll.info.start_char)
+        local min_col = ll.info.multi and ll.col or
+            line_col(line, ll.info.start_char)
+        lc.min_col = math.min(lc.min_col or min_col, min_col)
         lc.max_msg_width = math.max(lc.max_msg_width, ll.info.label.width)
     end
     return clusters
@@ -980,7 +982,11 @@ function Writer.render_arrows(W, lc, group)
 
             -- Lines
             if lc.start_col > 1 then
-                W:padding(W.ellipsis_width, ll.draw_msg and " " or draw.hbar)
+                local a = " "
+                if ll == lc.margin_label or not ll.draw_msg then
+                    a = draw.hbar
+                end
+                W:padding(W.ellipsis_width, a)
             end
             for col = lc.start_col, lc.arrow_len do
                 local width = 1

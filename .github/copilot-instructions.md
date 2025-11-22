@@ -200,6 +200,63 @@ Before showing test cases or code to the user, you MUST:
 - Add the correction to the relevant section (e.g., "What to Do First", "Test Writing Patterns", etc.).
 - This file is your knowledge base - keep it accurate and up-to-date.
 
+### ⚠️ CRITICAL: Auto-Generate Git Commit Messages After Documentation Updates
+
+**Workflow**: When user requests documentation updates (project-structure.md, roadmap.md, or this file):
+
+1. **Complete all documentation edits first**
+2. **Automatically generate a git commit message** (don't wait for explicit request)
+3. **Format**: Follow Conventional Commits style
+
+**Commit message template**:
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+**Guidelines**:
+- **Type**: Use `docs` for documentation-only changes, `fix` for bug fixes with documentation
+- **Scope**: Specify the component (e.g., `multiline`, `windowing`, `clustering`)
+- **Subject**: Concise summary (≤50 chars), imperative mood ("Fix X" not "Fixed X")
+- **Body**: 
+  - Detail each change with context
+  - Include line numbers for code fixes
+  - Explain rationale for design decisions
+  - Keep lines ≤72 chars (wrap manually)
+- **Footer**: Reference related issues/PRs, test cases, or documentation sections
+
+**Example** (for bug fixes with doc updates):
+```
+fix(windowing): fix 3 bugs in multiline label rendering with width limits
+
+1. Line 727: Only extend margin labels to line end when no width limit
+   - Prevents margin labels from extending beyond window in virtual rows
+   
+2. Line 736: Convert start_char to column for min_col calculation
+   - For multiline: use ll.col (already relative)
+   - For inline: convert via line_col(line, start_char)
+   
+3. Line 985: Add margin label check to ellipsis padding condition
+   - Margin end labels need hbar fill for visual continuity
+   - Original condition only checked draw_msg flag
+
+Test: TestLineWindowing.test_multiline
+Docs: project-structure.md "Bug Fixes (2025-11-23)"
+```
+
+**When to generate**:
+- User explicitly requests: "update docs and generate commit message"
+- User requests doc updates without mentioning commit message (auto-generate anyway)
+- After completing multi-file documentation updates
+
+**When NOT to generate**:
+- User only asks questions (no edits made)
+- User is still iterating on changes (wait for final state)
+- User explicitly says "don't generate commit message yet"
+
 ---
 
 ---
