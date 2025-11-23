@@ -1233,7 +1233,7 @@ function Writer.render_margin(W, lc, group,
             W:use_color(vbar.label.color):label(a):compact ' '
         elseif ptr and type == "line" then
             local a, b = draw.hbar, draw.hbar
-            if info and info == ptr then
+            if info == ptr then
                 if ptr_is_start then
                     a = draw.ltop
                 elseif not info.label.message then
