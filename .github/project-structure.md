@@ -2,11 +2,34 @@
 
 This document describes the technical architecture, data structures, and design decisions of the Ariadne Lua implementation.
 
+## Recent Changes (2025-11-23)
+
+### C Port Preparation Refactoring
+To facilitate the C port and improve code clarity, several naming and API changes were made:
+
+1. **`config.line_width` → `config.limit_width`**
+   - Avoids naming collision with "line width" (actual source line width) in windowing calculations
+   - Clearer semantics: "limit" explicitly means constraint from configuration
+
+2. **`lc_calc_col_range` variable renaming**
+   - Optimized for C's 80-column limit while maintaining readability
+   - Examples: `arrow_end` → `line_part`, `min_skip` → `skip`, `balance_skip` → `balance`
+   - See "Naming Conventions" section for full mapping and rationale
+
+3. **`Writer:render_margin` signature refactoring**
+   - `(lc, group, is_line, is_ellipsis, report_row, report_row_is_arrow)` 
+   - → `(lc, group, report, type)` where `type` is `"line"|"arrow"|"ellipsis"|"none"`
+   - Type-safe enum parameter prevents invalid boolean combinations
+   - Variables renamed: `margin_ptr` → `ptr`, `report_row_is_before` → `info_is_below`
+   - Logic optimized: Early break when `info` found, clearer conditional branches
+
+**Impact**: All tests pass (83 tests, 100% coverage). Changes are backward-compatible at API level (internal refactoring only).
+
 ## Quick Reference
 
 - Language: Lua with UTF-8 support (tested against Lua 5.1/LuaJIT)
 - Dependencies: 
-  - `lua-utf8` library for UTF-8 operations (requires `utf8.widthlimit` for line width limiting)
+  - `lua-utf8` library for UTF-8 operations (requires `utf8.widthindex` for line width limiting)
   - `luaunit` for tests
   - Optional `luacov` for coverage
 - Entry points: `ariadne.lua` exports the public API
@@ -15,16 +38,16 @@ This document describes the technical architecture, data structures, and design 
 
 ## File Structure
 
-- **`ariadne.lua`**: All runtime code (~1650 lines), structured into sections:
+- **`ariadne.lua`**: All runtime code (~1600 lines), structured into sections:
   - **Classes**: `Cache`, `Line`, `Source` (source text parsing and line indexing)
   - **CharSet**: `Characters.unicode` and `Characters.ascii` (rendering glyphs)
-  - **Config**: Configuration tables
+  - **Config**: Configuration tables (includes `limit_width` for windowing)
   - **Labels**: `Label` class for marking spans with messages and colors
   - **Reports**: `Report` class for building diagnostic messages
   - **Rendering**: Core rendering functions
   - **Public API**: Builder-style helpers (`Report.build`, `Label.new`, `Source.new`)
 
-- **`test.lua`**: Exhaustive regression suite (~1400 lines). Snapshots rendered diagnostics and exercises edge cases (multi-byte chars, zero-width spans, compact mode, multiline labels, etc.). All tests produce pixel-perfect diagnostic output.
+- **`test.lua`**: Exhaustive regression suite (~1400 lines). Snapshots rendered diagnostics and exercises edge cases (multi-byte chars, zero-width spans, compact mode, multiline labels, line windowing, etc.). All tests produce pixel-perfect diagnostic output.
 
 - **`serpent.lua`** and **`luaunit.lua`**: Vendored dependencies used by the tests; remain untouched unless upgrading.
 
@@ -90,15 +113,16 @@ Report:render(cache)
 ### `Writer`
 Top-level rendering orchestrator:
 - Array part: Output buffer (array of strings)
-- `config`: Rendering configuration (Config object)
+- `config`: Rendering configuration (Config object with `limit_width` for line windowing)
 - `line_no_width`: Maximum width of line numbers across all sources
 - `ellipsis_width`: Display width of ellipsis character (computed from config.char_set)
 - `cur_color` / `cur_color_code`: Current foreground color state
 
 **Key Methods**:
 - `render_header(kind, code, message)`: Render report header
-- `render_reference(idx, group, report_id, report_pos)`: Render file reference header
+- `render_reference(idx, group, report_id, report_pos)`: Render file reference header with filename truncation when `limit_width` is set
 - `render_lines(group)`: Iterate lines and render clusters
+- `render_margin(lc, group, report, type)`: Render margin arrows with type: "line"|"arrow"|"ellipsis"|"none"
 - `render_label_cluster(cluster, group)`: Render one cluster's line and arrows
 - `render_line(...)`: Render source code with windowing
 - `render_arrows(...)`: Render label arrows and messages
@@ -144,6 +168,17 @@ Virtual row/window manager:
 - `lc_new(line, line_no)`: Create empty cluster
 - `lc_assemble_clusters(line, line_no, group, line_no_width, cfg)`: Build clusters from line labels
 - `lc_calc_col_range(cluster, group, line_no_width, ellipsis_width, cfg)`: Calculate window bounds
+  - **Variable naming (optimized for C 80-column limit)**:
+    - `limited`: Available width after subtracting fixed margins
+    - `line_part`: Byte position corresponding to `arrow_len`
+    - `arrow`: Display width of arrow portion
+    - `edge`: Total width of arrow + message (boundary)
+    - `line_width`: Actual width of source line content
+    - `essential`: Minimum required width (arrow from min_col + message)
+    - `skip`: Width to skip from left when windowing
+    - `avail`: Available extra width beyond edge
+    - `desired`: Desired right-side width for balancing
+    - `balance`: Adjustment for centering the window
 
 **Future**: Multiple clusters per physical line (Phase 3 complete, ready for expansion)
 
@@ -177,6 +212,18 @@ Label positioned on a specific line:
 - `draw_msg`: Boolean, whether to draw message on this line
 
 ### `Config`
+Rendering configuration:
+- `cross_gap`: Whether to show gaps in crossing margin arrows
+- `compact`: Compact mode (single-width characters)
+- `underlines`: Whether to draw underlines for labels
+- `multiline_arrows`: Whether to draw multiline arrows
+- `tab_width`: Number of spaces per tab
+- `char_set`: CharSet table (unicode or ascii)
+- `index_type`: "char" or "byte" (for label position interpretation)
+- `limit_width`: Maximum line width for rendering (nil = no limit)
+  - **Naming rationale**: Avoids confusion with "line width" (actual source line width) in windowing calculations
+  - Used in `lc_calc_col_range` to determine window bounds
+  - Triggers filename truncation in `render_reference`
 Plain table with fields:
 - `compact`: boolean (default false) - compact arrow spacing
 - `tab_width`: integer (default 4)
@@ -204,6 +251,54 @@ Pre-computed line metadata (part of `Source`):
 - `:is_within_label(multi_labels)` - checks if line intersects multiline labels
 
 ## Key Design Decisions
+
+### Naming Conventions (Optimized for C Port, 2025-11-23)
+
+#### Config: `line_width` → `limit_width`
+**Problem**: In windowing calculations (`lc_calc_col_range`), we need to distinguish:
+- The **limit** imposed by configuration (terminal width)
+- The **actual width** of source code line content
+
+**Solution**: Rename `config.line_width` to `config.limit_width`
+- Clear semantic: "limit" clearly means "constraint from outside"
+- Avoids collision: Can use `line_width` for actual line content width in calculations
+- Follows convention: `limit_*` is common for constraint-type configurations
+
+#### Window Calculation Variables (`lc_calc_col_range`)
+Optimized for C's 80-column limit while maintaining clarity:
+
+| Old Name       | New Name     | Meaning                        | Justification                   |
+| -------------- | ------------ | ------------------------------ | ------------------------------- |
+| `line_width`   | `limited`    | Available width after margins  | Adjective form, shorter         |
+| `arrow_end`    | `line_part`  | Byte position at arrow_len     | Clearer: \"part of line\"       |
+| `arrow_width`  | `arrow`      | Display width of arrow portion | Context makes \"width\" obvious |
+| `arrow_limit`  | `edge`       | Arrow + message boundary       | Geometric metaphor              |
+| `total_width`  | `line_width` | Actual source line width       | Now safe to use (no collision)  |
+| `min_width`    | `essential`  | Minimum required width         | Semantic: \"must have\"         |
+| `min_skip`     | `skip`       | Left skip amount               | \"min\" implied by context      |
+| `avail_width`  | `avail`      | Extra available width          | Shortened                       |
+| `right_width`  | `desired`    | Desired right portion          | Intent > position               |
+| `balance_skip` | `balance`    | Centering adjustment           | \"skip\" implied                |
+
+**Naming principles**:
+- **Brevity**: Fit in 80 columns (C requirement)
+- **Clarity**: Semantic names over abbreviations
+- **Context**: Remove redundant suffixes when type is obvious
+- **Consistency**: `avail`, `skip`, `balance` are all action-oriented
+
+#### Margin Rendering (`render_margin`)
+**Parameter refactoring**:
+- `is_line, is_ellipsis, is_arrow` → `type: "line"|"arrow"|"ellipsis"|"none"`
+  - **Type safety**: Prevents invalid boolean combinations
+  - **Readability**: `type == "line"` clearer than `is_line and not is_arrow`
+  - **Compactness**: Single enum parameter vs 3 booleans (C signature friendlier)
+
+**Variable renaming**:
+- `margin_ptr` → `ptr`: Shorter, context makes "margin" obvious
+- `report_row` → `report`: Consistent with other uses, "row" is redundant
+- `report_row_is_before` → `info_is_below`: 
+  - **Semantic inversion**: "below" more intuitive than "before"
+  - **Clarity**: Matches visual mental model (items below in array = lower on screen)
 
 ### Source Handling
 - Pre-computes both character and byte offsets so the renderer can switch between `char` and `byte` index types at runtime
@@ -248,11 +343,28 @@ Pre-computed line metadata (part of `Source`):
 - No implicit context, all dependencies explicit
 - Avoids "context explosion" while maintaining encapsulation
 
-#### 3. Simplified Margin Rendering
-- Eliminated complex pointer comparisons and multi-stage filtering
-- Removed no-op code (where `hbar` is set then immediately filtered away)
-- Consolidated conditions using early returns and direct logic flow
-- Encapsulated in `Writer:render_margin()` with clear parameters
+#### 3. Simplified Margin Rendering (Refactored 2025-11-23)
+
+**Signature**: `Writer:render_margin(lc, group, report, type)`
+- `report`: The label being rendered (replaces `report_row`)
+- `type`: Enum string \"line\"|\"arrow\"|\"ellipsis\"|\"none\" (replaces `is_line, is_ellipsis, is_arrow`)
+
+**Key improvements**:
+1. **Type-safe parameters**: Single enum `type` replaces 3 boolean flags, preventing invalid combinations
+2. **Variable renaming**:
+   - `margin_ptr` → `ptr` (shorter, clearer)
+   - `report_row` → `report` (consistent naming)
+   - `report_row_is_before` → `info_is_below` (semantic inversion for clarity)
+3. **Logic optimization**:
+   - Early break in loop when `info` is found (was scanning entire array)
+   - Condition `if not is_margin` guards the loop (avoids unnecessary iteration)
+   - Simplified vbar logic: `is_start and not info_is_below` OR `not is_start and info_is_below`
+4. **Comments added**: Explains when vbar connections are needed based on label ordering
+
+**Semantic change**: `info_is_below` is more intuitive than `report_row_is_before == 1`
+- `info_is_below = true`: Current `info` appears below `report` in line_labels array
+- Old logic: `is_start ~= (report_row_is_before == 1)` (double negative, hard to reason about)
+- New logic: Explicit cases for `is_start` and `not is_start` (clearer intent)
 
 #### 4. No `continue` or `goto`
 - All control flow uses nested `if-elseif-else` chains

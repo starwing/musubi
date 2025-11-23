@@ -1472,18 +1472,18 @@ Error: margin xbar test
     end
 end
 
---- Helper function for tests that need line_width
----@param line_width? integer
+--- Helper function for tests that need limit_width
+---@param limit_width? integer
 ---@param index_type? "byte"|"char"
 ---@param compact? boolean
 ---@return Config
-local function no_color_ascii_width(line_width, index_type, compact)
+local function no_color_ascii_width(limit_width, index_type, compact)
     return ariadne.Config.new {
         color = false,
         char_set = ariadne.Characters.ascii,
         index_type = index_type,
         compact = compact,
-        line_width = line_width,
+        limit_width = limit_width,
     }
 end
 

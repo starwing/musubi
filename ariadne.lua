@@ -302,7 +302,7 @@ end
 --- @field tab_width        integer number of spaces per tab
 --- @field char_set         CharSet character set to use
 --- @field index_type       IndexType index type for label positions
---- @field line_width?      integer maximum line width for rendering
+--- @field limit_width?      integer maximum line width for rendering
 
 ---@type Color
 local function default_color(category)
@@ -338,7 +338,7 @@ local cfg_default = {
     tab_width = 4,
     char_set = characters.unicode,
     index_type = "char",
-    line_width = nil, -- nil = no limit, positive integer = max width
+    limit_width = nil, -- nil = no limit, positive integer = max width
 }
 
 --- Creates a new Config
@@ -696,8 +696,8 @@ local function lc_assemble_clusters(line, line_no, group, line_no_width, cfg)
     local clusters        = { lc } --[=[@as LabelCluster[]]=]
     local min_start_width, max_end_width
     local extra_arrow_len = cfg.compact and 1 or 2
-    local limit_width     = cfg.line_width and
-        cfg.line_width - line_no_width - 4 - margin_len(group, cfg) or nil
+    local limit_width     = cfg.limit_width and
+        cfg.limit_width - line_no_width - 4 - margin_len(group, cfg) or nil
     for _, ll in ipairs(line_labels) do
         local end_col = ll.info.multi and ll.col or
             line_col(line, ll.info.end_char or ll.info.start_char - 1)
@@ -725,7 +725,7 @@ local function lc_assemble_clusters(line, line_no, group, line_no_width, cfg)
         end
         if ll.info.multi then
             if not lc.margin_label then lc.margin_label = ll end
-            if (not cfg.line_width or lc.margin_label ~= ll) and ll.draw_msg then
+            if (not cfg.limit_width or lc.margin_label ~= ll) and ll.draw_msg then
                 end_col = lc.line.len + (line.newline and 1 or 0)
             end
         end
@@ -745,7 +745,7 @@ end
 --- @type fun(lc: LabelCluster, group: SourceGroup,
 ---           line_no_width: integer, ellipsis_width: integer, cfg: Config)
 local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
-    if not cfg.line_width then return end
+    if not cfg.limit_width then return end
     local line, arrow_len, min_col, max_msg_width =
         lc.line, lc.arrow_len, lc.min_col, lc.max_msg_width
     local src = group.src
@@ -753,7 +753,7 @@ local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
     local margin_count = margin_len(group, cfg)
     local fix_width = line_no_width + 4 +       -- line no and margin
         margin_count * (cfg.compact and 1 or 2) -- margin arrows
-    local line_width = cfg.line_width - fix_width
+    local limited = cfg.limit_width - fix_width
 
     -- the width of arrows line:
     --                          |<-- min_width ->|
@@ -764,47 +764,47 @@ local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
     --                                ^ arrow_len (arrow_width)
     -- line.len may be less than arrow_len
     local extra = math.max(0, arrow_len - line.len)
-    local _, arrow_end = utf8_offset(src.text, arrow_len, line.byte_offset)
+    local _, line_part = utf8_offset(src.text, arrow_len, line.byte_offset)
     local _, line_end = line_span_byte(line)
-    if not arrow_end then arrow_end = line_end end
-    local arrow_width = utf8_width(src.text, line.byte_offset, arrow_end) + extra
-    local arrow_limit = arrow_width + 1 + max_msg_width -- 1: space before msg
+    if not line_part then line_part = line_end end
+    local arrow = utf8_width(src.text, line.byte_offset, line_part) + extra
+    local edge = arrow + 1 + max_msg_width -- 1: space before msg
 
-    -- all line fits in line_width? No need to skip
-    local total_width = utf8_width(src.text, line.byte_offset, line_end)
-    if arrow_limit <= line_width and total_width <= line_width then return end
+    -- all line fits in limit_width? No need to skip
+    local line_width = utf8_width(src.text, line.byte_offset, line_end)
+    if edge <= limited and line_width <= limited then return end
 
     -- min_col already overflow? Using min_col
-    local min_width = utf8_width(src.text,
-            assert(utf8_offset(src.text, min_col, line.byte_offset)), arrow_end) +
+    local essential = utf8_width(src.text,
+            assert(utf8_offset(src.text, min_col, line.byte_offset)), line_part) +
         1 + max_msg_width
-    if min_width + ellipsis_width >= line_width then
+    if essential + ellipsis_width >= limited then
         lc.start_col = min_col
         lc.end_col = math.min(line.len, arrow_len + (utf8_widthindex(src.text,
             1 + max_msg_width - ellipsis_width,
-            arrow_end + 1, line_end)))
+            line_part + 1, line_end)))
         return
     end
 
-    local min_skip = arrow_limit - line_width + ellipsis_width + 1
-    if min_skip <= 0 then
+    local skip = edge - limited + ellipsis_width + 1
+    if skip <= 0 then
         lc.start_col, lc.end_col = 1, math.min(line.len,
             arrow_len + (utf8_widthindex(src.text,
-                line_width - arrow_width - ellipsis_width,
-                arrow_end + 1, line_end)))
+                limited - arrow - ellipsis_width,
+                line_part + 1, line_end)))
         return
     end
-    local balance_skip = 0
-    if total_width > arrow_limit then
-        local avail_width = total_width - arrow_limit
-        local right_width = (line_width - min_width) // 2
-        balance_skip = right_width + math.max(0, right_width - avail_width)
+    local balance = 0
+    if line_width > edge then
+        local avail = line_width - edge
+        local desired = (limited - essential) // 2
+        balance = desired + math.max(0, desired - avail)
     end
-    lc.start_col = (utf8_widthindex(src.text, min_skip + balance_skip,
-        line.byte_offset, arrow_end))
+    lc.start_col = (utf8_widthindex(src.text, skip + balance,
+        line.byte_offset, line_part))
     local end_col, idx, chwidth = utf8_widthindex(src.text,
-        1 + max_msg_width + balance_skip - ellipsis_width,
-        arrow_end + 1, line_end)
+        1 + max_msg_width + balance - ellipsis_width,
+        line_part + 1, line_end)
     -- multi width in the end_col edge?
     if idx ~= chwidth then end_col = end_col - 1 end
     lc.end_col = math.min(line.len, arrow_len + end_col)
@@ -943,7 +943,7 @@ function Writer.render_arrows(W, lc, group)
             if not W.config.compact then
                 -- Margin alternate
                 W:render_lineno(nil, false)
-                W:render_margin(lc, group, false, false, ll, false)
+                W:render_margin(lc, group, ll, "none")
                 if lc.start_col > 1 then W:padding(W.ellipsis_width) end
                 for col = lc.start_col, lc.arrow_len do
                     local width = 1
@@ -978,7 +978,7 @@ function Writer.render_arrows(W, lc, group)
 
             -- Margin
             W:render_lineno(nil, false)
-            W:render_margin(lc, group, false, false, ll, true)
+            W:render_margin(lc, group, ll, "arrow")
 
             -- Lines
             if lc.start_col > 1 then
@@ -1039,7 +1039,7 @@ function Writer.render_label_cluster(W, lc, group)
     local draw = cfg.char_set
 
     W:render_lineno(lc.line_no, false)
-    W:render_margin(lc, group, true, false, nil, false)
+    W:render_margin(lc, group, nil, "line")
     if lc.start_col > 1 then
         W:unimportant(draw.ellipsis):reset()
     end
@@ -1141,12 +1141,12 @@ function Writer.render_reference(W, idx, group, report_id, report_pos)
     local draw = cfg.char_set
     local id = group.src.id:gsub("\t", " ")
     local loc = sg_calc_location(group, report_id, report_pos, cfg)
-    if cfg.line_width then
+    if cfg.limit_width then
         local id_width = utf8.width(id)
         -- assume draw's components' width are all 1
         local fixed_width = utf8.width(loc) + W.line_no_width + 9
-        if id_width + fixed_width > cfg.line_width then
-            local avail = cfg.line_width - fixed_width - W.ellipsis_width
+        if id_width + fixed_width > cfg.limit_width then
+            local avail = cfg.limit_width - fixed_width - W.ellipsis_width
             if avail < MIN_FILENAME_WIDTH then
                 avail = MIN_FILENAME_WIDTH
             end
@@ -1161,18 +1161,17 @@ end
 
 --- Render the margin arrows for a specific line
 --- @type fun(W: Writer, lc: LabelCluster, group: SourceGroup,
----           is_line: boolean, is_ellipsis: boolean,
----           report_row?: LineLabel, report_row_is_arrow: boolean)
-function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
-                              report_row, report_row_is_arrow)
+---           report_row?: LineLabel, type: "line"|"arrow"|"ellipsis"|"none")
+function Writer.render_margin(W, lc, group,
+                              report, type)
     if #group.multi_labels == 0 then return end
     local draw = W.config.char_set
     local start_char = lc.line.offset + (lc.start_col or 1) - 1
     local end_char = lc.line.offset + (lc.end_col or lc.line.len) -- without -1
 
     ---@type LabelInfo?, LabelInfo?
-    local hbar, margin_ptr
-    local margin_ptr_is_start = false
+    local hbar, ptr
+    local ptr_is_start = false
 
     for _, info in ipairs(group.multi_labels) do
         ---@type LabelInfo?, LabelInfo?
@@ -1181,41 +1180,45 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
         if info.end_char >= start_char and info.start_char <= end_char then
             local is_margin = lc.margin_label and lc.margin_label.info == info
             local is_end = info.end_char >= start_char and info.end_char <= end_char
-            if is_margin and is_line then
-                margin_ptr, margin_ptr_is_start = info, is_start
-            elseif not is_start and (not is_end or is_line) then
+            if is_margin and type == "line" then
+                ptr, ptr_is_start = info, is_start
+            elseif not is_start and (not is_end or type == "line") then
                 vbar = info
-            elseif report_row then
-                if report_row.info == info then
-                    if not report_row_is_arrow and not is_start then
-                        vbar = info
-                    elseif is_margin then
-                        vbar = assert(lc.margin_label).info
-                    end
-                    if report_row_is_arrow and (not is_margin or not is_start) then
-                        hbar, corner = info, info
-                    end
-                else
-                    local report_row_is_before = 0
+            elseif report and report.info == info then
+                if type ~= "arrow" and not is_start then
+                    vbar = info
+                elseif is_margin then
+                    vbar = assert(lc.margin_label).info
+                end
+                if type == "arrow" and not (is_margin and is_start) then
+                    hbar, corner = info, info
+                end
+            elseif report then
+                local info_is_below
+                if not is_margin then
                     for j, ll in ipairs(assert(lc.line_labels)) do
-                        if ll == report_row then report_row_is_before = 2 end
-                        if ll.info == info then
-                            if report_row_is_before == 2 then
-                                report_row_is_before = 1
-                            end
+                        if ll.info == info then break end
+                        if ll == report then
+                            info_is_below = true
                             break
                         end
                     end
-                    if is_start ~= (report_row_is_before == 1) and
-                        (is_start or not is_margin or info.label.message) then
+                end
+                if is_start or not is_margin or info.label.message then
+                    -- if info is_start,
+                    --     hbar required to connect below only *after* info line
+                    -- otherwise, connect above *before* info line
+                    if is_start and not info_is_below then
+                        vbar = info
+                    elseif not is_start and info_is_below then
                         vbar = info
                     end
                 end
             end
         end
 
-        if margin_ptr and is_line and info ~= margin_ptr then
-            hbar = hbar or margin_ptr
+        if ptr and type == "line" and info ~= ptr then
+            hbar = hbar or ptr
         end
 
         if corner then
@@ -1226,12 +1229,12 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
         elseif hbar then
             W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar)
         elseif vbar then
-            local a = is_ellipsis and draw.vbar_gap or draw.vbar
+            local a = type == "ellipsis" and draw.vbar_gap or draw.vbar
             W:use_color(vbar.label.color):label(a):compact ' '
-        elseif margin_ptr and is_line then
+        elseif ptr and type == "line" then
             local a, b = draw.hbar, draw.hbar
-            if info and info == margin_ptr then
-                if margin_ptr_is_start then
+            if info and info == ptr then
+                if ptr_is_start then
                     a = draw.ltop
                 elseif not info.label.message then
                     a = draw.lbot
@@ -1239,15 +1242,15 @@ function Writer.render_margin(W, lc, group, is_line, is_ellipsis,
                     a = draw.lcross
                 end
             end
-            W:use_color(margin_ptr.label.color):label(a):compact(b)
+            W:use_color(ptr.label.color):label(a):compact(b)
         else
             W:reset(W.config.compact and ' ' or '  ')
         end
     end
-    if hbar and (not is_line or hbar ~= margin_ptr) then
+    if hbar and (not type == "line" or hbar ~= ptr) then
         W:use_color(hbar.label.color):label(draw.hbar):compact(draw.hbar):reset()
-    elseif margin_ptr and is_line then
-        W:use_color(margin_ptr.label.color):label(draw.rarrow):compact ' ':reset()
+    elseif ptr and type == "line" then
+        W:use_color(ptr.label.color):label(draw.rarrow):compact ' ':reset()
     else
         W:reset(W.config.compact and ' ' or '  ')
     end
@@ -1277,7 +1280,7 @@ function Writer.render_lines(W, group)
         elseif not is_ellipsis and line_within_label(line, group.multi_labels) then
             W:render_lineno(nil, true)
             --- @diagnostic disable-next-line missing-fields
-            W:render_margin({ line = line }, group, false, true, nil, false)
+            W:render_margin({ line = line }, group, nil, "ellipsis")
             W "\n"
         elseif not is_ellipsis and not W.config.compact then
             -- Skip this line if we don't have labels for it

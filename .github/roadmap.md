@@ -22,16 +22,25 @@ This document tracks the project's development status, active TODOs, completed w
 
 ## Active TODO
 
-**C Migration (Next Priority)**
-- Status: Planning phase
-- Goal: Port Lua implementation to C for performance and embedding
-- Rationale: Lua implementation is feature-complete and well-tested (83 tests, 100% coverage)
-- Key considerations:
-  - Preserve Writer-Orchestrated architecture (clean layer separation)
-  - Maintain test compatibility (C output must match Lua pixel-perfect)
-  - Handle UTF-8 via ICU or similar library
-  - Efficient memory management for label clustering
-  - qsort stability for label sorting (consider stable_sort or manual tie-breaking)
+**C Migration (In Progress - 2025-11-23)**
+- Status: Core structures and windowing logic implemented in C (`musubi.h`)
+- Progress:
+  - ✅ Writer infrastructure (color, padding, char_set drawing)
+  - ✅ Source handling (memory/file sources, line indexing, UTF-8)
+  - ✅ Label clustering (`muC_assemble_clusters`, `muC_fill_llcache`)
+  - ✅ Window calculation (`muC_calc_colrange` with `width_cache` optimization)
+  - ✅ Margin rendering (`muR_margin` with enum-based type parameter)
+  - ⏳ **Next: `muR_line` and `muR_arrows`** (line content and arrow rendering)
+- Architecture:
+  - Uses 0-based indexing and half-open intervals `[start, end)` (C convention)
+  - `width_cache` optimization: Pre-compute cumulative widths, avoid repeated UTF-8 width calls
+  - Matches Lua's writer-orchestrated design (clean layer separation)
+  - All tests pass in Lua (ready for C output validation)
+- Key optimizations in C:
+  - **`width_cache`**: Array of cumulative display widths per character (0-based)
+  - **`muC_widthindex`**: Binary search on width_cache, guarantees "strictly less than width"
+  - **No boundary checks needed**: Unlike Lua's `utf8_widthindex`, C version returns exact fit
+  - **Enum types**: `type` parameter in `muR_margin` prevents invalid boolean combinations
 
 **Phase 4: Forced Multiline / Intra-Cluster Splitting**
 - Status: ⏸️ **Deferred** (low priority, not blocking C migration)
@@ -46,6 +55,40 @@ This document tracks the project's development status, active TODOs, completed w
   - Convert to multiline arrows or sub-cluster splits without disturbing other clusters
 
 ## Completed Work
+
+### ✅ Lua Refactoring for C Port (2025-11-23)
+
+**Goal**: Simplify C port by improving naming consistency and reducing function parameter complexity.
+
+**Changes**:
+1. **`config.line_width` → `config.limit_width`**
+   - Reason: Avoid collision with "line width" (actual line content width) in calculations
+   - Impact: Clearer semantics in `lc_calc_col_range` and `render_reference`
+
+2. **`lc_calc_col_range` variable renaming**
+   - Optimized for C's 80-column limit: `arrow_end` → `line_part`, `min_skip` → `skip`, etc.
+   - Improved clarity: `min_width` → `essential`, `right_width` → `desired`
+   - See `project-structure.md` "Naming Conventions" for full mapping
+
+3. **`Writer:render_margin` signature refactoring**
+   - Before: `(lc, group, is_line, is_ellipsis, report_row, report_row_is_arrow)`
+   - After: `(lc, group, report, type)` where `type = "line"|"arrow"|"ellipsis"|"none"`
+   - Benefits:
+     - Type-safe enum prevents invalid boolean combinations
+     - Shorter parameter list (6 → 4 parameters)
+     - Clearer call sites: `render_margin(lc, group, ll, "arrow")`
+   - Internal improvements:
+     - `margin_ptr` → `ptr` (shorter, clearer)
+     - `report_row_is_before` → `info_is_below` (semantic inversion)
+     - Early loop break when `info` found (optimization)
+     - Added comments explaining vbar connection logic
+
+**Impact**: 
+- All tests pass (83 tests, 100% coverage maintained)
+- C port simplified: Enum-based API, shorter variable names, clearer logic
+- Zero functional changes: Pure refactoring for code quality
+
+**Documentation**: Updated `project-structure.md` with naming rationale and comparison tables
 
 ### ✅ Bug Fixes: Virtual Line Windowing with Multiline Labels (2025-11-23)
 
