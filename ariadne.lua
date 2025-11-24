@@ -547,7 +547,7 @@ function Writer:tostring() return table.concat(self) end
 ---@field label Label the original label
 
 --- creates a new LabelInfo
---- @type fun(label: Label, src: Source, index_type: "byte" | "char"): LabelInfo?
+--- @type fun(label: Label, src: Source, index_type: "byte" | "char"): LabelInfo
 local function info_new(label, src, index_type)
     -- find label line and character positions
     local given_start, given_end = label.start_pos, label.end_pos
@@ -577,7 +577,10 @@ local function info_new(label, src, index_type)
             end_line = start_line
         end
     end
-    if label_start_char > start_line.offset + start_line.len then return end
+    if label_start_char > start_line.offset + start_line.len then
+        label_start_char = start_line.offset + start_line.len
+        label_end_char = nil
+    end
     return {
         multi = start_line ~= end_line,
         start_char = label_start_char,
@@ -605,7 +608,7 @@ end
 ---@field end_col? integer the end column for rendering
 
 --- Length of margin area
---- @type fun(group: SourceGroup, cfg: Config): integer
+--- @type fun(group: Group, cfg: Config): integer
 local function margin_len(group, cfg)
     local len = #group.multi_labels
     return (len > 0 and len + 1 or 0) * (cfg.compact and 2 or 1)
@@ -680,7 +683,7 @@ local function lc_new(line, line_no)
     }
 end
 
---- @type fun(line: Line, line_no: integer, group: SourceGroup,
+--- @type fun(line: Line, line_no: integer, group: Group,
 ---           line_no_width: integer, cfg: Config): LabelCluster[]
 local function lc_assemble_clusters(line, line_no, group, line_no_width, cfg)
     --- @type LineLabel[]
@@ -742,7 +745,7 @@ local function lc_assemble_clusters(line, line_no, group, line_no_width, cfg)
 end
 
 --- Calculate the start position for rendering a line
---- @type fun(lc: LabelCluster, group: SourceGroup,
+--- @type fun(lc: LabelCluster, group: Group,
 ---           line_no_width: integer, ellipsis_width: integer, cfg: Config)
 local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
     if not cfg.limit_width then return end
@@ -811,7 +814,7 @@ local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
 end
 
 --- Get the highest priority highlight for a column
---- @type fun(lc: LabelCluster, col: integer, group: SourceGroup): LabelInfo?
+--- @type fun(lc: LabelCluster, col: integer, group: Group): LabelInfo?
 local function lc_get_highlight(lc, col, group)
     local result
     local offset = lc.line.offset + col - 1
@@ -889,7 +892,7 @@ local function lc_get_underline(lc, col, cfg)
 end
 
 --- Render a line with highlights
---- @type fun(W: Writer, lc: LabelCluster, group: SourceGroup, cfg: Config)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, cfg: Config)
 function Writer.render_line(W, lc, group, cfg)
     local line = lc.line
     local src = group.src
@@ -929,7 +932,7 @@ function Writer.render_line(W, lc, group, cfg)
 end
 
 --- Render arrows for a line
---- @type fun(W: Writer, lc: LabelCluster, group: SourceGroup)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group)
 function Writer.render_arrows(W, lc, group)
     local cfg = W.config
     local draw = cfg.char_set
@@ -1032,7 +1035,7 @@ function Writer.render_arrows(W, lc, group)
 end
 
 --- Render a label cluster
---- @type fun(W: Writer, lc: LabelCluster, group: SourceGroup)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group)
 function Writer.render_label_cluster(W, lc, group)
     -- Determine label bounds so we know where to put error messages
     local cfg = W.config
@@ -1057,7 +1060,7 @@ end
 
 local MIN_FILENAME_WIDTH = 8
 
----@class (exact) SourceGroup
+---@class (exact) Group
 ---@field src Source
 ---@field start_char integer
 ---@field end_char? integer
@@ -1065,7 +1068,7 @@ local MIN_FILENAME_WIDTH = 8
 ---@field multi_labels LabelInfo[]
 
 --- creates a new SourceGroup
---- @type fun(src: Source, info: LabelInfo): SourceGroup
+--- @type fun(src: Source, info: LabelInfo): Group
 local function sg_new(src, info)
     return {
         src = src,
@@ -1077,7 +1080,7 @@ local function sg_new(src, info)
 end
 
 --- Add label information to the source group
---- @type fun(group: SourceGroup, info: LabelInfo)
+--- @type fun(group: Group, info: LabelInfo)
 local function sg_add_label_info(group, info)
     group.start_char = math.min(group.start_char, info.start_char)
     if info.end_char and (not group.end_char
@@ -1092,7 +1095,7 @@ local function sg_add_label_info(group, info)
 end
 
 --- Get the last line number of the source group
---- @type fun(group: SourceGroup): integer
+--- @type fun(group: Group): integer
 local function sg_last_line_no(group)
     local src = group.src
     return src_shifted_line_no(src,
@@ -1100,7 +1103,7 @@ local function sg_last_line_no(group)
 end
 
 --- Calculate the line and column string for a report position
---- @type fun(group: SourceGroup, ctx_id: string?, ctx_pos: integer, cfg: Config): string
+--- @type fun(group: Group, ctx_id: string?, ctx_pos: integer, cfg: Config): string
 local function sg_calc_location(group, ctx_id, ctx_pos, cfg)
     local src = group.src
     ---@type Line?, integer?, integer?
@@ -1135,7 +1138,7 @@ local function sg_calc_location(group, ctx_id, ctx_pos, cfg)
 end
 
 --- Render the reference line for a source group
---- @type fun(W: Writer, idx: integer, group: SourceGroup, report_id: string?, report_pos: integer)
+--- @type fun(W: Writer, idx: integer, group: Group, report_id: string?, report_pos: integer)
 function Writer.render_reference(W, idx, group, report_id, report_pos)
     local cfg = W.config
     local draw = cfg.char_set
@@ -1160,7 +1163,7 @@ function Writer.render_reference(W, idx, group, report_id, report_pos)
 end
 
 --- Render the margin arrows for a specific line
---- @type fun(W: Writer, lc: LabelCluster, group: SourceGroup,
+--- @type fun(W: Writer, lc: LabelCluster, group: Group,
 ---           report_row?: LineLabel, type: "line"|"arrow"|"ellipsis"|"none")
 function Writer.render_margin(W, lc, group,
                               report, type)
@@ -1257,7 +1260,7 @@ function Writer.render_margin(W, lc, group,
 end
 
 --- Render the lines for a source group
---- @type fun(W: Writer, group: SourceGroup)
+--- @type fun(W: Writer, group: Group)
 function Writer.render_lines(W, group)
     local src = group.src
     local cfg = W.config
@@ -1296,7 +1299,7 @@ end
 -- #region render
 
 --- Calculate the maximum width of line numbers in all source groups
---- @type fun(groups: SourceGroup[]): integer
+--- @type fun(groups: Group[]): integer
 local function calc_line_no_width(groups)
     local width = 0
     for _, group in ipairs(groups) do
@@ -1315,24 +1318,22 @@ local function calc_line_no_width(groups)
 end
 
 --- creates a new RenderContext
---- @type fun(id: string, cache: Cache, labels: Label[], cfg: Config): Writer, SourceGroup[]
+--- @type fun(id: string, cache: Cache, labels: Label[], cfg: Config): Writer, Group[]
 local function context_new(id, cache, labels, cfg)
     -- group labels by source
-    ---@type SourceGroup[]
+    ---@type Group[]
     local groups = {}
     for _, label in ipairs(labels) do
         local src = assert(cache_fetch(cache, label.source_id), "source not found")
         local info = info_new(label, src, cfg.index_type)
-        if info then
-            local key = label.source_id or id or "<unknown>"
-            local group = groups[key]
-            if group then
-                sg_add_label_info(group, info)
-            else
-                group = sg_new(src, info)
-                groups[#groups + 1] = group
-                groups[key] = group
-            end
+        local key = label.source_id or id or "<unknown>"
+        local group = groups[key]
+        if group then
+            sg_add_label_info(group, info)
+        else
+            group = sg_new(src, info)
+            groups[#groups + 1] = group
+            groups[key] = group
         end
     end
     for _, group in ipairs(groups) do

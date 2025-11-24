@@ -930,7 +930,7 @@ Error: unknown position
 ]=]))
     end
 
-    function TestWrite.test_invalid_label_skipped()
+    function TestWrite.test_invalid_label()
         local msg = remove_trailing(
             ariadne.Report.build("Error", 1)
             :with_config(no_color_ascii())
@@ -941,6 +941,12 @@ Error: unknown position
 
         lu.assertEquals(msg, ([=[
 Error: invalid label
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | short
+   |      |
+   |      `- ignored
+---'
 ]=]))
     end
 
