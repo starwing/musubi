@@ -47,12 +47,14 @@
 #define MU_CHUNK_MAX_SIZE  63
 #define MU_COLOR_CODE_SIZE 32
 
-#define MU_OK     0  /* No error */
-#define MU_ERRSRC -1 /* source ID out of range */
+#define MU_OK       (0)  /* No error */
+#define MU_ERRPARAM (-1) /* invalid parameter */
+#define MU_ERRSRC   (-2) /* source ID out of range */
+#define MU_ERRFILE  (-3) /* errors in file source */
 
 MU_NS_BEGIN
 
-typedef enum mu_Kind { MU_KIND_ERROR, MU_KIND_WARNING, MU_KIND_CUSTOM } mu_Kind;
+typedef enum mu_Level { MU_CUSTOM_LEVEL, MU_ERROR, MU_WARNING } mu_Level;
 
 typedef enum mu_IndexType { MU_INDEX_BYTE, MU_INDEX_CHAR } mu_IndexType;
 
@@ -74,9 +76,11 @@ typedef enum mu_ColorKind {
     MU_COLOR_LABEL
 } mu_ColorKind;
 
-typedef enum mu_CharSet {
+typedef enum mu_Draw {
     MU_DRAW_SPACE,
     MU_DRAW_NEWLINE,
+    MU_DRAW_LBOX,
+    MU_DRAW_RBOX,
     MU_DRAW_COLON,
     MU_DRAW_HBAR,
     MU_DRAW_VBAR,
@@ -91,60 +95,61 @@ typedef enum mu_CharSet {
     MU_DRAW_LBOT,
     MU_DRAW_MBOT,
     MU_DRAW_RBOT,
-    MU_DRAW_LBOX,
-    MU_DRAW_RBOX,
     MU_DRAW_LCROSS,
     MU_DRAW_RCROSS,
     MU_DRAW_UNDERBAR,
     MU_DRAW_UNDERLINE,
     MU_DRAW_ELLIPSIS,
     MU_DRAW_COUNT
-} mu_CharSet;
+} mu_Draw;
 
-typedef unsigned mu_Id;
+typedef unsigned    mu_Id;
 typedef const char *mu_Chunk; /* first char is length */
 
-typedef struct mu_Report mu_Report;
-typedef struct mu_Config mu_Config;
-typedef struct mu_ColorGen mu_ColorGen;
-typedef struct mu_Source mu_Source;
-typedef struct mu_Line mu_Line;
-typedef struct mu_Slice mu_Slice;
+typedef struct mu_Report     mu_Report;
+typedef struct mu_Config     mu_Config;
+typedef struct mu_ColorGen   mu_ColorGen;
+typedef struct mu_Source     mu_Source;
+typedef struct mu_BareSource mu_BareSource;
+typedef struct mu_Line       mu_Line;
+typedef struct mu_Slice      mu_Slice;
 
-typedef void *mu_Allocf(void *ud, void *p, size_t nsize, size_t osize);
+typedef void    *mu_Allocf(void *ud, void *p, size_t nsize, size_t osize);
 typedef mu_Chunk mu_Color(void *ud, mu_ColorKind kind);
-typedef int mu_Writer(void *ud, const char *data, size_t len);
+typedef int      mu_Writer(void *ud, const char *data, size_t len);
 
 /* report construction and configuration */
 
 MU_API mu_Report *mu_new(mu_Allocf *allocf, void *ud);
-MU_API void mu_reset(mu_Report *R);
-MU_API void mu_delete(mu_Report *R);
+MU_API void       mu_reset(mu_Report *R);
+MU_API void       mu_delete(mu_Report *R);
 
-MU_API int mu_config(mu_Report *R, mu_Config *config);
-MU_API int mu_label(mu_Report *R, int start_pos, int end_pos, mu_Id src_id);
+MU_API int mu_config(mu_Report *R, const mu_Config *config);
+MU_API int mu_label(mu_Report *R, size_t start, size_t end, mu_Id src_id);
 MU_API int mu_message(mu_Report *R, const char *msg, int width);
 MU_API int mu_color(mu_Report *R, mu_Color *color, void *ud);
 MU_API int mu_order(mu_Report *R, int order);
 MU_API int mu_priority(mu_Report *R, int priority);
 
+MU_API int mu_title(mu_Report *R, mu_Level l, const char *cl, const char *msg);
+MU_API int mu_code(mu_Report *R, const char *code);
 MU_API int mu_help(mu_Report *R, const char *help_msg);
 MU_API int mu_note(mu_Report *R, const char *note_msg);
 
 /* rendering */
 
+MU_API int mu_source(mu_Report *R, mu_Source *src);
 MU_API int mu_writer(mu_Report *R, mu_Writer *writer, void *ud);
-MU_API int mu_kind(mu_Report *R, mu_Kind kind, const char *k, const char *msg);
-MU_API int mu_code(mu_Report *R, const char *code);
 MU_API int mu_render(mu_Report *R, int pos, mu_Id src_id);
 
-/* configuration */
+/* custom configuration */
 
-MU_API void mu_default_config(mu_Config *config);
-MU_API void mu_ansi_charset(mu_Config *config);
-MU_API void mu_unicode_charset(mu_Config *config);
+typedef mu_Chunk mu_Charset[MU_DRAW_COUNT];
 
-typedef char mu_ColorCode[MU_COLOR_CODE_SIZE];
+MU_API const mu_Charset *mu_ansi(void);
+MU_API const mu_Charset *mu_unicode(void);
+
+MU_API void mu_initconfig(mu_Config *config);
 
 struct mu_Config {
     int cross_gap;        /* show crossing gaps in cross arrows */
@@ -156,65 +161,84 @@ struct mu_Config {
     int ambiwidth;        /* how to treat ambiguous width characters */
 
     mu_LabelAttach label_attach; /* where to attach inline labels */
-    mu_IndexType index_type;     /* index type for label positions */
+    mu_IndexType   index_type;   /* index type for label positions */
 
-    mu_Color *color; /* a color function or NULL for no color */
-    void *color_ud;  /* user data for the color function */
+    mu_Color *color;    /* a color function or NULL for no color */
+    void     *color_ud; /* user data for the color function */
 
-    mu_ColorCode color_code; /* color code storage for `default_color` */
-    mu_Chunk char_set[MU_DRAW_COUNT]; /* character set to use */
+    const mu_Charset *char_set; /* character set to use */
 };
 
 /* color generator */
 
+typedef char mu_ColorCode[MU_COLOR_CODE_SIZE];
+
 MU_API void mu_initcolorgen(mu_ColorGen *cg, float min_brightness);
 MU_API void mu_gencolor(mu_ColorGen *cg, mu_ColorCode *out);
+
 MU_API mu_Chunk mu_fromcolorcode(void *ud, mu_ColorKind kind);
 
 struct mu_ColorGen {
-    int state[3];         /* internal state */
-    float min_brightness; /* minimum brightness */
+    unsigned short state[3];       /* internal state */
+    float          min_brightness; /* minimum brightness */
 };
 
 /* source */
 
 #define mu_source_offset(src, offset) ((src)->line_no_offset = (offset))
 
-MU_API int mu_source(mu_Report *R, mu_Source *src);
-MU_API int mu_memory_source(mu_Source *src, const char *data, size_t len,
-                            const char *name);
+MU_API mu_Source *mu_newsource(mu_Report *R, size_t size, const char *name);
+
+MU_API mu_Source *mu_memory_source(mu_Report *R, const char *data, size_t len,
+                                   const char *name);
 
 #if !MU_NO_STDIO
-MU_API int mu_file_source(mu_Source *src, FILE *fp, const char *name);
+MU_API mu_Source *mu_file_source(mu_Report *R, FILE *fp, const char *name);
 #endif /* !MU_NO_STDIO */
+
+#if !MU_NO_BARE_VTABLE /* clang-format off */
+MU_API void mu_freesource(mu_Source *src);
+MU_API const mu_Line *mu_getline(mu_Source *src, unsigned line_no);
+MU_API unsigned mu_lineforchars(mu_Source *src, size_t char_pos, const mu_Line **out);
+MU_API unsigned mu_lineforbytes(mu_Source *src, size_t byte_pos, const mu_Line **out);
+#endif /* !MU_NO_BARE_VTABLE *//* clang-format on */
 
 struct mu_Slice {
     const char *p, *e;
 };
 
 struct mu_Source {
-    void *ud;           /* user data for this source */
-    mu_Slice name;      /* source name slice */
-    int line_no_offset; /* line number offset for this source */
-    mu_Id id;           /* source id, written by `mu_source()`, start from 0 */
+    void    *ud;             /* user data for this source */
+    mu_Slice name;           /* source name slice */
+    int      line_no_offset; /* line number offset for this source */
+    mu_Id    id;   /* source id, written by `mu_source()`, start from 0 */
+    int      gidx; /* group index, -1 for "should call free", -2 for no use */
 
     int (*init)(mu_Source *src);
     void (*free)(mu_Source *src);
 
     mu_Slice (*get_line)(mu_Source *src, unsigned line_no);
     const mu_Line *(*get_line_info)(mu_Source *src, unsigned line_no);
-    unsigned (*line_from_chars)(mu_Source *src, unsigned char_pos,
-                                const mu_Line **out);
-    unsigned (*line_from_bytes)(mu_Source *src, unsigned byte_pos,
-                                const mu_Line **out);
+    unsigned (*line_for_chars)(mu_Source *src, size_t char_pos,
+                               const mu_Line **out);
+    unsigned (*line_for_bytes)(mu_Source *src, size_t byte_pos,
+                               const mu_Line **out);
+};
+
+struct mu_BareSource {
+    mu_Source  src;   /* base source */
+    size_t     size;  /* size of bare source object */
+    mu_Report *R;     /* report associated with this source */
+    mu_Line   *lines; /* line cache */
+    void (*update_lines)(mu_Source *src);
 };
 
 struct mu_Line {
-    unsigned offset; /* character offset of this line in the original source */
-    unsigned len;    /* character length of this line in the original source */
-    unsigned byte_offset; /* byte offset of this line in the original source */
-    unsigned byte_len;    /* byte length of this line in the original source */
-    unsigned newline;     /* extra length (usually a newline) after this line */
+    size_t   offset; /* character offset of this line in the original source */
+    size_t   byte_offset; /* byte offset of this line in the original source */
+    unsigned len; /* character length of this line in the original source */
+    unsigned byte_len; /* byte length of this line in the original source */
+    unsigned newline;  /* extra length (usually a newline) after this line */
 };
 
 MU_NS_END
@@ -246,85 +270,91 @@ MU_NS_END
 
 MU_NS_BEGIN
 
-typedef int mu_Width;
+typedef int      mu_Width;
 typedef unsigned mu_Col;
 
 typedef struct mu_Label {
-    void *ud;           /* user data for the color function */
-    mu_Color *color;    /* the color for this label */
-    mu_Slice message;   /* the message to display for this label */
-    unsigned start_pos; /* start position in the source */
-    unsigned end_pos;   /* end position in the source */
-    mu_Width width;     /* display width of the message, must >= 0 */
-    mu_Id src_id;       /* source id this label belongs to */
-    int order;          /* order of this label in vertical sorting */
+    void     *ud;        /* user data for the color function */
+    mu_Color *color;     /* the color for this label */
+    mu_Slice  message;   /* the message to display for this label */
+    size_t    start_pos; /* start position in the source */
+    size_t    end_pos;   /* end position in the source */
+    mu_Width  width;     /* display width of the message, must >= 0 */
+    mu_Id     src_id;    /* source id this label belongs to */
+    int       order;     /* order of this label in vertical sorting */
     int priority; /* priority of this label when merging overlapping labels */
 } mu_Label;
 
 typedef struct mu_LabelInfo {
-    mu_Label *label;     /* label associated with this info */
-    int multi;           /* whether this label spans multiple lines */
-    unsigned start_char; /* start character position of this label */
-    unsigned end_char;   /* end character position of this label */
+    mu_Label *label;      /* label associated with this info */
+    int       multi;      /* whether this label spans multiple lines */
+    size_t    start_char; /* start character position of this label */
+    size_t    end_char;   /* end character position of this label */
 } mu_LabelInfo;
 
 typedef struct mu_Group {
-    mu_Source *src;             /* source of this group */
+    mu_Source    *src;          /* source of this group */
     mu_LabelInfo *labels;       /* labels in this group */
     mu_LabelInfo *multi_labels; /* multi-line labels in this group */
-    unsigned start_char;        /* start char position of this group */
-    unsigned end_char;          /* end char position of this group */
+    size_t        start_char;   /* start char position of this group */
+    size_t        end_char;     /* end char position of this group */
 } mu_Group;
 
 typedef struct mu_LineLabel {
     const mu_LabelInfo *info; /* label info associated with this label */
-    mu_Col col;               /* column position in this line */
 
     /* draw_msg is 0 only if the label is multi and this line is the start */
-    int draw_msg; /* whether to draw the message in this line */
+    int    draw_msg; /* whether to draw the message in this line */
+    mu_Col col;      /* column position in this line */
 } mu_LineLabel;
 
-typedef struct mu_LabelCluster {
-    const mu_Line *line;       /* line the cluster represents */
-    mu_LineLabel margin_label; /* margin label for this line */
-    mu_LineLabel *line_labels; /* labels in this line */
-    unsigned arrow_len;        /* length of the arrows line */
-    mu_Col min_col;            /* ?TODO first column of labels in this line */
-    mu_Col start_col;          /* start column of this cluster */
-    mu_Col end_col;            /* end column of this cluster */
-    mu_Width max_msg_width;    /* maximum message width in this line */
-} mu_LabelCluster;
+typedef struct mu_Cluster {
+    const mu_Line *line;         /* line the cluster represents */
+    mu_LineLabel   margin_label; /* margin label for this line */
+    mu_LineLabel  *line_labels;  /* labels in this line */
+
+    unsigned arrow_len;     /* length of the arrows line */
+    mu_Col   min_col;       /* first column of labels in this line */
+    mu_Col   start_col;     /* start column of this cluster */
+    mu_Col   end_col;       /* end column of this cluster */
+    mu_Width max_msg_width; /* maximum message width in this line */
+} mu_Cluster;
+
+typedef struct mu_Data {
+    mu_Slice s;   /* data slice */
+    char    *buf; /* data buffer (a char array) */
+} mu_Data;
 
 struct mu_Report {
-    void *ud;          /* userdata for allocf */
-    mu_Allocf *allocf; /* custom allocation function */
-    mu_Config *config; /* configuration */
+    void            *ud;     /* userdata for allocf */
+    mu_Allocf       *allocf; /* custom allocation function */
+    const mu_Config *config; /* configuration */
 
     /* rendering context */
-    void *writer_ud;
-    mu_Writer *writer;
+    void           *writer_ud;
+    mu_Writer      *writer;
     const mu_Label *cur_color_label; /* current color label */
-    mu_ColorKind cur_color_kind;     /* current color kind */
-    mu_Group *groups;                /* groups of sources */
-    mu_LabelCluster *clusters;       /* current label clusters for rendering */
-    mu_LineLabel *ll_cache;  /* line label cache used in `muC_assemble` */
-    mu_Width *width_cache;   /* current line width cache */
-    mu_Width line_no_width;  /* maximum width of line number */
-    mu_Width ellipsis_width; /* display width of ellipsis */
+    mu_ColorKind    cur_color_kind;  /* current color kind */
+    mu_Group       *groups;          /* groups of sources */
+    mu_Cluster     *clusters;        /* current label clusters for rendering */
+    mu_LineLabel   *ll_cache;      /* line label cache used in `muC_assemble` */
+    mu_Width       *width_cache;   /* current line width cache */
+    mu_Width        line_no_width; /* maximum width of line number */
+    mu_Width        ellipsis_width; /* display width of ellipsis */
 
-    const mu_Group *cur_group;          /* current group being rendered */
-    const mu_LabelCluster *cur_cluster; /* current cluster being rendered */
-    const mu_Line *cur_line;            /* current line being rendered */
+    const mu_Group   *cur_group;   /* current group being rendered */
+    const mu_Cluster *cur_cluster; /* current cluster being rendered */
+    const mu_Line    *cur_line;    /* current line being rendered */
 
     /* report details */
-    mu_Kind kind;          /* predefined kind */
-    mu_Slice code;         /* code message shown in header */
-    mu_Slice kind_message; /* kind message shown in header */
-    mu_Slice message;      /* main message shown in header */
-    mu_Source *sources;    /* sources involved in the report */
-    mu_Label *labels;      /* labels involved in the report */
-    mu_Slice *helps;       /* help messages shown in footer */
-    mu_Slice *notes;       /* note messages shown in footer */
+    mu_Level    level;        /* predefined report level */
+    mu_Slice    code;         /* code message shown in header */
+    mu_Slice    custom_level; /* custom level shown in header */
+    mu_Slice    title;        /* main title shown in header */
+    mu_Source **sources;      /* sources involved in the report */
+    mu_Label   *labels;       /* labels involved in the report */
+    mu_Slice   *helps;        /* help messages shown in footer */
+    mu_Slice   *notes;        /* note messages shown in footer */
 };
 
 /* array */
@@ -332,19 +362,20 @@ struct mu_Report {
 #define MU_MIN_CAPACITY 8
 #define MU_MAX_CAPACITY (1u << 30)
 
-#define muA_rawH(A)      (assert(A), (mu_ArrayHeader *)((A) - 1))
-#define muA_size(A)      ((A) ? muA_rawH(A)->size : 0)
+#define muA_rawH(A)          (assert(A), (mu_ArrayHeader *)((A) - 1))
+#define muA_size(A)          ((A) ? muA_rawH(A)->size : 0)
+#define muA_addsize(R, A, N) (muA_rawH(A)->size += (N))
+#define muA_last(A)          ((A) ? &(A)[muA_rawH(A)->size - 1] : NULL)
+#define muA_reset(R, A)      (muA_rawH(A)->size = 0)
+
 #define muA_delete(R, A) (muA_delete_(R, (void *)(A), sizeof(*(A))), (A) = NULL)
 #define muA_push(R, A) \
     (muA_reserve_(R, (void **)&(A), sizeof(*(A)), 1), &(A)[muA_rawH(A)->size++])
 #define muA_reserve(R, A, N) \
     (muA_reserve_(R, (void **)&(A), sizeof(*(A)), (N)), &(A)[muA_rawH(A)->size])
-#define muA_addsize(R, A, N) (muA_rawH(A)->size += (N))
-#define muA_reset(R, A)      (muA_rawH(A)->size = 0)
 
 typedef struct mu_ArrayHeader {
-    unsigned size;
-    unsigned capacity;
+    unsigned size, capacity;
 } mu_ArrayHeader;
 
 static void muA_delete_(mu_Report *R, void *A, size_t esize) {
@@ -355,7 +386,8 @@ static void muA_delete_(mu_Report *R, void *A, size_t esize) {
 
 static void muA_resize(mu_Report *R, void **A, size_t newcap, size_t esize) {
     mu_ArrayHeader *h = *A ? muA_rawH((void **)*A) : NULL;
-    if (h == NULL || h->size >= h->capacity) {
+    assert(newcap < MU_MAX_CAPACITY);
+    if (h == NULL || newcap >= h->capacity) {
         size_t old_size = h ? sizeof(mu_ArrayHeader) + h->capacity * esize : 0;
         size_t new_size = sizeof(mu_ArrayHeader) + newcap * esize;
         mu_ArrayHeader *newh =
@@ -369,17 +401,16 @@ static void muA_resize(mu_Report *R, void **A, size_t newcap, size_t esize) {
 
 static void muA_reserve_(mu_Report *R, void **A, size_t esize, unsigned n) {
     mu_ArrayHeader *h = *A ? muA_rawH((void **)*A) : NULL;
-    unsigned desired = h ? h->size + n : n;
+    unsigned        desired = n + (h ? h->size : 0);
     if (desired > MU_MAX_CAPACITY) return (void)abort();
     if (h == NULL || desired > h->capacity) {
         unsigned newcapa = h ? h->capacity : MU_MIN_CAPACITY;
-        while ((newcapa += newcapa >> 1) < desired) /* continue */
-            ;
+        while ((newcapa += newcapa >> 1) < desired) {}
         muA_resize(R, A, newcapa, esize);
     }
 }
 
-/* unicode */
+/* data & slice & unicode utils */
 
 #include "unidata.h"
 
@@ -389,13 +420,25 @@ static void muA_reserve_(mu_Report *R, void **A, size_t esize, unsigned n) {
 /* clang-format off */
 static size_t muD_bytelen(mu_Slice s) { return (size_t)(s.e - s.p); }
 
+static void muD_cleanup(mu_Report *R, mu_Data *d)
+{ if (d->buf) muA_delete(R, d->buf); d->buf = NULL, d->s.p = d->s.e = NULL; }
+
 static mu_Slice muD_slice(const char *p, size_t len)
 { mu_Slice s; s.p = p, s.e = p + len; return s; }
 /* clang-format on */
 
+static mu_Data muD_new(mu_Report *R, const char *s) {
+    mu_Data d = {{NULL, NULL}, NULL};
+    size_t  len = strlen(s);
+    d.buf = muA_reserve(R, d.buf, len + 1);
+    memcpy(d.buf, s, len + 1);
+    d.s.p = d.buf, d.s.e = d.buf + len;
+    return d;
+}
+
 static mu_Slice muD_snprintf(char *buf, size_t bufsize, const char *fmt, ...) {
     va_list args;
-    int n;
+    int     n;
     va_start(args, fmt);
     n = vsnprintf(buf, bufsize, fmt, args);
     va_end(args);
@@ -403,7 +446,7 @@ static mu_Slice muD_snprintf(char *buf, size_t bufsize, const char *fmt, ...) {
 }
 
 static unsigned muD_count(mu_Slice s, size_t byte_pos) {
-    size_t i = 0, len = muD_bytelen(s);
+    size_t   i = 0, len = muD_bytelen(s);
     unsigned count;
     for (count = 0; i < byte_pos && i < len; ++count) {
         unsigned char c = (unsigned char)s.p[i];
@@ -424,6 +467,18 @@ static void muD_advance(mu_Slice *s) {
     else if ((c & 0xF0) == 0xE0 && s->p + 2 < s->e) s->p += 3;
     else if ((c & 0xF8) == 0xF0 && s->p + 3 < s->e) s->p += 4;
     else s->p += 1; /* invalid byte, skip */
+}
+
+static size_t muD_checkend(mu_Slice s) {
+    const char *e = s.e;
+    utfint      c;
+    while (s.p < e && ((*--e & 0xC0) == 0x80)) continue;
+    if ((s.p == e || (c = *e & 0xFF) < 0x80
+         || ((c & 0xE0) == 0xC0 && e + 1 < s.e)
+         || ((c & 0xF0) == 0xE0 && e + 2 < s.e)
+         || ((c & 0xF8) == 0xF0 && e + 3 < s.e)))
+        return 0;
+    return (size_t)(s.e - e);
 }
 
 static utfint muD_decode(mu_Slice *s) {
@@ -505,20 +560,16 @@ MU_API void mu_initcolorgen(mu_ColorGen *cg, float min_brightness) {
 }
 
 MU_API void mu_gencolor(mu_ColorGen *cg, mu_ColorCode *out) {
-    int i, code = 16, n;
-    for (int i = 0; i < 3; i++) {
-        cg->state[i] = cg->state[i] + 40503 * (i * 4 + 1130);
-        cg->state[i] = cg->state[i] % 65536;
-    }
-    code += ((float)cg->state[2] / 65535 * (1 - cg->min_brightness)
-             + cg->min_brightness)
-          * 5.0;
-    code += ((float)cg->state[1] / 65535 * (1 - cg->min_brightness)
-             + cg->min_brightness)
-          * 30.0;
-    code += ((float)cg->state[0] / 65535 * (1 - cg->min_brightness)
-             + cg->min_brightness)
-          * 180.0;
+    float    mb;
+    unsigned i, code = 16;
+    int      n;
+    if (!cg || !out) return;
+    for (i = 0; i < 3; ++i)
+        cg->state[i] = (unsigned short)(cg->state[i] + 40503 * (i * 4 + 1130));
+    mb = cg->min_brightness;
+    code += ((float)cg->state[2] / 65535 * (1 - mb) + mb) * 5.0;
+    code += ((float)cg->state[1] / 65535 * (1 - mb) + mb) * 30.0;
+    code += ((float)cg->state[0] / 65535 * (1 - mb) + mb) * 180.0;
     n = snprintf(*out + 1, sizeof(mu_ColorCode) - 1, "\x1b[38;5;%dm", code);
     (*out)[0] = (assert(n <= sizeof(mu_ColorCode) - 1), (char)n);
 }
@@ -531,8 +582,6 @@ MU_API mu_Chunk mu_fromcolorcode(void *ud, mu_ColorKind k) {
 
 /* writer */
 
-#define MU_PADDING_BUF_SIZE 64
-
 /* clang-format off */
 static int muW_write(mu_Report *R, mu_Slice s)
 { return (assert(R->writer), R->writer(R->writer_ud, s.p, muD_bytelen(s))); }
@@ -540,7 +589,7 @@ static int muW_write(mu_Report *R, mu_Slice s)
 
 static int muW_color(mu_Report *R, mu_ColorKind k) {
     mu_Color *color = R->config->color;
-    void *ud = R->config->color_ud;
+    void     *ud = R->config->color_ud;
     if (R->cur_color_label && R->cur_color_label->color)
         color = R->cur_color_label->color, ud = R->cur_color_label->ud;
     if (color) {
@@ -565,11 +614,12 @@ static int muW_use_color(mu_Report *R, const mu_Label *label, mu_ColorKind k) {
     return muW_color(R, k);
 }
 
-static int muW_draw(mu_Report *R, mu_CharSet cs, int count) {
-    const mu_Chunk chunk = R->config->char_set[assert(cs < MU_DRAW_COUNT), cs];
-    if (chunk == NULL || chunk[0] == 1) {
+static int muW_draw(mu_Report *R, mu_Draw cs, int count) {
+    const mu_Chunk chunk = (*R->config->char_set)[cs];
+    if (chunk[0] == 1) {
+        enum { MU_PADDING_BUF_SIZE = 80 };
         char pad[MU_PADDING_BUF_SIZE];
-        memset(pad, chunk ? chunk[0] : ' ', mu_min(sizeof(pad), count));
+        memset(pad, chunk[1], mu_min(sizeof(pad), count));
         while (count >= MU_PADDING_BUF_SIZE) {
             muX(muW_write(R, muD_slice(pad, sizeof(pad))));
             count -= MU_PADDING_BUF_SIZE;
@@ -585,17 +635,16 @@ static int muW_draw(mu_Report *R, mu_CharSet cs, int count) {
 
 /* misc utils */
 
-static mu_Col muM_col(unsigned pos, const mu_LineLabel *ll,
-                      const mu_Line *line) {
-    return ll->info->multi ? ll->col : pos - line->offset;
-}
+/* clang-format off */
+static mu_Col muM_col(size_t pos, const mu_LineLabel *ll, const mu_Line *line)
+{ return ll->info->multi ? ll->col : pos - line->offset; }
 
-static int muM_contains(unsigned pos, const mu_Line *line) {
-    return pos >= line->offset && pos < line->offset + line->len + 1;
-}
+static int muM_contains(size_t pos, const mu_Line *line)
+{ return pos >= line->offset && pos < line->offset + line->len + 1; }
+/* clang-format on */
 
 static mu_Width muM_marginwidth(mu_Report *R) {
-    size_t size = muA_size(R->cur_group->multi_labels);
+    unsigned size = muA_size(R->cur_group->multi_labels);
     return (size ? size + 1 : 0) * (R->config->compact ? 1 : 2);
 }
 
@@ -607,23 +656,29 @@ static int muM_line_in_label(const mu_Line *line, const mu_LabelInfo *li) {
     return 0;
 }
 
-static unsigned muM_bytes2chars(mu_Source *src, unsigned pos,
+static unsigned muM_bytes2chars(mu_Source *src, size_t pos,
                                 const mu_Line **line) {
-    unsigned line_no = src->line_from_bytes(src, pos, line);
+    unsigned line_no = src->line_for_bytes(src, pos, line);
     mu_Slice s = src->get_line(src, line_no);
     return (*line)->offset + muD_count(s, pos - (*line)->byte_offset);
 }
 
 /* label cluster */
 
+/* clang-format off */
+static void muC_cleanup(mu_Report *R, mu_Cluster *c)
+{ muA_delete(R, c->line_labels); }
+/* clang-format on */
+
 static void muC_collect_multi(mu_Report *R) {
-    const mu_Line *line = R->cur_line;
     const mu_LabelInfo *multi_labels = R->cur_group->multi_labels;
+    const mu_Line      *line = R->cur_line;
+
     unsigned i, size, draw_msg;
     for (i = 0, size = muA_size(multi_labels); i < size; i++) {
         const mu_LabelInfo *li = &multi_labels[i];
-        mu_LineLabel *ll;
-        mu_Col col;
+        mu_LineLabel       *ll;
+        mu_Col              col;
         if (muM_contains(li->start_char, line))
             col = li->start_char - line->offset, draw_msg = 0;
         else if (muM_contains(li->end_char, line))
@@ -635,12 +690,15 @@ static void muC_collect_multi(mu_Report *R) {
 }
 
 static void muC_collect_inline(mu_Report *R) {
-    const mu_Line *line = R->cur_line;
     const mu_LabelInfo *labels = R->cur_group->labels;
-    unsigned i, size, pos;
+    const mu_Line      *line = R->cur_line;
+
+    unsigned i, size;
     for (i = 0, size = muA_size(labels); i < size; i++) {
         const mu_LabelInfo *li = &labels[i];
+
         mu_LineLabel *ll;
+        size_t        pos;
         if (!(li->start_char >= line->offset
               && li->end_char <= line->offset + line->len + 1))
             continue;
@@ -657,6 +715,7 @@ static void muC_collect_inline(mu_Report *R) {
 static int muC_cmp_ll(const void *lhf, const void *rhf) {
     const mu_LineLabel *l = (const mu_LineLabel *)lhf;
     const mu_LineLabel *r = (const mu_LineLabel *)rhf;
+
     int llen, rlen;
     if (l->info->label->order != r->info->label->order)
         return l->info->label->order - r->info->label->order;
@@ -685,55 +744,58 @@ static void muC_fill_widthcache(mu_Report *R, size_t len, mu_Slice data) {
         width += muD_width(ch, R->config->ambiwidth);
     }
     *muA_push(R, R->width_cache) = width;
+    while (muA_size(R->width_cache) < len + 1)
+        *muA_push(R, R->width_cache) = width;
 }
 
-static mu_LabelCluster *muC_new_cluster(mu_Report *R) {
-    mu_LabelCluster *lc = muA_push(R, R->clusters);
-    memset(lc, 0, sizeof(mu_LabelCluster));
-    lc->min_col = INT_MAX;
-    lc->end_col = R->cur_line->len;
-    return lc;
+static mu_Cluster *muC_new_cluster(mu_Report *R) {
+    mu_Cluster *c = muA_push(R, R->clusters);
+    memset(c, 0, sizeof(mu_Cluster));
+    c->min_col = UINT_MAX;
+    c->end_col = (mu_Col)R->cur_line->len;
+    return c;
 }
 
 static void muC_fill_cluster(mu_Report *R) {
     const mu_LineLabel *lls = R->ll_cache;
-    const mu_Line *line = R->cur_line;
+    const mu_Line      *line = R->cur_line;
+
     unsigned i, size, extra_arrow_len = R->config->compact ? 1 : 2;
     mu_Width min_start = INT_MAX, max_end = INT_MIN;
     mu_Width limited = R->config->limit_width;
-    mu_LabelCluster *lc;
+
+    mu_Cluster *c;
     muA_reset(R, R->clusters);
     if (limited > 0) limited -= R->line_no_width + 4 + muM_marginwidth(R);
-    lc = muC_new_cluster(R);
+    c = muC_new_cluster(R);
     for (i = 0, size = muA_size(lls); i < size; i++) {
         const mu_LineLabel *ll = &lls[i];
-        mu_Col start_col, end_col = muM_col(ll->info->end_char, ll, line);
+        mu_Col   start_col, end_col = muM_col(ll->info->end_char, ll, line);
         mu_Width label = ll->info->label->width;
         if (R->config->limit_width > 0) {
             mu_Width cur,
                 start = R->width_cache[muM_col(ll->info->start_char, ll, line)];
             mu_Width end = R->width_cache[end_col];
-            int is_empty =
-                (!muA_size(lc->line_labels) && !lc->margin_label.info);
+            int is_empty = (!muA_size(c->line_labels) && !c->margin_label.info);
             min_start = mu_min(min_start, start);
             max_end = mu_max(max_end, end);
             cur = (max_end - min_start)
                 + (ll->draw_msg && label ? extra_arrow_len + 1 + label : 0);
             if (cur > limited && !is_empty)
-                min_start = INT_MAX, max_end = INT_MIN, lc = muC_new_cluster(R);
+                min_start = INT_MAX, max_end = INT_MIN, c = muC_new_cluster(R);
         }
         if (ll->info->multi) {
             int is_margin = 0;
-            if (!lc->margin_label.info) lc->margin_label = *ll, is_margin = 1;
+            if (!c->margin_label.info) c->margin_label = *ll, is_margin = 1;
             if ((R->config->limit_width <= 0 || !is_margin) && ll->draw_msg)
                 end_col = line->len + line->newline;
         }
-        if (lc->margin_label.info != ll->info || (ll->draw_msg && label))
-            *muA_push(R, lc->line_labels) = *ll;
-        lc->arrow_len = mu_max(lc->arrow_len, end_col + extra_arrow_len);
+        if (c->margin_label.info != ll->info || (ll->draw_msg && label))
+            *muA_push(R, c->line_labels) = *ll;
+        c->arrow_len = mu_max(c->arrow_len, end_col + extra_arrow_len);
         start_col = muM_col(ll->info->start_char, ll, line);
-        lc->min_col = mu_min(lc->min_col, start_col);
-        lc->max_msg_width = mu_max(lc->max_msg_width, label);
+        c->min_col = mu_min(c->min_col, start_col);
+        c->max_msg_width = mu_max(c->max_msg_width, label);
     }
 }
 
@@ -747,32 +809,33 @@ static int muC_widthindex(mu_Report *R, mu_Width width, mu_Col l, mu_Col u) {
     return l;
 }
 
-static void muC_calc_colrange(mu_Report *R, mu_LabelCluster *lc) {
+static void muC_calc_colrange(mu_Report *R, mu_Cluster *c) {
     int len = muA_size(R->width_cache) - 1;
-    int line_part = mu_min(lc->arrow_len, len); /* arrow_len in line part */
+    int line_part = mu_min(c->arrow_len, len); /* arrow_len in line part */
+
     mu_Width essential, skip, balance = 0;
     mu_Width margin = muM_marginwidth(R);
     mu_Width fixed = R->line_no_width + 4 + margin; /* line_no+edge+margin */
     mu_Width limited = R->config->limit_width - fixed;
-    mu_Width arrow = R->width_cache[line_part] + mu_max(0, lc->arrow_len - len);
+    mu_Width arrow = R->width_cache[line_part] + mu_max(0, c->arrow_len - len);
 
-    mu_Width edge = arrow + 1 + lc->max_msg_width; /* +1 for space */
+    mu_Width edge = arrow + 1 + c->max_msg_width; /* +1 for space */
     mu_Width line_width = R->width_cache[len];
     if (edge <= limited && line_width <= limited) return;
 
-    essential = (arrow - R->width_cache[lc->min_col]);
-    essential += 1 + lc->max_msg_width;
+    essential = (arrow - R->width_cache[c->min_col]);
+    essential += 1 + c->max_msg_width;
     if (essential + R->ellipsis_width >= limited) {
-        lc->start_col = lc->min_col;
-        lc->end_col = muC_widthindex(
-            R, 1 + lc->max_msg_width - R->ellipsis_width, line_part, len);
+        c->start_col = c->min_col;
+        c->end_col = muC_widthindex(R, 1 + c->max_msg_width - R->ellipsis_width,
+                                    line_part, len);
         return;
     }
     skip = edge - limited + R->ellipsis_width + 1;
     if (skip <= 0) {
-        lc->start_col = 0;
-        lc->end_col = muC_widthindex(R, limited - arrow - R->ellipsis_width,
-                                     line_part, len);
+        c->start_col = 0;
+        c->end_col = muC_widthindex(R, limited - arrow - R->ellipsis_width,
+                                    line_part, len);
         return;
     }
     if (line_width > edge) {
@@ -780,12 +843,12 @@ static void muC_calc_colrange(mu_Report *R, mu_LabelCluster *lc) {
         mu_Width desired = (limited - essential) / 2;
         balance = desired + mu_max(0, desired - avail);
     }
-    lc->start_col = muC_widthindex(R, skip + balance, 1, line_part) - 1;
-    lc->end_col = muC_widthindex(
-        R, 1 + lc->max_msg_width + balance - R->ellipsis_width, line_part, len);
+    c->start_col = muC_widthindex(R, skip + balance, 1, line_part) - 1;
+    c->end_col = muC_widthindex(
+        R, 1 + c->max_msg_width + balance - R->ellipsis_width, line_part, len);
 }
 
-static const mu_LabelInfo *muC_update_highlight(unsigned pos,
+static const mu_LabelInfo *muC_update_highlight(size_t              pos,
                                                 const mu_LabelInfo *l,
                                                 const mu_LabelInfo *r) {
     int llen, rlen;
@@ -799,40 +862,43 @@ static const mu_LabelInfo *muC_update_highlight(unsigned pos,
 }
 
 static const mu_LabelInfo *muC_get_highlight(mu_Report *R, mu_Col col) {
-    const mu_Group *g = R->cur_group;
-    const mu_LabelCluster *lc = R->cur_cluster;
+    const mu_Group     *g = R->cur_group;
+    const mu_Cluster   *c = R->cur_cluster;
     const mu_LabelInfo *r = NULL;
-    unsigned i, size, pos = R->cur_line->offset + col;
-    if (lc->margin_label.info)
-        r = muC_update_highlight(pos, r, lc->margin_label.info);
+
+    size_t   pos = R->cur_line->offset + col;
+    unsigned i, size;
+    if (c->margin_label.info)
+        r = muC_update_highlight(pos, r, c->margin_label.info);
     for (i = 0, size = muA_size(g->multi_labels); i < size; i++)
         r = muC_update_highlight(pos, r, &g->multi_labels[i]);
-    for (i = 0, size = muA_size(lc->line_labels); i < size; i++)
-        r = muC_update_highlight(pos, r, lc->line_labels[i].info);
+    for (i = 0, size = muA_size(c->line_labels); i < size; i++)
+        r = muC_update_highlight(pos, r, c->line_labels[i].info);
     return r;
 }
 
 static const mu_LabelInfo *muC_get_vbar(mu_Report *R, int row, mu_Col col) {
-    const mu_LabelCluster *lc = R->cur_cluster;
+    const mu_Cluster *c = R->cur_cluster;
+
     unsigned i, size;
-    for (i = 0, size = muA_size(lc->line_labels); i < size; i++) {
-        const mu_LineLabel *ll = &lc->line_labels[i];
+    for (i = 0, size = muA_size(c->line_labels); i < size; i++) {
+        const mu_LineLabel *ll = &c->line_labels[i];
         if (((ll->info->label->width || ll->info->multi)
-             && lc->margin_label.info != ll->info && ll->col == col
-             && row <= i))
+             && c->margin_label.info != ll->info && ll->col == col && row <= i))
             return ll->info;
     }
     return NULL;
 }
 
 static const mu_LabelInfo *muC_get_underline(mu_Report *R, mu_Col col) {
-    const mu_LabelCluster *lc = R->cur_cluster;
-    unsigned pos = R->cur_line->offset + col;
+    const mu_Cluster   *c = R->cur_cluster;
     const mu_LabelInfo *r = NULL;
+
+    size_t   pos = R->cur_line->offset + col;
     unsigned i, size, rlen, lllen;
-    int rp, llp;
-    for (i = 0, size = muA_size(lc->line_labels); i < size; i++) {
-        const mu_LineLabel *ll = &lc->line_labels[i];
+    int      rp, llp;
+    for (i = 0, size = muA_size(c->line_labels); i < size; i++) {
+        const mu_LineLabel *ll = &c->line_labels[i];
         if (!(!ll->info->multi
               && mu_asc(ll->info->start_char, pos, ll->info->end_char - 1)))
             continue;
@@ -848,39 +914,45 @@ static const mu_LabelInfo *muC_get_underline(mu_Report *R, mu_Col col) {
 
 /* source group */
 
-static void muG_add_info(mu_Report *R, unsigned i, mu_LabelInfo *li) {
-    if (i == muA_size(R->groups)) {
-        mu_Group *group = muA_push(R, R->groups);
-        memset(group, 0, sizeof(mu_Group));
-        group->src = &R->sources[li->label->src_id];
-        group->start_char = li->start_char;
-        group->end_char = li->end_char;
-    } else {
-        mu_Group *g = &R->groups[i];
-        g->start_char = mu_min(g->start_char, li->start_char);
-        g->end_char = mu_max(g->end_char, li->end_char);
-    }
-    if (li->multi) *muA_push(R, R->groups[i].multi_labels) = *li;
-    else *muA_push(R, R->groups[i].labels) = *li;
-}
+#define MU_SRC_INITED (-1)
+#define MU_SRC_UNUSED (-2)
+
+/* clang-format off */
+static void muG_cleanup(mu_Report *R, mu_Group *g)
+{ muA_delete(R, g->multi_labels); muA_delete(R, g->labels); }
+/* clang-format on */
 
 static int muG_cmp_labelinfo(const void *lhf, const void *rhf) {
     const mu_LabelInfo *l = (const mu_LabelInfo *)lhf;
     const mu_LabelInfo *r = (const mu_LabelInfo *)rhf;
+
     int llen = l->end_char - l->start_char;
     int rlen = r->end_char - r->start_char;
     return rlen - llen;
 }
 
-static int muG_init_info(mu_Report *R, mu_Label *label, mu_LabelInfo *out) {
-    unsigned start_char = label->start_pos, end_char = label->end_pos;
+static mu_Group *muG_init(mu_Report *R, mu_Id src_id) {
+    mu_Group *g = NULL;
+    if (R->sources[src_id]->gidx < 0) {
+        unsigned size = muA_size(R->groups);
+        int      old_gidx = R->sources[src_id]->gidx;
+        g = muA_push(R, R->groups);
+        memset(g, 0, sizeof(mu_Group));
+        g->src = R->sources[src_id];
+        g->src->gidx = (assert(size < INT_MAX), (int)size);
+        if (old_gidx != MU_SRC_INITED && g->src->init) g->src->init(g->src);
+    }
+    return g;
+}
+
+static void muG_init_info(mu_Report *R, mu_Label *label, mu_LabelInfo *out) {
+    size_t         start_char = label->start_pos, end_char = label->end_pos;
     const mu_Line *start_line, *end_line;
-    mu_Source *src;
-    if (label->src_id >= muA_size(R->sources)) return MU_ERRSRC;
-    src = &R->sources[label->src_id];
+    mu_Source     *src;
+    src = R->sources[label->src_id];
     if (R->config->index_type == MU_INDEX_CHAR) {
-        src->line_from_chars(src, start_char, &start_line);
-        src->line_from_chars(src, end_char, &end_line);
+        src->line_for_chars(src, start_char, &start_line);
+        src->line_for_chars(src, end_char, &end_line);
         out->start_char = start_char, out->end_char = end_char;
     } else {
         out->start_char = muM_bytes2chars(src, start_char, &start_line);
@@ -888,21 +960,30 @@ static int muG_init_info(mu_Report *R, mu_Label *label, mu_LabelInfo *out) {
     }
     out->label = label;
     out->multi = (start_line != end_line);
-    return MU_OK;
 }
 
 static int muG_make_groups(mu_Report *R) {
-    unsigned i, llen, j, glen;
+    unsigned i, len;
     muA_reset(R, R->groups);
-    for (i = 0, llen = muA_size(R->labels); i < llen; i++) {
-        mu_Label *label = &R->labels[i];
-        mu_LabelInfo info;
-        if (muG_init_info(R, label, &info) != MU_OK) continue;
-        for (j = 0, glen = muA_size(R->groups); j < glen; j++)
-            if (R->groups[j].src->id == label->src_id) break;
-        muG_add_info(R, j, &info);
+    for (i = 0, len = muA_size(R->sources); i < len; i++)
+        if (R->sources[i]->gidx >= 0) R->sources[i]->gidx = MU_SRC_INITED;
+    for (i = 0, len = muA_size(R->labels); i < len; i++) {
+        mu_Label    *label = &R->labels[i];
+        mu_LabelInfo info, *labels;
+        mu_Group    *g;
+        if (label->src_id >= muA_size(R->sources)) return MU_ERRSRC;
+        g = muG_init(R, label->src_id);
+        muG_init_info(R, label, &info);
+        if (g) g->start_char = info.start_char, g->end_char = info.end_char;
+        else {
+            g = &R->groups[R->sources[label->src_id]->gidx];
+            g->start_char = mu_min(g->start_char, info.start_char);
+            g->end_char = mu_max(g->end_char, info.end_char);
+        }
+        labels = info.multi ? g->multi_labels : g->labels;
+        *muA_push(R, labels) = info;
     }
-    for (i = 0, glen = muA_size(R->groups); i < glen; i++) {
+    for (i = 0, len = muA_size(R->groups); i < len; i++) {
         mu_LabelInfo *li = R->groups[i].multi_labels;
         qsort(li, muA_size(li), sizeof(mu_LabelInfo), muG_cmp_labelinfo);
     }
@@ -921,15 +1002,15 @@ typedef enum mu_Margin {
 typedef struct muR_LocCtx {
     mu_Report *R;
     mu_Source *src;
-    mu_Slice name, loc;
-    int pos;
+    mu_Slice   name, loc;
+    int        pos;
 } muR_LocCtx;
 
 static int muR_header(mu_Report *R) {
-    switch (R->kind) {
-    case MU_KIND_ERROR:   muX(muW_color(R, MU_COLOR_ERROR)); break;
-    case MU_KIND_WARNING: muX(muW_color(R, MU_COLOR_WARNING)); break;
-    default:              muX(muW_color(R, MU_COLOR_KIND)); break;
+    switch (R->level) {
+    case MU_ERROR:   muX(muW_color(R, MU_COLOR_ERROR)); break;
+    case MU_WARNING: muX(muW_color(R, MU_COLOR_WARNING)); break;
+    default:         muX(muW_color(R, MU_COLOR_KIND)); break;
     }
     if (R->code.p) {
         muX(muW_draw(R, MU_DRAW_LBOX, 1));
@@ -937,42 +1018,47 @@ static int muR_header(mu_Report *R) {
         muX(muW_draw(R, MU_DRAW_RBOX, 1));
     }
     muX(muW_draw(R, MU_DRAW_SPACE, 1));
-    muX(muW_write(R, R->kind_message));
+    switch (R->level) {
+    case MU_ERROR:   muX(muW_write(R, muD_literal("Error"))); break;
+    case MU_WARNING: muX(muW_write(R, muD_literal("Warning"))); break;
+    default:         muX(muW_write(R, R->custom_level)); break;
+    }
     muX(muW_draw(R, MU_DRAW_COLON, 1));
     muX(muW_color(R, MU_COLOR_RESET));
-    if (R->message.p) {
+    if (R->title.p) {
         muX(muW_draw(R, MU_DRAW_SPACE, 1));
-        muX(muW_write(R, R->message));
+        muX(muW_write(R, R->title));
     }
     return muW_draw(R, MU_DRAW_NEWLINE, 1);
 }
 
 static void muG_calc_location(muR_LocCtx *ctx, char *out, size_t size) {
     const mu_Group *g = ctx->R->cur_group;
-    unsigned line_no = 0, col = 0;
-    const mu_Line *line;
+    unsigned        line_no = 0, col = 0;
+    const mu_Line  *line;
     assert(ctx->pos >= 0);
     if (ctx->src == g->src && ctx->R->config->index_type == MU_INDEX_BYTE)
         ctx->pos = muM_bytes2chars(ctx->src, ctx->pos, &line);
     else {
         if (ctx->src != g->src)
             ctx->pos = muA_size(g->labels) ? (int)g->labels[0].start_char : -1;
-        line_no =
-            ctx->src->line_from_chars(ctx->src, (unsigned)ctx->pos, &line);
+        line_no = ctx->src->line_for_chars(ctx->src, ctx->pos, &line);
     }
     col = ctx->pos - line->offset + 1;
     line_no += ctx->src->line_no_offset + 1;
     ctx->loc = muD_snprintf(out, size, "%u:%u", line_no, col);
 }
 
-static int muR_reference(mu_Report *R, unsigned gidx, int pos, mu_Id src_id) {
+static int muR_reference(mu_Report *R, unsigned gidx, size_t pos,
+                         mu_Id src_id) {
     muR_LocCtx ctx;
-    int ellipsis = 0;
+
+    int  ellipsis = 0;
     char loc_buf[256];
     assert(src_id < muA_size(R->sources));
     assert(gidx < muA_size(R->groups));
     memset(&ctx, 0, sizeof(ctx));
-    ctx.R = R, ctx.src = &R->sources[src_id], ctx.pos = pos;
+    ctx.R = R, ctx.src = R->sources[src_id], ctx.pos = pos;
     if (pos < 0) ctx.loc = muD_literal("?:?");
     else muG_calc_location(&ctx, loc_buf, sizeof(loc_buf));
     ctx.name = ctx.src->name;
@@ -1018,10 +1104,10 @@ static int muR_empty_line(mu_Report *R) {
 }
 
 static int muR_lineno(mu_Report *R, unsigned line_no, int is_ellipsis) {
-    char buf[32];
+    char     buf[32];
     mu_Slice ln;
     if (line_no && is_ellipsis) {
-        line_no += R->cur_group->src->line_no_offset;
+        line_no += R->cur_group->src->line_no_offset + 1;
         ln = muD_snprintf(buf, sizeof(buf), "%u", line_no);
         muX(muW_draw(R, MU_DRAW_SPACE, R->line_no_width - muD_bytelen(ln)));
         muX(muW_color(R, MU_COLOR_MARGIN));
@@ -1038,36 +1124,38 @@ static int muR_lineno(mu_Report *R, unsigned line_no, int is_ellipsis) {
 }
 
 static int muR_margin(mu_Report *R, const mu_LineLabel *report, mu_Margin t) {
-    const mu_Group *g = R->cur_group;
-    const mu_Line *line = R->cur_line;
-    const mu_LabelCluster *lc = R->cur_cluster;
+    const mu_Group   *g = R->cur_group;
+    const mu_Line    *line = R->cur_line;
+    const mu_Cluster *c = R->cur_cluster;
+
     unsigned i, size = muA_size(g->multi_labels);
-    unsigned start_char = line->offset + (lc ? lc->min_col : 0);
-    unsigned end_char = line->offset + (lc ? lc->end_col : line->len);
+    size_t   start_char = line->offset + (c ? c->min_col : 0);
+    size_t   end_char = line->offset + (c ? c->end_col : line->len);
+    int      ptr_is_start = 0;
+
     const mu_LabelInfo *hbar = NULL, *ptr = NULL;
-    int ptr_is_start = 0;
     if (size == 0) return MU_OK;
     for (i = 0; i < size; ++i) {
         const mu_LabelInfo *li = &g->multi_labels[i];
         const mu_LabelInfo *vbar = NULL, *corner = NULL;
         int is_start = mu_asc(start_char, li->start_char, end_char);
         if (li->end_char >= start_char && li->start_char <= end_char) {
-            int is_margin = lc && lc->margin_label.info == li;
+            int is_margin = c && c->margin_label.info == li;
             int is_end = mu_asc(start_char, li->end_char, end_char);
             if (is_margin && t == MU_MARGIN_LINE)
                 ptr = li, ptr_is_start = is_start;
             else if (!is_start && (!is_end || t == MU_MARGIN_LINE)) vbar = li;
             else if (report && report->info == li) {
                 if (t != MU_MARGIN_ARROW && !is_start) vbar = li;
-                else if (is_margin) vbar = lc->margin_label.info;
+                else if (is_margin) vbar = c->margin_label.info;
                 if (t == MU_MARGIN_ARROW && (!is_margin || !is_start))
                     hbar = li, corner = li;
             } else if (report) {
-                unsigned j, llen = muA_size(lc->line_labels);
-                int info_is_below = 0;
+                unsigned j, llen = muA_size(c->line_labels);
+                int      info_is_below = 0;
                 if (!is_margin) {
                     for (j = 0; j < llen; ++j) {
-                        mu_LineLabel *ll = &lc->line_labels[j];
+                        mu_LineLabel *ll = &c->line_labels[j];
                         if (ll->info == li) break;
                         if ((info_is_below = (ll == report))) break;
                     }
@@ -1091,13 +1179,13 @@ static int muR_margin(mu_Report *R, const mu_LineLabel *report, mu_Margin t) {
             muX(muW_use_color(R, hbar->label, MU_COLOR_LABEL));
             if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
         } else if (vbar) {
-            mu_CharSet draw =
+            mu_Draw draw =
                 t == MU_MARGIN_ELLIPSIS ? MU_DRAW_VBAR_GAP : MU_DRAW_VBAR;
             muX(muW_use_color(R, vbar->label, MU_COLOR_LABEL));
             muX(muW_draw(R, draw, 1));
             if (!R->config->compact) muX(muW_draw(R, MU_DRAW_SPACE, 1));
         } else if (ptr && t == MU_MARGIN_LINE) {
-            mu_CharSet draw = MU_DRAW_HBAR;
+            mu_Draw draw = MU_DRAW_HBAR;
             muX(muW_use_color(R, ptr->label, MU_COLOR_LABEL));
             if (li == ptr) {
                 if (ptr_is_start) draw = MU_DRAW_LTOP;
@@ -1129,16 +1217,17 @@ static int muR_margin(mu_Report *R, const mu_LineLabel *report, mu_Margin t) {
 }
 
 static int muR_line(mu_Report *R, mu_Slice data) {
-    const mu_LabelCluster *lc = R->cur_cluster;
+    const mu_Cluster   *c = R->cur_cluster;
     const mu_LabelInfo *color = NULL;
-    int tw = R->config->tab_width;
+
+    int         tw = R->config->tab_width;
     const char *s;
-    unsigned i;
-    for (i = 0; i < lc->start_col; ++i) muD_advance(&data);
-    for (s = data.p; i < lc->end_col && data.p < data.e; ++i) {
+    unsigned    i;
+    for (i = 0; i < c->start_col; ++i) muD_advance(&data);
+    for (s = data.p; i < c->end_col && data.p < data.e; ++i) {
         const mu_LabelInfo *hl = muC_get_highlight(R, i);
-        const char *p = data.p;
-        utfint ch = muD_decode(&data);
+        const char         *p = data.p;
+        utfint              ch = muD_decode(&data);
         if (hl != color || ch == '\t') {
             int repeat = (ch == '\t' ? tw - (i % tw) : 1);
             if (color) muX(muW_use_color(R, color->label, MU_COLOR_LABEL));
@@ -1155,23 +1244,24 @@ static int muR_line(mu_Report *R, mu_Slice data) {
 }
 
 static int muR_arrows(mu_Report *R) {
-    const mu_LabelCluster *lc = R->cur_cluster;
+    const mu_Cluster *c = R->cur_cluster;
+
     const int *wc = R->width_cache;
-    unsigned row, row_len = muA_size(lc->line_labels);
-    int first = 1, col_max = R->cur_line->len;
+    unsigned   row, row_len = muA_size(c->line_labels);
+    int        first = 1, col_max = R->cur_line->len;
     for (row = 0; row < row_len; ++row) {
-        int has_ul = (first && R->config->underlines);
-        const mu_LineLabel *ll = &lc->line_labels[row];
-        mu_Col col;
+        int                 has_ul = (first && R->config->underlines);
+        const mu_LineLabel *ll = &c->line_labels[row];
+        mu_Col              col;
         if (!(ll->info->label->width
-              || (ll->info->multi && lc->margin_label.info != ll->info)))
+              || (ll->info->multi && c->margin_label.info != ll->info)))
             continue;
         if (!R->config->compact) {
             muX(muR_lineno(R, 0, false));
             muX(muR_margin(R, ll, MU_MARGIN_NONE));
-            if (lc->start_col > 0)
+            if (c->start_col > 0)
                 muX(muW_draw(R, MU_DRAW_SPACE, R->ellipsis_width));
-            for (col = lc->start_col; col < lc->arrow_len; ++col) {
+            for (col = c->start_col; col < c->arrow_len; ++col) {
                 int w = (col < col_max ? (wc[col + 1] - wc[col]) : 1);
                 const mu_LabelInfo *vbar = muC_get_vbar(R, row, col);
                 const mu_LabelInfo *underline =
@@ -1198,20 +1288,20 @@ static int muR_arrows(mu_Report *R) {
         }
         muX(muR_lineno(R, 0, false));
         muX(muR_margin(R, ll, MU_MARGIN_ARROW));
-        if (lc->start_col > 0) {
-            int e = (ll->info == lc->margin_label.info || !ll->draw_msg);
+        if (c->start_col > 0) {
+            int e = (ll->info == c->margin_label.info || !ll->draw_msg);
             muX(muW_color(R, e ? MU_COLOR_UNIMPORTANT : MU_COLOR_RESET));
             if (e) muX(muW_draw(R, MU_DRAW_ELLIPSIS, 1));
             else muX(muW_draw(R, MU_DRAW_SPACE, R->ellipsis_width));
         }
-        for (col = lc->start_col; col < lc->arrow_len; ++col) {
+        for (col = c->start_col; col < c->arrow_len; ++col) {
             int w = (col < col_max ? (wc[col + 1] - wc[col]) : 1);
             int lw = ll->info->label->width;
             int is_hbar = (col > ll->col) != ll->info->multi
                        || (ll->draw_msg && lw && col > ll->col);
             const mu_LabelInfo *vbar = muC_get_vbar(R, row, col);
-            if (col == ll->col && lc->margin_label.info != ll->info) {
-                mu_CharSet draw = MU_DRAW_RBOT;
+            if (col == ll->col && c->margin_label.info != ll->info) {
+                mu_Draw draw = MU_DRAW_RBOT;
                 if (!ll->info->multi) draw = MU_DRAW_LBOT;
                 else if (ll->draw_msg)
                     draw = (lw ? MU_DRAW_MBOT : MU_DRAW_RBOT);
@@ -1219,7 +1309,7 @@ static int muR_arrows(mu_Report *R) {
                 muX(muW_draw(R, draw, w));
                 muX(muW_draw(R, MU_DRAW_HBAR, w - 1));
             } else if (vbar && col != ll->col) {
-                mu_CharSet draw = MU_DRAW_VBAR, pad = MU_DRAW_SPACE;
+                mu_Draw draw = MU_DRAW_VBAR, pad = MU_DRAW_SPACE;
                 if (is_hbar) {
                     draw = MU_DRAW_XBAR;
                     if (R->config->cross_gap) draw = pad = MU_DRAW_HBAR;
@@ -1248,16 +1338,16 @@ static int muR_arrows(mu_Report *R) {
 }
 
 static int muR_cluster(mu_Report *R, unsigned line_no, mu_Slice data) {
-    const mu_LabelCluster *lc = R->cur_cluster;
+    const mu_Cluster *c = R->cur_cluster;
     muX(muR_lineno(R, line_no, 0));
     muX(muR_margin(R, NULL, MU_MARGIN_LINE));
-    if (lc->start_col > 0) {
+    if (c->start_col > 0) {
         muX(muW_color(R, MU_COLOR_UNIMPORTANT));
         muX(muW_draw(R, MU_DRAW_ELLIPSIS, 1));
         muX(muW_color(R, MU_COLOR_RESET));
     }
     muX(muR_line(R, data));
-    if (lc->end_col < R->cur_line->len) {
+    if (c->end_col < R->cur_line->len) {
         muX(muW_color(R, MU_COLOR_UNIMPORTANT));
         muX(muW_draw(R, MU_DRAW_ELLIPSIS, 1));
         muX(muW_color(R, MU_COLOR_RESET));
@@ -1267,11 +1357,12 @@ static int muR_cluster(mu_Report *R, unsigned line_no, mu_Slice data) {
 }
 
 static int muR_lines(mu_Report *R) {
-    int is_ellipsis = 0;
     const mu_Group *g = R->cur_group;
-    unsigned line_start = g->src->line_from_chars(g->src, g->start_char, NULL);
-    unsigned line_end = g->src->line_from_chars(g->src, g->end_char, NULL);
+    unsigned line_start = g->src->line_for_chars(g->src, g->start_char, NULL);
+    unsigned line_end = g->src->line_for_chars(g->src, g->end_char, NULL);
     unsigned line_no;
+
+    int is_ellipsis = 0;
     for (line_no = line_start; line_no <= line_end; ++line_no) {
         const mu_Line *line = g->src->get_line_info(g->src, line_no);
         R->cur_line = line;
@@ -1282,9 +1373,9 @@ static int muR_lines(mu_Report *R) {
                 muC_fill_widthcache(R, line->len, data);
             muC_fill_cluster(R);
             for (i = 0, size = muA_size(R->clusters); i < size; i++) {
-                mu_LabelCluster *lc = &R->clusters[i];
-                R->cur_cluster = lc;
-                if (R->config->limit_width > 0) muC_calc_colrange(R, lc);
+                mu_Cluster *c = &R->clusters[i];
+                R->cur_cluster = c;
+                if (R->config->limit_width > 0) muC_calc_colrange(R, c);
                 muX(muR_cluster(R, line_no, data));
             }
         } else if (!is_ellipsis && muM_line_in_label(line, g->multi_labels)) {
@@ -1301,9 +1392,10 @@ static int muR_lines(mu_Report *R) {
     return MU_OK;
 }
 
-static int muR_help_or_note(mu_Report *R, int is_help, mu_Slice *msgs) {
+static int muR_help_or_note(mu_Report *R, int is_help, const mu_Slice *msgs) {
     const mu_Slice st = is_help ? muD_literal("Help") : muD_literal("Note");
-    char buf[32];
+
+    char     buf[32];
     unsigned i, size;
     for (i = 0, size = muA_size(msgs); i < size; ++i) {
         mu_Slice t = st, msg;
@@ -1360,16 +1452,492 @@ static int muR_report(mu_Report *R, int pos, mu_Id src_id) {
     return MU_OK;
 }
 
+/* source */
+
+static void muS_update_lines(mu_Report *R, mu_Line **lines, mu_Slice data) {
+    mu_Line *current = muA_last(*lines);
+    if (current == NULL) {
+        current = muA_push(R, *lines);
+        memset(current, 0, sizeof(mu_Line));
+    }
+    while (data.p < data.e) {
+        const char *start = data.p;
+        if (*data.p == '\n') {
+            mu_Line *next = muA_push(R, *lines);
+            memset(next, 0, sizeof(mu_Line));
+            next->offset = current->offset + current->len + 1;
+            next->byte_offset = current->byte_offset + current->byte_len + 1;
+            current->newline = 1;
+            current = next;
+        }
+        muD_advance(&data);
+        current->len += 1;
+        current->byte_len += (size_t)(data.p - start);
+    }
+}
+
+static unsigned muS_find_forbytes(const mu_Line *lines, size_t pos) {
+    unsigned l = 0, u = muA_size(lines);
+    while (l < u) {
+        unsigned m = l + (u - l) / 2;
+        if (lines[m].byte_offset < pos) l = m + 1;
+        else u = m;
+    }
+    return l;
+}
+
+static unsigned muS_find_forchars(const mu_Line *lines, size_t pos) {
+    unsigned l = 0, u = muA_size(lines);
+    while (l < u) {
+        unsigned m = l + (u - l) / 2;
+        if (lines[m].offset < pos) l = m + 1;
+        else u = m;
+    }
+    return l;
+}
+
+MU_API mu_Source *mu_newsource(mu_Report *R, size_t size, const char *name) {
+    mu_BareSource *bsrc = (mu_BareSource *)R->allocf(R->ud, NULL, size, 0);
+    if (!bsrc) return NULL;
+    memset(bsrc, 0, size);
+    bsrc->R = R;
+    bsrc->size = size;
+    name = name ? name : "<unknown>";
+    bsrc->src.name = muD_slice(name, strlen(name));
+    bsrc->src.free = (void (*)(mu_Source *))mu_freesource;
+    bsrc->src.get_line_info = mu_getline;
+    bsrc->src.line_for_chars = mu_lineforchars;
+    bsrc->src.line_for_bytes = mu_lineforbytes;
+    return (mu_Source *)bsrc;
+}
+
+MU_API void mu_freesource(mu_Source *src) {
+    mu_BareSource *bsrc = (mu_BareSource *)src;
+
+    mu_Report *R = bsrc->R;
+    muA_delete(R, bsrc->lines);
+    R->allocf(R->ud, bsrc, 0, bsrc->size);
+}
+
+MU_API const mu_Line *mu_getline(mu_Source *src, unsigned line_no) {
+    mu_BareSource *bsrc = (mu_BareSource *)src;
+
+    size_t size = muA_size(bsrc->lines);
+    if (line_no >= size && bsrc->update_lines)
+        bsrc->update_lines(src), size = muA_size(bsrc->lines);
+    return &bsrc->lines[line_no < size ? line_no : size - 1];
+}
+
+MU_API unsigned mu_lineforchars(mu_Source *src, size_t char_pos,
+                                const mu_Line **out) {
+    mu_BareSource *bsrc = (mu_BareSource *)src;
+
+    mu_Line *last = muA_last(bsrc->lines);
+    unsigned line_no;
+    if (!last || char_pos >= last->offset + last->len)
+        if (bsrc->update_lines) bsrc->update_lines(src);
+    line_no = muS_find_forchars(bsrc->lines, char_pos);
+    *out = mu_getline(src, line_no);
+    return line_no;
+}
+
+MU_API unsigned mu_lineforbytes(mu_Source *src, size_t byte_pos,
+                                const mu_Line **out) {
+    mu_BareSource *bsrc = (mu_BareSource *)src;
+
+    mu_Line *last = muA_last(bsrc->lines);
+    unsigned line_no;
+    if (!last || byte_pos >= last->byte_offset + last->byte_len)
+        if (bsrc->update_lines) bsrc->update_lines(src);
+    line_no = muS_find_forbytes(bsrc->lines, byte_pos);
+    *out = mu_getline(src, line_no);
+    return line_no;
+}
+
+typedef struct mu_MemorySource {
+    mu_BareSource base;
+    mu_Slice      data;
+} mu_MemorySource;
+
+static int muS_memory_init(mu_Source *src) {
+    mu_MemorySource *msrc = (mu_MemorySource *)src;
+
+    mu_Report *R = msrc->base.R;
+    muS_update_lines(R, &msrc->base.lines, msrc->data);
+    return MU_OK;
+}
+
+static mu_Slice muS_memory_get_line(mu_Source *src, unsigned line_no) {
+    mu_MemorySource *msrc = (mu_MemorySource *)src;
+
+    const mu_Line *line = mu_getline(src, line_no);
+    return muD_slice(msrc->data.p + line->byte_offset, line->byte_len);
+}
+
+MU_API mu_Source *mu_memory_source(mu_Report *R, const char *data, size_t len,
+                                   const char *name) {
+    mu_MemorySource *msrc =
+        (mu_MemorySource *)mu_newsource(R, sizeof(mu_MemorySource), name);
+    if (!msrc) return NULL;
+    msrc->data = muD_slice(data, len);
+    msrc->base.src.init = muS_memory_init;
+    msrc->base.src.get_line = muS_memory_get_line;
+    return &msrc->base.src;
+}
+
+#if !MU_NO_STDIO
+
+typedef struct mu_FileSource {
+    mu_BareSource base;
+
+    FILE *fp;
+    char  own_fp;
+    char *buff;
+} mu_FileSource;
+
+static int muS_file_init(mu_Source *src) {
+    mu_FileSource *fsrc = (mu_FileSource *)src;
+
+    mu_Report *R = fsrc->base.R;
+    char       buff[BUFSIZ];
+    size_t     trim = 0;
+    if (fsrc->fp == NULL) {
+        fsrc->fp = fopen(src->name.p, "r");
+        if (fsrc->fp == NULL) return MU_ERRFILE;
+        fsrc->own_fp = 1;
+    }
+    while (!feof(fsrc->fp)) {
+        size_t   n = fread(buff + trim, 1, sizeof(buff) - trim, fsrc->fp);
+        mu_Slice data = muD_slice(buff, n += trim);
+        data.e -= (trim = muD_checkend(data));
+        muS_update_lines(R, &fsrc->base.lines, data);
+        if (ferror(fsrc->fp)) {
+            if (fsrc->own_fp) fclose(fsrc->fp);
+            fsrc->fp = NULL;
+            return MU_ERRFILE;
+        }
+        memmove(buff, buff + n - trim, trim);
+    }
+    if (trim) muS_update_lines(R, &fsrc->base.lines, muD_slice(buff, trim));
+    return MU_OK;
+}
+
+static void muS_file_free(mu_Source *src) {
+    mu_FileSource *fsrc = (mu_FileSource *)src;
+    if (fsrc->own_fp && fsrc->fp) fclose(fsrc->fp);
+    mu_freesource(src);
+}
+
+static mu_Slice muS_file_get_line(mu_Source *src, unsigned line_no) {
+    mu_FileSource *fsrc = (mu_FileSource *)src;
+
+    mu_Report     *R = fsrc->base.R;
+    const mu_Line *line = mu_getline(src, line_no);
+
+    char  *p = muA_reserve(R, fsrc->buff, line->byte_len);
+    int    seek;
+    size_t n;
+#if defined(__APPLE__) || defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L
+    seek = fseeko(fsrc->fp, line->byte_offset, SEEK_SET);
+#elif defined(_WIN32)
+    seek = _fseeki64(fsrc->fp, line->byte_offset, SEEK_SET);
+#else
+    if (line->byte_offset > LONG_MAX) return muD_slice(p, 0);
+    seek = fseek(fsrc->fp, (long)line->byte_offset, SEEK_SET);
+#endif
+    n = (seek == 0 ? fread(p, 1, line->byte_len, fsrc->fp) : 0);
+    return muD_slice(p, n);
+}
+
+MU_API mu_Source *mu_file_source(mu_Report *R, FILE *fp, const char *name) {
+    mu_FileSource *fsrc;
+
+    int own_fp = 0;
+    if (fp == NULL) {
+        fp = fopen(name, "r");
+        if (fp == NULL) return NULL;
+        own_fp = 1;
+    }
+    fsrc = (mu_FileSource *)mu_newsource(R, sizeof(mu_FileSource), name);
+    if (!fsrc) return (void)(own_fp && fclose(fp)), (mu_Source *)NULL;
+    fsrc->fp = fp;
+    fsrc->own_fp = own_fp;
+    fsrc->base.src.free = muS_file_free;
+    fsrc->base.src.get_line = muS_file_get_line;
+    return &fsrc->base.src;
+}
+
+#endif /* !MU_NO_STDIO */
+
+/* config */
+
+static mu_Chunk muM_ansi_charset[MU_DRAW_COUNT] = {
+    /* MU_DRAW_SPACE      */ "\x01 ",
+    /* MU_DRAW_NEWLINE    */ "\x01\n",
+    /* MU_DRAW_LBOX       */ "\x01[",
+    /* MU_DRAW_RBOX       */ "\x01]",
+    /* MU_DRAW_COLON      */ "\x01:",
+    /* MU_DRAW_HBAR       */ "\x01-",
+    /* MU_DRAW_VBAR       */ "\x01|",
+    /* MU_DRAW_XBAR       */ "\x01+",
+    /* MU_DRAW_VBAR_BREAK */ "\x01*",
+    /* MU_DRAW_VBAR_GAP   */ "\x01:",
+    /* MU_DRAW_UARROW     */ "\x01^",
+    /* MU_DRAW_RARROW     */ "\x01>",
+    /* MU_DRAW_LTOP       */ "\x01,",
+    /* MU_DRAW_MTOP       */ "\x01v",
+    /* MU_DRAW_RTOP       */ "\x01.",
+    /* MU_DRAW_LBOT       */ "\x01`",
+    /* MU_DRAW_MBOT       */ "\x01^",
+    /* MU_DRAW_RBOT       */ "\x01\\",
+    /* MU_DRAW_LCROSS     */ "\x01|",
+    /* MU_DRAW_RCROSS     */ "\x01|",
+    /* MU_DRAW_UNDERBAR   */ "\x01|",
+    /* MU_DRAW_UNDERLINE  */ "\x01^",
+    /* MU_DRAW_ELLIPSIS   */ "\x03...",
+};
+
+static mu_Chunk muM_unicode_charset[MU_DRAW_COUNT] = {
+    /* MU_DRAW_SPACE      */ "\x01 ",
+    /* MU_DRAW_NEWLINE    */ "\x01\n",
+    /* MU_DRAW_LBOX       */ "\x01[",
+    /* MU_DRAW_RBOX       */ "\x01]",
+    /* MU_DRAW_COLON      */ "\x01:",
+    /* MU_DRAW_HBAR       */ "\x03─",
+    /* MU_DRAW_VBAR       */ "\x03│",
+    /* MU_DRAW_XBAR       */ "\x03┼",
+    /* MU_DRAW_VBAR_BREAK */ "\x03┆",
+    /* MU_DRAW_VBAR_GAP   */ "\x03┊",
+    /* MU_DRAW_UARROW     */ "\x03▲",
+    /* MU_DRAW_RARROW     */ "\x03▶",
+    /* MU_DRAW_LTOP       */ "\x03╭",
+    /* MU_DRAW_MTOP       */ "\x03┬",
+    /* MU_DRAW_RTOP       */ "\x03╮",
+    /* MU_DRAW_LBOT       */ "\x03╰",
+    /* MU_DRAW_MBOT       */ "\x03┴",
+    /* MU_DRAW_RBOT       */ "\x03╯",
+    /* MU_DRAW_LCROSS     */ "\x03├",
+    /* MU_DRAW_RCROSS     */ "\x03┤",
+    /* MU_DRAW_UNDERBAR   */ "\x03┬",
+    /* MU_DRAW_UNDERLINE  */ "\x03─",
+    /* MU_DRAW_ELLIPSIS   */ "\x03…",
+};
+
+MU_API const mu_Charset *mu_ansi(void) { return &muM_ansi_charset; }
+MU_API const mu_Charset *mu_unicode(void) { return &muM_unicode_charset; }
+
+static mu_Chunk muM_default_color(void *ud, mu_ColorKind kind) {
+    switch (kind) {
+    case MU_COLOR_RESET:          return "\x04\x1b[0m";
+    case MU_COLOR_ERROR:          return "\x05\x1b[31;1m";
+    case MU_COLOR_WARNING:        return "\x05\x1b[33;1m";
+    case MU_COLOR_KIND:           return "\x0b\x1b[38;5;147m";
+    case MU_COLOR_MARGIN:         return "\x0b\x1b[38;5;246m";
+    case MU_COLOR_SKIPPED_MARGIN: return "\x0b\x1b[38;5;240m";
+    case MU_COLOR_UNIMPORTANT:    return "\x0b\x1b[38;5;249m";
+    case MU_COLOR_NOTE:           return "\x0b\x1b[35;5;115m";
+    case MU_COLOR_LABEL:          /* FALLTHROUGH */
+    default:                      return "\x05\x1b[39m";
+    }
+}
+
+static mu_Config muM_default = {
+    /* .cross_gap        = */ 1,
+    /* .compact          = */ 0,
+    /* .underlines       = */ 1,
+    /* .multiline_arrows = */ 1,
+    /* .tab_width        = */ 4,
+    /* .limit_width      = */ 0,
+    /* .ambiwidth        = */ 1,
+    /* .label_attach     = */ MU_ATTACH_MIDDLE,
+    /* .index_type       = */ MU_INDEX_CHAR,
+    /* .color            = */ muM_default_color,
+    /* .color_ud         = */ NULL,
+    /* .char_set         = */ &muM_unicode_charset,
+};
+
+/* clang-format off */
+MU_API void mu_initconfig(mu_Config *config)
+{ memcpy(config, &muM_default, sizeof(mu_Config)); }
+/* clang-format on */
+
 /* API */
 
+static void muR_cleanup(mu_Report *R) {
+    unsigned i, size;
+    if (!R) return;
+    R->cur_color_label = NULL;
+    R->cur_color_kind = MU_COLOR_RESET;
+    for (i = 0, size = muA_size(R->groups); i < size; i++)
+        muG_cleanup(R, &R->groups[i]);
+    muA_reset(R, R->groups);
+    for (i = 0, size = muA_size(R->clusters); i < size; i++)
+        muC_cleanup(R, &R->clusters[i]);
+    muA_reset(R, R->clusters);
+    muA_reset(R, R->ll_cache);
+    muA_reset(R, R->width_cache);
+}
+
+MU_API int mu_source(mu_Report *R, mu_Source *src) {
+    if (!R || !src) return MU_ERRPARAM;
+    *muA_push(R, R->sources) = src;
+    src->id = (mu_Id)(muA_size(R->sources) - 1);
+    src->gidx = MU_SRC_UNUSED;
+    return MU_OK;
+}
+
+MU_API int mu_writer(mu_Report *R, mu_Writer *writer, void *ud) {
+    if (!R) return MU_ERRPARAM;
+    return R->writer = writer, R->writer_ud = ud, MU_OK;
+}
+
+static void muM_calc_linenowidth(mu_Report *R) {
+    unsigned i, size;
+    mu_Width max_width = 0;
+    for (i = 0, size = muA_size(R->groups); i < size; i++) {
+        mu_Group      *g = &R->groups[i];
+        const mu_Line *line;
+        unsigned line_no = g->src->line_for_chars(g->src, g->end_char, &line);
+        unsigned w = 0, max = 1;
+        line_no += g->src->line_no_offset + 1;
+        while (line_no >= max) {
+            if (max * 10 < max) break; /* overflow */
+            w++, max *= 10;
+        }
+        max_width = mu_max(max_width, w);
+    }
+    R->line_no_width = max_width;
+}
+
 MU_API int mu_render(mu_Report *R, int pos, mu_Id src_id) {
-    int r = muR_report(R, pos, src_id);
-    /* cleanup report */
+    mu_Chunk ellipsis;
+    if (R->writer == NULL) return MU_OK;
+    muR_cleanup(R);
+    ellipsis = (*R->config->char_set)[MU_DRAW_ELLIPSIS];
+    R->ellipsis_width =
+        muD_strwidth(muD_slice(ellipsis + 1, *ellipsis), R->config->ambiwidth);
+    muM_calc_linenowidth(R);
+    return muR_report(R, pos, src_id);
+}
+
+static void *muM_allocf(void *ud, void *p, size_t nsize, size_t osize) {
+    if (p && nsize == 0) return free(p), (void *)NULL;
+    return realloc(p, nsize);
+}
+
+MU_API mu_Report *mu_new(mu_Allocf *allocf, void *ud) {
+    mu_Report *R;
+    if (allocf == NULL) allocf = muM_allocf;
+    R = (mu_Report *)allocf(ud, NULL, sizeof(mu_Report), 0);
+    if (!R) return NULL;
+    memset(R, 0, sizeof(mu_Report));
+    R->allocf = allocf;
+    R->ud = ud;
+    R->config = &muM_default;
+    return R;
+}
+
+MU_API void mu_reset(mu_Report *R) {
+    unsigned i, size;
+    if (!R) return;
+    muR_cleanup(R);
+    for (i = 0, size = muA_size(R->sources); i < size; i++)
+        if (R->sources[i]->free) R->sources[i]->free(R->sources[i]);
+    muA_reset(R, R->sources);
+    muA_reset(R, R->labels);
+    muA_reset(R, R->helps);
+    muA_reset(R, R->notes);
+}
+
+MU_API void mu_delete(mu_Report *R) {
+    if (!R) return;
+    mu_reset(R);
+    muA_delete(R, R->groups);
+    muA_delete(R, R->clusters);
+    muA_delete(R, R->ll_cache);
+    muA_delete(R, R->width_cache);
     muA_delete(R, R->sources);
     muA_delete(R, R->labels);
     muA_delete(R, R->helps);
     muA_delete(R, R->notes);
-    return r;
+    R->allocf(R->ud, R, 0, sizeof(mu_Report));
+}
+
+MU_API int mu_config(mu_Report *R, const mu_Config *config) {
+    if (!R || !config || muA_size(R->labels) > 0) return MU_ERRPARAM;
+    R->config = config;
+    return MU_OK;
+}
+
+MU_API int mu_title(mu_Report *R, mu_Level l, const char *cl, const char *msg) {
+    if (!R) return MU_ERRPARAM;
+    R->level = l;
+    R->custom_level = muD_slice(cl, cl ? strlen(cl) : 0);
+    R->title = muD_slice(msg, msg ? strlen(msg) : 0);
+    return MU_OK;
+}
+
+MU_API int mu_code(mu_Report *R, const char *code) {
+    if (!R) return MU_ERRPARAM;
+    return R->code = muD_slice(code, code ? strlen(code) : 0), MU_OK;
+}
+
+MU_API int mu_label(mu_Report *R, size_t start, size_t end, mu_Id src_id) {
+    mu_Label *label;
+    if (!R) return MU_ERRPARAM;
+    label = muA_push(R, R->labels);
+    memset(label, 0, sizeof(mu_Label));
+    label->start_pos = start;
+    label->end_pos = end;
+    label->src_id = src_id;
+    return MU_OK;
+}
+
+static mu_Label *muM_checklabel(mu_Report *R) {
+    size_t size;
+    if (!R || (size = muA_size(R->labels)) == 0) return NULL;
+    return &R->labels[size - 1];
+}
+
+MU_API int mu_message(mu_Report *R, const char *msg, int width) {
+    mu_Label *label = muM_checklabel(R);
+    if (!label || !msg) return MU_ERRPARAM;
+    label->message = muD_slice(msg, msg ? strlen(msg) : 0);
+    if (width > 0) label->width = width;
+    else label->width = muD_strwidth(label->message, R->config->ambiwidth);
+    return MU_OK;
+}
+
+MU_API int mu_color(mu_Report *R, mu_Color *color, void *ud) {
+    mu_Label *label = muM_checklabel(R);
+    if (!label) return MU_ERRPARAM;
+    return label->color = color, label->ud = ud, MU_OK;
+}
+
+MU_API int mu_order(mu_Report *R, int order) {
+    mu_Label *label = muM_checklabel(R);
+    if (!label) return MU_ERRPARAM;
+    return label->order = order, MU_OK;
+}
+
+MU_API int mu_priority(mu_Report *R, int priority) {
+    mu_Label *label = muM_checklabel(R);
+    if (!label) return MU_ERRPARAM;
+    return label->priority = priority, MU_OK;
+}
+
+MU_API int mu_help(mu_Report *R, const char *help_msg) {
+    mu_Slice *msg;
+    if (!R || !help_msg) return MU_ERRPARAM;
+    msg = muA_push(R, R->helps);
+    return *msg = muD_slice(help_msg, (help_msg ? strlen(help_msg) : 0)), MU_OK;
+}
+
+MU_API int mu_note(mu_Report *R, const char *note_msg) {
+    mu_Slice *msg;
+    if (!R || !note_msg) return MU_ERRPARAM;
+    msg = muA_push(R, R->notes);
+    return *msg = muD_slice(note_msg, (note_msg ? strlen(note_msg) : 0)), MU_OK;
 }
 
 MU_NS_END

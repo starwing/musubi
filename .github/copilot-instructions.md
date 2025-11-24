@@ -3,6 +3,7 @@
 > **Related documents**: 
 > - Project Structure: project-structure.md in .github - Technical architecture and design decisions
 > - Development Roadmap: roadmap.md in .github - TODO, plans, and completed work
+> - C Port Notes: c_port.md in .github - C implementation details, API constraints, and design decisions
 
 **IMPORTANT for AI agents**: When documenting challenging coverage cases, complex algorithms, or significant architectural decisions, update `project-structure.md` (not this file). This instructions file focuses on workflows and conventions.
 
