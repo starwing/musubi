@@ -59,10 +59,125 @@ static mu_Config *lmu_checkconfig(lua_State *L, int idx) {
     return (mu_Config *)luaL_checkudata(L, idx, LMU_CONFIG_TYPE);
 }
 
+static int Lmu_config_new(lua_State *L) {
+    int ty = lua_type(L, 1);
+
+    mu_Config *config = (mu_Config *)lua_newuserdata(L, sizeof(mu_Config));
+    mu_initconfig(config);
+    luaL_getmetatable(L, LMU_CONFIG_TYPE); /* 2 */
+    lua_pushvalue(L, -1);                  /* 2->3 */
+    lua_setmetatable(L, -3);               /* (3) */
+    if (ty == LUA_TTABLE) {
+        lua_pushnil(L);           /* 3 */
+        while (lua_next(L, 1)) {  /* t[3]->3,4 */
+            lua_pushvalue(L, -5); /* 1->5 */
+            lua_pushvalue(L, -3); /* 3->6 */
+            if (lua_gettable(L, -5) == LUA_TNIL)
+                luaL_error(L, "invalid config field '%s'", lua_tostring(L, -4));
+            lua_insert(L, -2); /* c mt k v f c */
+            lua_pushvalue(L, -3);
+            lua_call(L, 2, 0); /* c mt k v */
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    return 1;
+}
+
+static int Lmu_config_libcall(lua_State *L) {
+    lua_remove(L, 1);
+    return Lmu_config_new(L);
+}
+
+static int Lmu_config_cross_gap(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->cross_gap = lua_toboolean(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_compact(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->compact = lua_toboolean(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_underlines(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->underlines = lua_toboolean(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_multiline_arrows(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->multiline_arrows = lua_toboolean(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_tab_width(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->tab_width = (int)luaL_checkinteger(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_limit_width(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->limit_width = (int)luaL_optinteger(L, 2, 0);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_ambiwidth(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->ambiwidth = (int)luaL_checkinteger(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_label_attach(lua_State *L) {
+    const char *opts[] = {"middle", "start", "end", NULL};
+    mu_Config  *config = lmu_checkconfig(L, 1);
+    config->label_attach = luaL_checkoption(L, 2, "middle", opts);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_index_type(lua_State *L) {
+    const char *opts[] = {"char", "byte", NULL};
+    mu_Config  *config = lmu_checkconfig(L, 1);
+    config->index_type = luaL_checkoption(L, 2, "char", opts);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_color(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    if (lua_toboolean(L, 2)) config->color = mu_default_color;
+    else config->color = NULL;
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_char_set(lua_State *L) {
+    mu_Config  *config = lmu_checkconfig(L, 1);
+    const char *opts[] = {"ansi", "unicode", NULL};
+    int         opt = luaL_checkoption(L, 2, "unicode", opts);
+    if (opt == 0) config->char_set = mu_ansi();
+    else config->char_set = mu_unicode();
+    return lua_settop(L, 1), 1;
+}
+
 static void lmu_openconfig(lua_State *L) {
     luaL_Reg libs[] = {
         {"__index", NULL},
-        {"new", NULL},
+#define ENTRY(name) {#name, Lmu_config_##name}
+        ENTRY(new),
+        ENTRY(cross_gap),
+        ENTRY(compact),
+        ENTRY(underlines),
+        ENTRY(multiline_arrows),
+        ENTRY(tab_width),
+        ENTRY(limit_width),
+        ENTRY(ambiwidth),
+        ENTRY(label_attach),
+        ENTRY(index_type),
+        ENTRY(color),
+        ENTRY(char_set),
+#undef ENTRY
         {NULL, NULL},
     };
     if (luaL_newmetatable(L, LMU_CONFIG_TYPE)) {
@@ -70,17 +185,6 @@ static void lmu_openconfig(lua_State *L) {
         lua_pushvalue(L, -1);
         lua_setfield(L, -2, "__index");
     }
-}
-
-/* source */
-
-static void lmu_opensource(lua_State *L) {
-    luaL_Reg libs[] = {
-        {"memory", NULL},
-        {"file", NULL},
-        {NULL, NULL},
-    };
-    luaL_newlib(L, libs);
 }
 
 /* report */
@@ -305,14 +409,23 @@ static int Lmu_report_note(lua_State *L) {
 
 static int Lmu_report_source(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
-    size_t      len;
-    const char *s = luaL_checklstring(L, 2, &len);
+    mu_Source  *src;
+    int         ty = lua_type(L, 2);
     const char *name = luaL_optstring(L, 3, "<unknown>");
-    mu_Source  *src = mu_memory_source(lr->R, s, len, name);
+    luaL_argcheck(L, ty == LUA_TSTRING || ty == LUA_TUSERDATA, 2,
+                  "string expected");
+    if (ty == LUA_TUSERDATA) {
+        FILE **fp = (FILE **)luaL_checkudata(L, 2, "FILE*");
+        src = mu_file_source(lr->R, *fp, name);
+    } else {
+        size_t      len;
+        const char *s = luaL_checklstring(L, 2, &len);
+        src = mu_memory_source(lr->R, s, len, name);
+    }
     lmu_checkerror(L, mu_source(lr->R, src));
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
-    luaL_ref(L, -2); /* store the source string */
+    luaL_ref(L, -2); /* store the source string/file */
     lua_pushvalue(L, 3);
     luaL_ref(L, -2); /* store the source name */
     return lua_settop(L, 1), 1;
@@ -399,8 +512,6 @@ LUAMOD_API int luaopen_musubi(lua_State *L) {
     lua_setfield(L, -2, "colorgen");
     lmu_openconfig(L);
     lua_setfield(L, -2, "config");
-    lmu_opensource(L);
-    lua_setfield(L, -2, "source");
     lmu_openreport(L);
     lua_setfield(L, -2, "report");
     lua_pushliteral(L, MU_VERSION);

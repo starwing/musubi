@@ -157,6 +157,8 @@ typedef mu_Chunk mu_Charset[MU_DRAW_COUNT];
 MU_API const mu_Charset *mu_ansi(void);
 MU_API const mu_Charset *mu_unicode(void);
 
+MU_API mu_Chunk mu_default_color(void *ud, mu_ColorKind kind);
+
 MU_API void mu_initconfig(mu_Config *config);
 
 struct mu_Config {
@@ -436,21 +438,9 @@ static void muA_reserve_(mu_Report *R, void **A, size_t esize, unsigned n) {
 /* clang-format off */
 static size_t muD_bytelen(mu_Slice s) { return (size_t)(s.e - s.p); }
 
-static void muD_cleanup(mu_Report *R, mu_Data *d)
-{ if (d->buf) muA_delete(R, d->buf); d->buf = NULL, d->s.p = d->s.e = NULL; }
-
 static mu_Slice muD_slice(const char *p, size_t len)
 { mu_Slice s; s.p = p, s.e = p + len; return s; }
 /* clang-format on */
-
-static mu_Data muD_new(mu_Report *R, const char *s) {
-    mu_Data d = {{NULL, NULL}, NULL};
-    size_t  len = strlen(s);
-    d.buf = muA_reserve(R, d.buf, len + 1);
-    memcpy(d.buf, s, len + 1);
-    d.s.p = d.buf, d.s.e = d.buf + len;
-    return d;
-}
 
 static mu_Slice muD_snprintf(char *buf, size_t bufsize, const char *fmt, ...) {
     va_list args;
@@ -613,7 +603,7 @@ static int muW_color(mu_Report *R, mu_ColorKind k) {
             code = color(ud, MU_COLOR_RESET);
             muX(muW_write(R, muD_slice(code + 1, (size_t)*code)));
         }
-        if (k != MU_COLOR_RESET) {
+        if (k && k != R->cur_color_kind) {
             code = color(ud, k);
             muX(muW_write(R, muD_slice(code + 1, (size_t)*code)));
         }
@@ -1245,7 +1235,7 @@ static int muR_margin(mu_Report *R, const mu_LineLabel *report, mu_Margin t) {
         muX(muW_use_color(R, NULL, MU_COLOR_RESET));
         muX(muW_draw(R, MU_DRAW_SPACE, R->config->compact ? 1 : 2));
     }
-    muX(muW_use_color(R, NULL, MU_COLOR_RESET));
+    /* don't reset here, to connect lines of arrows */
     return MU_OK;
 }
 
@@ -1263,16 +1253,20 @@ static int muR_line(mu_Report *R, mu_Slice data) {
         utfint              ch = muD_decode(&data);
         if (hl != color || ch == '\t') {
             int repeat = (ch == '\t' ? tw - (i % tw) : 1);
-            if (color) muX(muW_use_color(R, color->label, MU_COLOR_LABEL));
-            else muX(muW_use_color(R, NULL, MU_COLOR_UNIMPORTANT));
-            if (s < p) muX(muW_write(R, muD_slice(s, p - s)));
+            if (s < p) {
+                if (color) muX(muW_use_color(R, color->label, MU_COLOR_LABEL));
+                else muX(muW_use_color(R, NULL, MU_COLOR_UNIMPORTANT));
+                muX(muW_write(R, muD_slice(s, p - s)));
+            }
             if (ch == '\t') muX(muW_draw(R, MU_DRAW_SPACE, repeat));
             color = hl, s = p + (ch == '\t');
         }
     }
-    if (color) muX(muW_use_color(R, color->label, MU_COLOR_LABEL));
-    else muX(muW_use_color(R, NULL, MU_COLOR_UNIMPORTANT));
-    if (s < data.p) muX(muW_write(R, muD_slice(s, data.p - s)));
+    if (s < data.p) {
+        if (color) muX(muW_use_color(R, color->label, MU_COLOR_LABEL));
+        else muX(muW_use_color(R, NULL, MU_COLOR_UNIMPORTANT));
+        muX(muW_write(R, muD_slice(s, data.p - s)));
+    }
     return muW_use_color(R, NULL, MU_COLOR_RESET);
 }
 
@@ -1753,7 +1747,7 @@ static mu_Chunk muM_unicode_charset[MU_DRAW_COUNT] = {
 MU_API const mu_Charset *mu_ansi(void) { return &muM_ansi_charset; }
 MU_API const mu_Charset *mu_unicode(void) { return &muM_unicode_charset; }
 
-static mu_Chunk muM_default_color(void *ud, mu_ColorKind kind) {
+MU_API mu_Chunk mu_default_color(void *ud, mu_ColorKind kind) {
     switch (kind) {
     case MU_COLOR_RESET:          return "\x04\x1b[0m";
     case MU_COLOR_ERROR:          return "\x07\x1b[31;1m";
@@ -1778,7 +1772,7 @@ static mu_Config muM_default = {
     /* .ambiwidth        = */ 1,
     /* .label_attach     = */ MU_ATTACH_MIDDLE,
     /* .index_type       = */ MU_INDEX_CHAR,
-    /* .color            = */ muM_default_color,
+    /* .color            = */ mu_default_color,
     /* .color_ud         = */ NULL,
     /* .char_set         = */ &muM_unicode_charset,
 };
