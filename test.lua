@@ -4,7 +4,7 @@ local ariadne = require "ariadne"
 -- print a demo
 if #arg == 0 then
     local cg = ariadne.ColorGenerator.new()
-    print(
+    local report =
         ariadne.Report.build("Error", 12)
         :with_code "3"
         :with_message("Incompatible types")
@@ -28,7 +28,9 @@ def five = match () in {
 def six =
     five
     + 1
-]], "sample.tao")))
+]], "sample.tao"))
+    print("report count=", #report)
+    print(report)
 end
 
 ---@param text string

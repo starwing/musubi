@@ -116,7 +116,7 @@ end
 --- @type fun(self: ColorGenerator): Color
 local function cg_next(self)
     for i = 1, #self do
-        self[i] = self[i] + 40503 * (i * 4 + 1130)
+        self[i] = self[i] + 40503 * ((i - 1) * 4 + 1130)
         self[i] = self[i] % 65536
     end
     local code = 16 + ((self[3] / 65535 * (1 - self.min_brightness)
@@ -126,9 +126,7 @@ local function cg_next(self)
         + ((self[1] / 65535 * (1 - self.min_brightness)
             + self.min_brightness) * 180.0)
     return function(k)
-        if k == "reset" then
-            return "\x1b[0m"
-        end
+        if k == "reset" then return "\x1b[0m" end
         return "\x1b[38;5;" .. math.floor(code) .. "m"
     end
 end
