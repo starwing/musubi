@@ -929,105 +929,120 @@ function Writer.render_line(W, lc, group, cfg)
     ):gsub("\t", ""))):reset()
 end
 
---- Render arrows for a line
---- @type fun(W: Writer, lc: LabelCluster, group: Group)
-function Writer.render_arrows(W, lc, group)
+--- Render underline row for a line
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, row: integer, first: boolean)
+function Writer.render_underline_row(W, lc, group, row, first)
     local cfg = W.config
     local draw = cfg.char_set
     local src = group.src
+    local ll = lc.line_labels[row]
+    -- Margin alternate
+    W:render_lineno(nil, false)
+    W:render_margin(lc, group, ll, "none")
+    if lc.start_col > 1 then W:padding(W.ellipsis_width) end
+    for col = lc.start_col, lc.arrow_len do
+        local width = 1
+        if col <= lc.line.len then
+            width = src_char_width(src, lc.line.byte_offset, col, cfg)
+        end
+        local vbar = lc_get_vbar(lc, col, row)
+        local underline
+        if first then
+            underline = lc_get_underline(lc, col, cfg)
+        end
+        if vbar and underline then
+            local a = draw.underbar
+            W:use_color(vbar.info.label.color):label(a)
+            W:padding(width - 1, draw.underline)
+        elseif vbar then
+            local a = draw.vbar
+            if vbar.info.multi and first and cfg.multiline_arrows then
+                a = draw.uarrow
+            end
+            W:use_color(vbar.info.label.color):label(a):reset()
+            W:padding(width - 1)
+        elseif underline then
+            W:use_color(underline.info.label.color)
+            W:label():padding(width, draw.underline)
+        else
+            W:reset():padding(width)
+        end
+    end
+    W:reset "\n"
+end
 
-    -- Arrows
+--- Render arrow row for a line
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, row: integer, first: boolean)
+function Writer.render_arrow_row(W, lc, group, row, first)
+    local cfg = W.config
+    local draw = cfg.char_set
+    local src = group.src
+    local ll = lc.line_labels[row]
+
+    -- Margin
+    W:render_lineno(nil, false)
+    W:render_margin(lc, group, ll, "arrow")
+
+    -- Lines
+    if lc.start_col > 1 then
+        local a = " "
+        if ll == lc.margin_label or not ll.draw_msg then
+            a = draw.hbar
+        end
+        W:padding(W.ellipsis_width, a)
+    end
+    for col = lc.start_col, lc.arrow_len do
+        local width = 1
+        if col <= lc.line.len then
+            width = src_char_width(src, lc.line.byte_offset, col, cfg)
+        end
+        local is_hbar = (col > ll.col) ~= ll.info.multi or
+            ll.draw_msg and ll.info.label.message and col > ll.col
+        local vbar = lc_get_vbar(lc, col, row)
+        if col == ll.col and lc.margin_label ~= ll then
+            local a = draw.rbot
+            if not ll.info.multi then
+                a = draw.lbot
+            elseif ll.draw_msg then
+                a = ll.info.label.message and draw.mbot or draw.rbot
+            end
+            W:use_color(ll.info.label.color):label(a):padding(width - 1, draw.hbar)
+        elseif vbar and col ~= ll.col then
+            local a, b = draw.vbar, ' '
+            if is_hbar then
+                a = draw.xbar
+                if cfg.cross_gap then
+                    a, b = draw.hbar, draw.hbar
+                end
+            elseif vbar.info.multi and first and cfg.compact then
+                a = draw.uarrow
+            end
+            W:use_color(vbar.info.label.color):label(a):padding(width - 1, b)
+        elseif is_hbar then
+            W:use_color(ll.info.label.color):label():padding(width, draw.hbar)
+        else
+            W:reset():padding(width)
+        end
+    end
+    W:reset()
+    if ll.draw_msg then
+        W " " (ll.info.label.message)
+    end
+    W "\n"
+end
+
+--- Render arrows for a line
+--- @type fun(W: Writer, lc: LabelCluster, group: Group)
+function Writer.render_arrows(W, lc, group)
     local first = true
     for row, ll in ipairs(lc.line_labels) do
         -- No message to draw thus no arrow to draw
         if ll.info.label.message or (ll.info.multi and lc.margin_label ~= ll) then
             if not W.config.compact then
-                -- Margin alternate
-                W:render_lineno(nil, false)
-                W:render_margin(lc, group, ll, "none")
-                if lc.start_col > 1 then W:padding(W.ellipsis_width) end
-                for col = lc.start_col, lc.arrow_len do
-                    local width = 1
-                    if col <= lc.line.len then
-                        width = src_char_width(src, lc.line.byte_offset, col, cfg)
-                    end
-                    local vbar = lc_get_vbar(lc, col, row)
-                    local underline
-                    if first then
-                        underline = lc_get_underline(lc, col, cfg)
-                    end
-                    if vbar and underline then
-                        local a = draw.underbar
-                        W:use_color(vbar.info.label.color):label(a)
-                        W:padding(width - 1, draw.underline)
-                    elseif vbar then
-                        local a = draw.vbar
-                        if vbar.info.multi and first and cfg.multiline_arrows then
-                            a = draw.uarrow
-                        end
-                        W:use_color(vbar.info.label.color):label(a):reset()
-                        W:padding(width - 1)
-                    elseif underline then
-                        W:use_color(underline.info.label.color)
-                        W:label():padding(width, draw.underline)
-                    else
-                        W:reset():padding(width)
-                    end
-                end
-                W:reset "\n"
+                W:render_underline_row(lc, group, row, first)
             end
-
-            -- Margin
-            W:render_lineno(nil, false)
-            W:render_margin(lc, group, ll, "arrow")
-
-            -- Lines
-            if lc.start_col > 1 then
-                local a = " "
-                if ll == lc.margin_label or not ll.draw_msg then
-                    a = draw.hbar
-                end
-                W:padding(W.ellipsis_width, a)
-            end
-            for col = lc.start_col, lc.arrow_len do
-                local width = 1
-                if col <= lc.line.len then
-                    width = src_char_width(src, lc.line.byte_offset, col, cfg)
-                end
-                local is_hbar = (col > ll.col) ~= ll.info.multi or
-                    ll.draw_msg and ll.info.label.message and col > ll.col
-                local vbar = lc_get_vbar(lc, col, row)
-                if col == ll.col and lc.margin_label ~= ll then
-                    local a = draw.rbot
-                    if not ll.info.multi then
-                        a = draw.lbot
-                    elseif ll.draw_msg then
-                        a = ll.info.label.message and draw.mbot or draw.rbot
-                    end
-                    W:use_color(ll.info.label.color):label(a):padding(width - 1, draw.hbar)
-                elseif vbar and col ~= ll.col then
-                    local a, b = draw.vbar, ' '
-                    if is_hbar then
-                        a = draw.xbar
-                        if cfg.cross_gap then
-                            a, b = draw.hbar, draw.hbar
-                        end
-                    elseif vbar.info.multi and first and cfg.compact then
-                        a = draw.uarrow
-                    end
-                    W:use_color(vbar.info.label.color):label(a):padding(width - 1, b)
-                elseif is_hbar then
-                    W:use_color(ll.info.label.color):label():padding(width, draw.hbar)
-                else
-                    W:reset():padding(width)
-                end
-            end
+            W:render_arrow_row(lc, group, row, first)
             first = false
-            W:reset()
-            if ll.draw_msg then
-                W " " (ll.info.label.message)
-            end
-            W "\n"
         end
     end
 end
