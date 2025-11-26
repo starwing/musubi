@@ -107,9 +107,9 @@ local characters = {
 --- @field min_brightness number
 
 --- Creates a new ColorGenerator
---- @type fun(): ColorGenerator
-local function cg_new()
-    return { 30000, 15000, 35000, min_brightness = 0.5, }
+--- @type fun(min_brightness?: number): ColorGenerator
+local function cg_new(min_brightness)
+    return { 30000, 15000, 35000, min_brightness = min_brightness or 0.5, }
 end
 
 --- returns the next color code
@@ -134,13 +134,14 @@ end
 
 -- #region cache
 --- @class (exact) Cache
---- @field fetch? fun(self: Cache, id: string): Source
+--- @field fetch? fun(self: Cache, id: integer|string): Source
 --- @field [string] Source
+--- @field [integer] Source
 
 ---@type fun(): Cache
 local function cache_new() return {} end
 
---- @type fun(self: Cache, id: string): Source?
+--- @type fun(self: Cache, id: integer|string): Source?
 local function cache_fetch(self, id)
     if self.fetch then return self:fetch(id) end
     return self[id]
@@ -356,7 +357,7 @@ end
 --- @class (exact) Label
 --- @field start_pos  integer start position in the source
 --- @field end_pos?   integer end position in the source, nil for single position
---- @field source_id? string source id this label belongs to
+--- @field src_id     integer|string source id this label belongs to
 --- @field message?   string the message to display for this label
 --- @field width      integer display width of the message
 --- @field color?     Color the color for this label
@@ -364,12 +365,12 @@ end
 --- @field priority   integer priority of this label when merging overlapping labels
 
 --- Creates a new Label
---- @type fun(start_pos: integer, end_pos?: integer, source_id?: string): Label
-local function label_new(start_pos, end_pos, source_id)
+--- @type fun(start_pos: integer, end_pos?: integer, src_id: integer|string): Label
+local function label_new(start_pos, end_pos, src_id)
     return {
         start_pos = start_pos,
         end_pos = end_pos,
-        source_id = source_id,
+        src_id = src_id,
         message = nil,
         width = 0,
         color = nil,
@@ -389,21 +390,21 @@ end
 
 -- #region report
 --- @class (exact) Report
---- @field kind string
+--- @field kind? string
 --- @field code? string
 --- @field message? string
 --- @field notes string[]
 --- @field helps string[]
 --- @field pos integer
---- @field id? string
+--- @field id integer|string
 --- @field labels Label[]
 --- @field config Config
 
 --- creates a new Report
---- @type fun(kind: string, pos: integer, id?: string): Report
-local function report_new(kind, pos, id)
+--- @type fun(pos: integer, id: integer|string): Report
+local function report_new(pos, id)
     return {
-        kind = kind,
+        kind = nil,
         code = nil,
         message = nil,
         notes = {},
@@ -1071,7 +1072,7 @@ end
 
 -- #region source_group
 
-local MIN_FILENAME_WIDTH = 8
+local MIN_FILENAME_WIDTH = 12 -- 8 + 1 + 3
 
 ---@class (exact) Group
 ---@field src Source
@@ -1116,26 +1117,25 @@ local function sg_last_line_no(group)
 end
 
 --- Calculate the line and column string for a report position
---- @type fun(group: Group, ctx_id: string?, ctx_pos: integer, cfg: Config): string
-local function sg_calc_location(group, ctx_id, ctx_pos, cfg)
-    local src = group.src
+--- @type fun(group: Group, src: Source, pos: integer, cfg: Config): string
+local function sg_calc_location(group, src, pos, cfg)
     ---@type Line?, integer?, integer?
     local line, line_no, col_no
-    if not ctx_id or src.id == ctx_id then
+    if src == group.src then
         if cfg.index_type == "byte" then
-            line_no = src_byte_line(src, ctx_pos)
+            line_no = src_byte_line(src, pos)
             line = assert(src[line_no], "byte offset out of range")
             local _, line_byte_end = line_span_byte(line)
-            if line and ctx_pos <= line_byte_end then
-                col_no = assert(utf8_len(src.text, line.byte_offset, ctx_pos - 1)) + 1
+            if line and pos <= line_byte_end then
+                col_no = assert(utf8_len(src.text, line.byte_offset, pos - 1)) + 1
             else
                 line_no = nil
             end
         else
-            line_no = src_offset_line(src, ctx_pos)
+            line_no = src_offset_line(src, pos)
             line = src[line_no]
             if line then
-                col_no = line_col(line, ctx_pos)
+                col_no = line_col(line, pos)
             end
         end
     else
@@ -1151,12 +1151,12 @@ local function sg_calc_location(group, ctx_id, ctx_pos, cfg)
 end
 
 --- Render the reference line for a source group
---- @type fun(W: Writer, idx: integer, group: Group, report_id: string?, report_pos: integer)
-function Writer.render_reference(W, idx, group, report_id, report_pos)
+--- @type fun(W: Writer, idx: integer, group: Group, src: Source, pos: integer)
+function Writer.render_reference(W, idx, group, src, pos)
     local cfg = W.config
     local draw = cfg.char_set
     local id = group.src.id:gsub("\t", " ")
-    local loc = sg_calc_location(group, report_id, report_pos, cfg)
+    local loc = sg_calc_location(group, src, pos, cfg)
     if cfg.limit_width then
         local id_width = utf8.width(id)
         -- assume draw's components' width are all 1
@@ -1164,9 +1164,11 @@ function Writer.render_reference(W, idx, group, report_id, report_pos)
         if id_width + fixed_width > cfg.limit_width then
             local avail = cfg.limit_width - fixed_width - W.ellipsis_width
             if avail < MIN_FILENAME_WIDTH then
-                avail = MIN_FILENAME_WIDTH
+                avail = math.min(MIN_FILENAME_WIDTH, id_width)
             end
-            id = draw.ellipsis .. id:sub((utf8.widthlimit(id, -avail)))
+            if avail < id_width then
+                id = draw.ellipsis .. id:sub((utf8.widthlimit(id, -avail)))
+            end
         end
     end
     W:padding(W.line_no_width + 2)
@@ -1331,22 +1333,21 @@ local function calc_line_no_width(groups)
 end
 
 --- creates a new RenderContext
---- @type fun(id: string, cache: Cache, labels: Label[], cfg: Config): Writer, Group[]
+--- @type fun(id: integer|string, cache: Cache, labels: Label[], cfg: Config): Writer, Group[]
 local function context_new(id, cache, labels, cfg)
     -- group labels by source
     ---@type Group[]
     local groups = {}
     for _, label in ipairs(labels) do
-        local src = assert(cache_fetch(cache, label.source_id), "source not found")
+        local src = assert(cache_fetch(cache, label.src_id), "source not found")
         local info = info_new(label, src, cfg.index_type)
-        local key = label.source_id or id or "<unknown>"
-        local group = groups[key]
+        local group = groups[src]
         if group then
             sg_add_label_info(group, info)
         else
             group = sg_new(src, info)
             groups[#groups + 1] = group
-            groups[key] = group
+            groups[src] = group
         end
     end
     for _, group in ipairs(groups) do
@@ -1449,9 +1450,9 @@ end
 local function render(report, cache)
     local cfg = report.config
     local W, groups = context_new(report.id, cache, report.labels, cfg)
-    W:render_header(report.kind, report.code, report.message)
+    W:render_header(report.kind or "Error", report.code, report.message)
     for idx, group in ipairs(groups) do
-        W:render_reference(idx, group, report.id, report.pos)
+        W:render_reference(idx, group, cache[report.id], report.pos)
         W:render_empty_line()
         W:render_lines(group)
         if idx ~= #groups then
@@ -1465,146 +1466,218 @@ end
 
 -- #region API
 
---- @generic T
---- @param name string
---- @param t? T
---- @return T
+--- @generic T: table
+--- @type fun(name: string, t?: T): T
 local function meta(name, t)
     t = t or {}
     t.__name = name
     t.__index = t
-    return t
+    return setmetatable(t, {
+        __call = function(self, ...) return self.new(...) end,
+    })
 end
 
---- @class CacheAPI : Cache
-local Cache = meta "Cache"
---- @class SourceAPI : Source, Cache
-local Source = meta "Source"
---- @class LabelAPI : Label
-local Label = meta "Label"
---- @class ColorGeneratorAPI : ColorGenerator
+--- @class ColorGeneratorAPI
+--- @field data ColorGenerator
+--- @overload fun(min_brightness?: number): ColorGeneratorAPI
 local ColorGenerator = meta "ColorGenerator"
---- @class ConfigAPI : Config
+--- @class ConfigAPI
+--- @field data Config
+--- @overload fun(opts?: table): ConfigAPI
 local Config = meta "Config"
---- @class ReportAPI : Report
+--- @class ReportAPI
+--- @field data Report
+--- @field current_label? Label
+--- @field cache Cache
+--- @overload fun(pos?: integer, id?: string): ReportAPI
 local Report = meta "Report"
 
---- @type fun(): CacheAPI
-function Cache.new()
-    --- @type CacheAPI
-    return setmetatable(cache_new(), Cache)
-end
-
---- @type fun(content: string, id?: string, offset?: integer): SourceAPI
-function Source.new(content, id, offset)
-    --- @type SourceAPI
-    return setmetatable(src_new(content, id, offset), Source)
-end
-
---- @type fun(self: SourceAPI, line: Line): string
-function Source:get_line(line)
-    return string.sub(self.text --[[@as string]], line_span_byte(line))
-end
-
---- @type fun(): ColorGeneratorAPI
-function ColorGenerator.new()
+--- @type fun(min_brightness?: number): ColorGeneratorAPI
+function ColorGenerator.new(min_brightness)
     --- @type ColorGeneratorAPI
-    return setmetatable(cg_new(), ColorGenerator)
+    return setmetatable({ data = cg_new(min_brightness) }, ColorGenerator --[[@as metatable]])
 end
 
 --- @type fun(self: ColorGeneratorAPI): Color
-function ColorGenerator:next() return cg_next(self) end
+function ColorGenerator:next() return cg_next(self.data) end
 
 --- @type fun(opts: table): ConfigAPI
 function Config.new(opts)
-    --- @type ConfigAPI
-    return setmetatable(cfg_new(opts), Config)
+    local cfg = setmetatable({
+        data = cfg_new(),
+    }, Config --[[@as metatable]]) --[[@as ConfigAPI]]
+    if opts then
+        for k, v in pairs(opts) do
+            local setter = cfg[k]
+            if type(setter) == "function" then
+                setter(cfg, v)
+            end
+        end
+    end
+    return cfg
 end
 
---- @type fun(start_pos: integer, end_pos: integer|nil, id: string|nil): LabelAPI
-function Label.new(start_pos, end_pos, id)
-    --- @type LabelAPI
-    return setmetatable(label_new(start_pos, end_pos, id), Label)
-end
-
---- @type fun(self: LabelAPI, message: string, width?: integer): LabelAPI
-function Label:with_message(message, width)
-    label_set_message(self, message, width)
+--- @type fun(self: ConfigAPI, enable: boolean): ConfigAPI
+function Config:cross_gap(enable)
+    self.data.cross_gap = enable
     return self
 end
 
---- @type fun(self: LabelAPI, order: integer): LabelAPI
-function Label:with_order(order)
-    self.order = order
+--- @type fun(self: ConfigAPI, enable: boolean): ConfigAPI
+function Config:compact(enable)
+    self.data.compact = enable
     return self
 end
 
---- @type fun(self: LabelAPI, priority: integer): LabelAPI
-function Label:with_priority(priority)
-    self.priority = priority
+--- @type fun(self: ConfigAPI, enable: boolean): ConfigAPI
+function Config:underlines(enable)
+    self.data.underlines = enable
     return self
 end
 
---- @type fun(self: LabelAPI, color: Color): LabelAPI
-function Label:with_color(color)
-    self.color = color
+--- @type fun(self: ConfigAPI, enable: boolean): ConfigAPI
+function Config:multiline_arrows(enable)
+    self.data.multiline_arrows = enable
     return self
 end
 
---- @type fun(kind: string, pos?: integer, id?: string): ReportAPI
-function Report.build(kind, pos, id)
+--- @type fun(self: ConfigAPI, width: integer): ConfigAPI
+function Config:tab_width(width)
+    self.data.tab_width = width
+    return self
+end
+
+--- @type fun(self: ConfigAPI, width?: integer): ConfigAPI
+function Config:limit_width(width)
+    self.data.limit_width = width
+    return self
+end
+
+--- @type fun(self: ConfigAPI, attach: "middle"|"start"|"end"): ConfigAPI
+function Config:label_attach(attach)
+    self.data.label_attach = attach
+    return self
+end
+
+--- @type fun(self: ConfigAPI, index_type: "byte"|"char"): ConfigAPI
+function Config:index_type(index_type)
+    self.data.index_type = index_type
+    return self
+end
+
+--- @type fun(self: ConfigAPI, color: boolean): ConfigAPI
+function Config:color(color)
+    self.data.color = color and default_color or nil
+    return self
+end
+
+--- @type fun(self: ConfigAPI, char_set: string): ConfigAPI
+function Config:char_set(char_set)
+    self.data.char_set = assert(characters[char_set], "no such character set")
+    return self
+end
+
+--- @type fun(pos?: integer, id?: string): ReportAPI
+function Report.new(pos, id)
     --- @type ReportAPI
-    return setmetatable(report_new(kind, pos, id), Report)
+    return setmetatable({ data = report_new(pos, id or 1) }, Report --[[@as metatable]])
 end
 
---- @type fun(self: ReportAPI, label: Label): ReportAPI
-function Report:with_label(label)
-    self.labels[#self.labels + 1] = label
-    return self
-end
-
---- @type fun(self: ReportAPI, note: string): ReportAPI
-function Report:with_note(note)
-    self.notes[#self.notes + 1] = note
-    return self
-end
-
---- @type fun(self: ReportAPI, help: string): ReportAPI
-function Report:with_help(help)
-    self.helps[#self.helps + 1] = help
-    return self
-end
-
---- @type fun(self: ReportAPI, config: Config): ReportAPI
-function Report:with_config(config)
-    self.config = config
+--- @type fun(self: ReportAPI, config: ConfigAPI): ReportAPI
+function Report:config(config)
+    self.data.config = config.data
     return self
 end
 
 --- @type fun(self: ReportAPI, code: string): ReportAPI
-function Report:with_code(code)
-    self.code = code
+function Report:code(code)
+    self.data.code = code
     return self
 end
 
---- @type fun(self: ReportAPI, message: string): ReportAPI
-function Report:with_message(message)
-    self.message = message
+--- @type fun(self: ReportAPI, kind: string, message: string): ReportAPI
+function Report:title(kind, message)
+    self.data.kind = kind
+    self.data.message = message
     return self
 end
 
---- @type fun(self: ReportAPI, cache: Cache): string
-function Report:render(cache) return render(self, cache) end
+--- @type fun(self: ReportAPI, i: integer, j?: integer, src_id?: integer): ReportAPI
+function Report:label(i, j, src_id)
+    self.current_label = label_new(i, j, src_id or 1)
+    self.data.labels[#self.data.labels + 1] = self.current_label
+    return self
+end
+
+--- @type fun(self: ReportAPI, message: string, width?: integer): ReportAPI
+function Report:message(message, width)
+    local label = assert(self.current_label,
+        "at least one label is required before setting message")
+    label.message = message
+    label.width = width or utf8.width(message)
+    return self
+end
+
+--- @type fun(self: ReportAPI, color: Color): ReportAPI
+function Report:color(color)
+    local label = assert(self.current_label,
+        "at least one label is required before setting color")
+    label.color = color
+    return self
+end
+
+--- @type fun(self: ReportAPI, order: integer): ReportAPI
+function Report:order(order)
+    local label = assert(self.current_label,
+        "at least one label is required before setting order")
+    label.order = order
+    return self
+end
+
+--- @type fun(self: ReportAPI, priority: integer): ReportAPI
+function Report:priority(priority)
+    local label = assert(self.current_label,
+        "at least one label is required before setting priority")
+    label.priority = priority
+    return self
+end
+
+--- @type fun(self: ReportAPI, note: string): ReportAPI
+function Report:note(note)
+    self.data.notes[#self.data.notes + 1] = note
+    return self
+end
+
+--- @type fun(self: ReportAPI, help: string): ReportAPI
+function Report:help(help)
+    self.data.helps[#self.data.helps + 1] = help
+    return self
+end
+
+--- @type fun(self: ReportAPI, code: string, name?: string, offset?: integer): ReportAPI
+function Report:source(code, name, offset)
+    local cache = self.cache
+    if not cache then
+        cache = cache_new()
+        self.cache = cache
+    end
+    name = name or "<unknown>"
+    local src = src_new(code, name, offset)
+    self.cache[name] = src
+    self.cache[#self.cache + 1] = src
+    return self
+end
+
+--- @type fun(self: ReportAPI): string
+function Report:render()
+    return render(self.data, self.cache)
+end
 
 -- #endregion
 
 ---@class (exact) Ariadne
 return {
-    Cache = Cache,
-    Source = Source,
-    ColorGenerator = ColorGenerator,
-    Characters = characters,
-    Config = Config,
-    Label = Label,
-    Report = Report,
+    colorgen = ColorGenerator,
+    config = Config,
+    report = Report,
 }
