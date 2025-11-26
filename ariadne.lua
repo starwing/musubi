@@ -273,18 +273,31 @@ local function src_shifted_line_no(self, line_no)
     return line_no + self.display_line_offset
 end
 
---- Find the character and repeat count that should be drawn
---- @type fun(self: Source, byte_offset: integer, col: integer, cfg: Config): integer, integer
-local function src_char_width(self, byte_offset, col, cfg)
-    local c = utf8_codepoint(self.text, utf8_offset(self.text, col, byte_offset))
-    if c == 9 then -- tab
-        return cfg.tab_width - ((col - 1) % cfg.tab_width), 32
-    elseif c == 32 then
-        return 1, 32
-    else
-        return utf8_width(c), c
+--- Caclculate the width cache for current line
+--- @type fun(src: Source, line: Line, cfg: Config): integer[]
+local function src_calc_width_cache(src, line, cfg)
+    local wc = {}
+    local width = 0
+    local i = 1
+    for _, char in utf8.codes(src.text:sub(line.byte_offset,
+        line.byte_offset + line.byte_len - 1)) do
+        local char_width
+        if char == 9 then -- tab
+            char_width = cfg.tab_width - (width % cfg.tab_width)
+        else
+            char_width = utf8_width(char)
+        end
+        wc[i] = width
+        width = width + char_width
+        i = i + 1
+        if i > line.len then break end
     end
+    while #wc < line.len + 1 do
+        wc[#wc + 1] = width
+    end
+    return wc
 end
+
 --- #endregion
 
 -- #region config
@@ -598,6 +611,7 @@ end
 ---@class (exact) LabelCluster
 ---@field line Line the line this cluster represents
 ---@field line_no integer the line number in the source
+---@field width_cache integer[] the cached character widths for this line
 ---@field margin_label LineLabel? the margin label for this line
 ---@field line_labels LineLabel[] the labels in this line
 ---@field arrow_len integer the length of the arrows line
@@ -672,6 +686,7 @@ local function lc_new(line, line_no)
     return {
         line = line,
         line_no = line_no,
+        width_cache = {},
         margin_label = nil,
         line_labels = {},
         arrow_len = 0,
@@ -744,9 +759,9 @@ local function lc_assemble_clusters(line, line_no, group, line_no_width, cfg)
 end
 
 --- Calculate the start position for rendering a line
---- @type fun(lc: LabelCluster, group: Group,
+--- @type fun(lc: LabelCluster, group: Group, wc: integer[],
 ---           line_no_width: integer, ellipsis_width: integer, cfg: Config)
-local function lc_calc_col_range(lc, group, line_no_width, ellipsis_width, cfg)
+local function lc_calc_col_range(lc, group, wc, line_no_width, ellipsis_width, cfg)
     if not cfg.limit_width then return end
     local line, arrow_len, min_col, max_msg_width =
         lc.line, lc.arrow_len, lc.min_col, lc.max_msg_width
@@ -891,51 +906,49 @@ local function lc_get_underline(lc, col, cfg)
 end
 
 --- Render a line with highlights
---- @type fun(W: Writer, lc: LabelCluster, group: Group, cfg: Config)
-function Writer.render_line(W, lc, group, cfg)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[], cfg: Config)
+function Writer.render_line(W, lc, group, wc, cfg)
     local line = lc.line
     local src = group.src
 
     --- @type Color?
     local cur_color
-    local cur_offset = lc.start_col
-    local cur_offset_byte = assert(utf8_offset(src.text,
+    local start_byte = assert(utf8_offset(src.text,
         lc.start_col, line.byte_offset))
+    local cur_byte = start_byte
     for i = lc.start_col, lc.end_col or line.len do
         local highlight = lc_get_highlight(lc, i, group)
         local next_color = highlight and highlight.label.color
-        local repeat_count, cp = src_char_width(src, line.byte_offset, i, cfg)
-        if cur_color ~= next_color or (cp == 32 and repeat_count > 1) then
-            local next_start_bytes = assert(utf8_offset(src.text,
-                i - cur_offset + 1, cur_offset_byte))
-            if i > cur_offset then
-                W:label_or_unimportant(cur_color, (src.text:sub(
-                    cur_offset_byte, next_start_bytes - 1
-                ):gsub("\t", ""))):reset()
-            end
-            if cp == 32 and repeat_count > 1 then
-                W:label_or_unimportant(next_color, (" "):rep(repeat_count))
+        local _, end_byte = utf8_offset(src.text, 0, cur_byte)
+        local ch = src.text:byte(cur_byte, cur_byte)
+        if cur_color ~= next_color or ch == 9 then
+            if end_byte > start_byte then
+                W:label_or_unimportant(cur_color, src.text:sub(
+                    start_byte, cur_byte - 1
+                )):reset()
             end
             cur_color = next_color
-            cur_offset = i
-            cur_offset_byte = next_start_bytes
+            if ch == 9 then
+                W:label_or_unimportant(next_color, (" "):rep(wc[i + 1] - wc[i]))
+            end
+            start_byte = cur_byte + (ch == 9 and 1 or 0)
         end
+        cur_byte = end_byte + 1
     end
     local _, end_bytes = line_span_byte(line)
     if lc.end_col and lc.end_col < line.len then
-        end_bytes = assert(utf8_offset(src.text, lc.end_col + 1, line.byte_offset)) - 1
+        _, end_bytes = assert(utf8_offset(src.text, lc.end_col, line.byte_offset))
     end
-    W:label_or_unimportant(cur_color, (src.text:sub(
-        cur_offset_byte, end_bytes
-    ):gsub("\t", ""))):reset()
+    W:label_or_unimportant(cur_color, src.text:sub(
+        start_byte, end_bytes
+    )):reset()
 end
 
 --- Render underline row for a line
---- @type fun(W: Writer, lc: LabelCluster, group: Group, row: integer, first: boolean)
-function Writer.render_underline_row(W, lc, group, row, first)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[], row: integer, first: boolean)
+function Writer.render_underline_row(W, lc, group, wc, row, first)
     local cfg = W.config
     local draw = cfg.char_set
-    local src = group.src
     local ll = lc.line_labels[row]
     -- Margin alternate
     W:render_lineno(nil, false)
@@ -944,7 +957,7 @@ function Writer.render_underline_row(W, lc, group, row, first)
     for col = lc.start_col, lc.arrow_len do
         local width = 1
         if col <= lc.line.len then
-            width = src_char_width(src, lc.line.byte_offset, col, cfg)
+            width = wc[col + 1] - wc[col]
         end
         local vbar = lc_get_vbar(lc, col, row)
         local underline
@@ -973,11 +986,10 @@ function Writer.render_underline_row(W, lc, group, row, first)
 end
 
 --- Render arrow row for a line
---- @type fun(W: Writer, lc: LabelCluster, group: Group, row: integer, first: boolean)
-function Writer.render_arrow_row(W, lc, group, row, first)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[], row: integer, first: boolean)
+function Writer.render_arrow_row(W, lc, group, wc, row, first)
     local cfg = W.config
     local draw = cfg.char_set
-    local src = group.src
     local ll = lc.line_labels[row]
 
     -- Margin
@@ -995,7 +1007,7 @@ function Writer.render_arrow_row(W, lc, group, row, first)
     for col = lc.start_col, lc.arrow_len do
         local width = 1
         if col <= lc.line.len then
-            width = src_char_width(src, lc.line.byte_offset, col, cfg)
+            width = wc[col + 1] - wc[col]
         end
         local is_hbar = (col > ll.col) ~= ll.info.multi or
             ll.draw_msg and ll.info.label.message and col > ll.col
@@ -1033,24 +1045,24 @@ function Writer.render_arrow_row(W, lc, group, row, first)
 end
 
 --- Render arrows for a line
---- @type fun(W: Writer, lc: LabelCluster, group: Group)
-function Writer.render_arrows(W, lc, group)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[])
+function Writer.render_arrows(W, lc, group, wc)
     local first = true
     for row, ll in ipairs(lc.line_labels) do
         -- No message to draw thus no arrow to draw
         if ll.info.label.message or (ll.info.multi and lc.margin_label ~= ll) then
             if not W.config.compact then
-                W:render_underline_row(lc, group, row, first)
+                W:render_underline_row(lc, group, wc, row, first)
             end
-            W:render_arrow_row(lc, group, row, first)
+            W:render_arrow_row(lc, group, wc, row, first)
             first = false
         end
     end
 end
 
 --- Render a label cluster
---- @type fun(W: Writer, lc: LabelCluster, group: Group)
-function Writer.render_label_cluster(W, lc, group)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[])
+function Writer.render_label_cluster(W, lc, group, wc)
     -- Determine label bounds so we know where to put error messages
     local cfg = W.config
     local draw = cfg.char_set
@@ -1060,12 +1072,12 @@ function Writer.render_label_cluster(W, lc, group)
     if lc.start_col > 1 then
         W:unimportant(draw.ellipsis):reset()
     end
-    W:render_line(lc, group, cfg)
+    W:render_line(lc, group, wc, cfg)
     if lc.end_col and lc.end_col < lc.line.len then
         W:unimportant(draw.ellipsis):reset()
     end
     W "\n"
-    W:render_arrows(lc, group)
+    W:render_arrows(lc, group, wc)
 end
 
 -- #endregion
@@ -1291,9 +1303,10 @@ function Writer.render_lines(W, group)
         local clusters = lc_assemble_clusters(line, line_no, group,
             W.line_no_width, cfg)
         if #clusters > 0 then
+            local wc = src_calc_width_cache(src, line, cfg)
             for _, cluster in ipairs(clusters) do
-                lc_calc_col_range(cluster, group, W.line_no_width, W.ellipsis_width, cfg)
-                W:render_label_cluster(cluster, group)
+                lc_calc_col_range(cluster, group, wc, W.line_no_width, W.ellipsis_width, cfg)
+                W:render_label_cluster(cluster, group, wc)
             end
         elseif not is_ellipsis and line_within_label(line, group.multi_labels) then
             W:render_lineno(nil, true)
@@ -1613,8 +1626,7 @@ end
 function Report:message(message, width)
     local label = assert(self.current_label,
         "at least one label is required before setting message")
-    label.message = message
-    label.width = width or utf8.width(message)
+    label_set_message(label, message, width)
     return self
 end
 

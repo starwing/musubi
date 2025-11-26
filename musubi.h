@@ -62,7 +62,7 @@
 
 MU_NS_BEGIN
 
-typedef enum mu_Level { MU_CUSTOM_LEVEL, MU_ERROR, MU_WARNING } mu_Level;
+typedef enum mu_Level { MU_ERROR, MU_WARNING, MU_CUSTOM_LEVEL } mu_Level;
 
 typedef enum mu_IndexType { MU_INDEX_BYTE, MU_INDEX_CHAR } mu_IndexType;
 
@@ -266,7 +266,7 @@ MU_NS_END
 #include <string.h>
 
 #ifndef MU_MIN_FILENAME_WIDTH
-#define MU_MIN_FILENAME_WIDTH 8
+#define MU_MIN_FILENAME_WIDTH 12
 #endif /* MU_MIN_FILENAME_WIDTH */
 
 #define mu_min(a, b)    ((a) < (b) ? (a) : (b))
@@ -1241,25 +1241,24 @@ static int muR_margin(mu_Report *R, const mu_LineLabel *report, mu_Margin t) {
 
 static int muR_line(mu_Report *R, mu_Slice data) {
     const mu_Cluster   *c = R->cur_cluster;
-    const mu_LabelInfo *color = NULL;
+    const mu_Width     *wc = R->width_cache;
+    const mu_LabelInfo *color = NULL, *hl;
 
-    int         tw = R->config->tab_width;
     const char *s;
     unsigned    i;
     for (i = 0; i < c->start_col; ++i) muD_advance(&data);
     for (s = data.p; i < c->end_col && data.p < data.e; ++i) {
-        const mu_LabelInfo *hl = muC_get_highlight(R, i);
-        const char         *p = data.p;
-        utfint              ch = muD_decode(&data);
-        if (hl != color || ch == '\t') {
-            int repeat = (ch == '\t' ? tw - (i % tw) : 1);
+        const char *p = data.p;
+        hl = muC_get_highlight(R, i);
+        muD_advance(&data);
+        if (hl != color || *p == '\t') {
             if (s < p) {
                 if (color) muX(muW_use_color(R, color->label, MU_COLOR_LABEL));
                 else muX(muW_use_color(R, NULL, MU_COLOR_UNIMPORTANT));
                 muX(muW_write(R, muD_slice(s, p - s)));
             }
-            if (ch == '\t') muX(muW_draw(R, MU_DRAW_SPACE, repeat));
-            color = hl, s = p + (ch == '\t');
+            if (*p == '\t') muX(muW_draw(R, MU_DRAW_SPACE, wc[i + 1] - wc[i]));
+            color = hl, s = p + (*p == '\t');
         }
     }
     if (s < data.p) {
