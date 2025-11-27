@@ -1,6 +1,7 @@
 local lu = require "luaunit"
-local ariadne = require "musubi"
--- local ariadne = require "ariadne"
+local use_ref = os.getenv("REF") == "1"
+--- @module 'ariadne'
+local ariadne = require(use_ref and "ariadne" or "musubi")
 
 -- print a demo
 if #arg == 0 then
@@ -88,6 +89,7 @@ Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
    |
  1 | apple == orange;
+   | ^^^^^    ^^^^^^
 ---'
 ]=]))
   end
@@ -1120,10 +1122,12 @@ Error: cross-file error
    ,-[ file1.lua:1:1 ]
    |
  1 | apple
+   | ^^^^^
    |
    |-[ file2.lua:1:1 ]
    |
  1 | orange
+   | ^^^^^^
 ---'
 ]])
   end

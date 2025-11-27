@@ -947,8 +947,9 @@ function Writer.render_line(W, lc, group, wc, cfg)
 end
 
 --- Render underline row for a line
---- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[], row: integer, first: boolean)
-function Writer.render_underline_row(W, lc, group, wc, row, first)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[],
+---           row: integer, draw_underline: boolean)
+function Writer.render_underline(W, lc, group, wc, row, draw_underline)
     local cfg = W.config
     local draw = cfg.char_set
     local ll = lc.line_labels[row]
@@ -963,7 +964,7 @@ function Writer.render_underline_row(W, lc, group, wc, row, first)
         end
         local vbar = lc_get_vbar(lc, col, row)
         local underline
-        if first then
+        if draw_underline then
             underline = lc_get_underline(lc, col, cfg)
         end
         if vbar and underline then
@@ -972,7 +973,7 @@ function Writer.render_underline_row(W, lc, group, wc, row, first)
             W:padding(width - 1, draw.underline)
         elseif vbar then
             local a = draw.vbar
-            if vbar.info.multi and first and cfg.multiline_arrows then
+            if vbar.info.multi and draw_underline and cfg.multiline_arrows then
                 a = draw.uarrow
             end
             W:use_color(vbar.info.label.color):label(a):reset()
@@ -988,8 +989,9 @@ function Writer.render_underline_row(W, lc, group, wc, row, first)
 end
 
 --- Render arrow row for a line
---- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[], row: integer, first: boolean)
-function Writer.render_arrow_row(W, lc, group, wc, row, first)
+--- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[],
+---           row: integer, draw_underline: boolean)
+function Writer.render_arrow(W, lc, group, wc, row, draw_underline)
     local cfg = W.config
     local draw = cfg.char_set
     local ll = lc.line_labels[row]
@@ -1029,7 +1031,7 @@ function Writer.render_arrow_row(W, lc, group, wc, row, first)
                 if cfg.cross_gap then
                     a, b = draw.hbar, draw.hbar
                 end
-            elseif vbar.info.multi and first and cfg.compact then
+            elseif vbar.info.multi and draw_underline then
                 a = draw.uarrow
             end
             W:use_color(vbar.info.label.color):label(a):padding(width - 1, b)
@@ -1044,22 +1046,6 @@ function Writer.render_arrow_row(W, lc, group, wc, row, first)
         W " " (ll.info.label.message)
     end
     W "\n"
-end
-
---- Render arrows for a line
---- @type fun(W: Writer, lc: LabelCluster, group: Group, wc: integer[])
-function Writer.render_arrows(W, lc, group, wc)
-    local first = true
-    for row, ll in ipairs(lc.line_labels) do
-        -- No message to draw thus no arrow to draw
-        if ll.info.label.message or (ll.info.multi and lc.margin_label ~= ll) then
-            if not W.config.compact then
-                W:render_underline_row(lc, group, wc, row, first)
-            end
-            W:render_arrow_row(lc, group, wc, row, first)
-            first = false
-        end
-    end
 end
 
 --- Render a label cluster
@@ -1079,7 +1065,17 @@ function Writer.render_label_cluster(W, lc, group, wc)
         W:unimportant(draw.ellipsis):reset()
     end
     W "\n"
-    W:render_arrows(lc, group, wc)
+    local draw_underline = true
+    for row, ll in ipairs(lc.line_labels) do
+        local has_arrow = ll.info.label.message or (ll.info.multi and lc.margin_label ~= ll)
+        if (draw_underline or has_arrow) and not W.config.compact then
+            W:render_underline(lc, group, wc, row, draw_underline)
+            draw_underline = false
+        end
+        if has_arrow then
+            W:render_arrow(lc, group, wc, row, draw_underline)
+        end
+    end
 end
 
 -- #endregion

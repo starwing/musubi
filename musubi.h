@@ -1287,12 +1287,12 @@ static int muR_line(mu_Report *R, mu_Slice data) {
     return muW_use_color(R, NULL, MU_COLOR_RESET);
 }
 
-static int muR_underline_row(mu_Report *R, int row, int first) {
+static int muR_underline(mu_Report *R, int row, int draw_underline) {
     const mu_Width     *wc = R->width_cache;
     const mu_Cluster   *c = R->cur_cluster;
     const mu_LineLabel *ll = &c->line_labels[row];
 
-    int    has_ul = (first && R->config->underlines);
+    int    has_ul = (draw_underline && R->config->underlines);
     mu_Col col, col_max = R->cur_line->len;
     muX(muR_lineno(R, 0, 0));
     muX(muR_margin(R, ll, MU_MARGIN_NONE));
@@ -1308,7 +1308,8 @@ static int muR_underline_row(mu_Report *R, int row, int first) {
             muX(muW_draw(R, MU_DRAW_UNDERBAR, 1));
             muX(muW_draw(R, MU_DRAW_UNDERLINE, w - 1));
         } else if (vbar) {
-            int uarrow = (vbar->multi && first && R->config->multiline_arrows);
+            int uarrow =
+                (vbar->multi && draw_underline && R->config->multiline_arrows);
             muX(muW_use_color(R, vbar->label, MU_COLOR_LABEL));
             muX(muW_draw(R, uarrow ? MU_DRAW_UARROW : MU_DRAW_VBAR, 1));
             muX(muW_draw(R, MU_DRAW_SPACE, w - 1));
@@ -1324,7 +1325,7 @@ static int muR_underline_row(mu_Report *R, int row, int first) {
     return muW_draw(R, MU_DRAW_NEWLINE, 1);
 }
 
-static int muR_arrow_row(mu_Report *R, int row, int first) {
+static int muR_arrow(mu_Report *R, int row, int draw_underline) {
     const mu_Width     *wc = R->width_cache;
     const mu_Cluster   *c = R->cur_cluster;
     const mu_LineLabel *ll = &c->line_labels[row];
@@ -1355,8 +1356,7 @@ static int muR_arrow_row(mu_Report *R, int row, int first) {
             if (is_hbar) {
                 draw = MU_DRAW_XBAR;
                 if (R->config->cross_gap) draw = pad = MU_DRAW_HBAR;
-            } else if (vbar->multi && first && R->config->compact)
-                draw = MU_DRAW_UARROW;
+            } else if (vbar->multi && draw_underline) draw = MU_DRAW_UARROW;
             muX(muW_use_color(R, vbar->label, MU_COLOR_LABEL));
             muX(muW_draw(R, draw, 1));
             muX(muW_draw(R, pad, w - 1));
@@ -1376,25 +1376,11 @@ static int muR_arrow_row(mu_Report *R, int row, int first) {
     return muW_draw(R, MU_DRAW_NEWLINE, 1);
 }
 
-static int muR_arrows(mu_Report *R) {
+static int muR_cluster(mu_Report *R, unsigned line_no, mu_Slice data) {
     const mu_Cluster *c = R->cur_cluster;
 
     unsigned row, row_len = muA_size(c->line_labels);
-    int      first = 1;
-    for (row = 0; row < row_len; ++row) {
-        const mu_LineLabel *ll = &c->line_labels[row];
-        if (!(ll->info->label->width
-              || (ll->info->multi && c->margin_label.info != ll->info)))
-            continue;
-        if (!R->config->compact) muX(muR_underline_row(R, row, first));
-        muX(muR_arrow_row(R, row, first));
-        first = 0;
-    }
-    return MU_OK;
-}
-
-static int muR_cluster(mu_Report *R, unsigned line_no, mu_Slice data) {
-    const mu_Cluster *c = R->cur_cluster;
+    int      draw_underline = 1;
     muX(muR_lineno(R, line_no + 1, 0));
     muX(muR_margin(R, NULL, MU_MARGIN_LINE));
     if (c->start_col > 0) {
@@ -1409,7 +1395,19 @@ static int muR_cluster(mu_Report *R, unsigned line_no, mu_Slice data) {
         muX(muW_color(R, MU_COLOR_RESET));
     }
     muX(muW_draw(R, MU_DRAW_NEWLINE, 1));
-    return muR_arrows(R);
+    for (row = 0; row < row_len; ++row) {
+        const mu_LineLabel *ll = &c->line_labels[row];
+
+        int draw_arrow =
+            (ll->info->label->width
+             || (ll->info->multi && c->margin_label.info != ll->info));
+        if ((draw_underline || draw_arrow) && !R->config->compact) {
+            muX(muR_underline(R, row, draw_underline));
+            draw_underline = 0;
+        }
+        if (draw_arrow) muX(muR_arrow(R, row, draw_underline));
+    }
+    return MU_OK;
 }
 
 static int muR_lines(mu_Report *R) {
