@@ -503,10 +503,7 @@ static int muD_width(utfint ch, int ambiwidth) {
         return 2;
     if (muD_find(ambiwidth_table, muD_tablesize(ambiwidth_table), ch))
         return ambiwidth;
-    if (muD_find(compose_table, muD_tablesize(compose_table), ch)) return 0;
-    if (muD_find(unprintable_table, muD_tablesize(unprintable_table), ch))
-        return 0;
-    return 1;
+    return !muD_find(zerowidth_table, muD_tablesize(zerowidth_table), ch);
 }
 
 static mu_Width muD_strwidth(mu_Slice s, mu_Width ambi) {
