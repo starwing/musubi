@@ -252,9 +252,10 @@ static lmu_Report *lmu_checkreport(lua_State *L, int idx) {
 static void lmu_checkerror(lua_State *L, int err) {
     switch (err) {
     case MU_OK:       return;
-    case MU_ERRPARAM: luaL_error(L, "musubi error: invalid parameter"); break;
-    case MU_ERRSRC:   luaL_error(L, "musubi error: source out of range"); break;
-    default:          luaL_error(L, "musubi error: unknown error: %d", err); break;
+    case MU_ERRPARAM: luaL_error(L, "musubi: invalid parameter"); break;
+    case MU_ERRSRC:   luaL_error(L, "musubi: source out of range"); break;
+    case MU_ERRFILE:  luaL_error(L, "musubi: file operation failed"); break;
+    default:          luaL_error(L, "musubi: unknown error(%d)", err); break;
     }
 }
 
@@ -428,7 +429,7 @@ static int Lmu_report_source(lua_State *L) {
     const char *name = luaL_optstring(L, 3, "<unknown>");
     int         offset = (int)luaL_optinteger(L, 4, 0);
     luaL_argcheck(L, ty == LUA_TSTRING || ty == LUA_TUSERDATA, 2,
-                  "string expected");
+                  "string/file* expected");
     if (ty == LUA_TUSERDATA) {
         FILE **fp = (FILE **)luaL_checkudata(L, 2, "FILE*");
         src = mu_file_source(lr->R, *fp, name);
@@ -442,6 +443,20 @@ static int Lmu_report_source(lua_State *L) {
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     luaL_ref(L, -2); /* store the source string/file */
+    lua_pushvalue(L, 3);
+    luaL_ref(L, -2); /* store the source name */
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_report_file(lua_State *L) {
+    lmu_Report *lr = lmu_checkreport(L, 1);
+    const char *name = luaL_optstring(L, 2, "<unknown>");
+    int         offset = (int)luaL_optinteger(L, 3, 0);
+    mu_Source  *src = mu_file_source(lr->R, NULL, name);
+    luaL_argcheck(L, src != NULL, 2, "file source creation failed");
+    src->line_no_offset = offset;
+    lmu_checkerror(L, mu_source(lr->R, src));
+    lua_getuservalue(L, 1);
     lua_pushvalue(L, 3);
     luaL_ref(L, -2); /* store the source name */
     return lua_settop(L, 1), 1;
@@ -505,6 +520,7 @@ static void lmu_openreport(lua_State *L) {
         ENTRY(order),
         ENTRY(priority),
         ENTRY(source),
+        ENTRY(file),
         ENTRY(render),
         ENTRY(help),
         ENTRY(note),

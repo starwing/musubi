@@ -59,6 +59,35 @@ end
 
 local TestWrite = {}
 do
+  function TestWrite.test_empty()
+    local msg = remove_trailing(
+      ariadne.report(0)
+      :config(no_color_ascii())
+      :source(""):render()
+    )
+
+    lu.assertEquals(msg, [=[
+Error:
+]=])
+
+    msg = remove_trailing(
+      ariadne.report(0)
+      :config(no_color_ascii())
+      :label(1, 1):message("Empty source")
+      :source(""):render()
+    )
+
+    lu.assertEquals(msg, [=[
+Error:
+   ,-[ <unknown>:?:? ]
+   |
+ 1 |
+   | |
+   | `- Empty source
+---'
+]=])
+  end
+
   function TestWrite.test_one_message()
     local msg = remove_trailing(
       ariadne.report(0)
@@ -1357,6 +1386,24 @@ Error: two multiline labels
  3 | |>qrstuvwx
    | `---------- inner
 ]])
+    msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii():compact(true):char_set "unicode")
+      :title("Error", "two multiline labels")
+      :label(1, 18):message("outer")
+      :label(3, 19):message("inner")
+      :source(src):render()
+    )
+    lu.assertEquals(msg, [[
+Error: two multiline labels
+   ╭─[ <unknown>:1:1 ]
+ 1 │╭─▶abcdefgh
+   ││╭───╯
+ 2 │├─▶ijklmnop
+   │╰──────────── outer
+ 3 │ ├▶qrstuvwx
+   │ ╰────────── inner
+]])
   end
 
   -- Test 11: compact mode with two multiline labels ending at same col (line 1340)
@@ -1434,6 +1481,45 @@ Error: margin xbar test
    | `----------------- inner
 ---'
 ]])
+  end
+
+  function TestWrite.test_emoji()
+    local src = "apple 🍎 orange 🍊 banana 🍌"
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii())
+      :title("Error", "emoji test")
+      :label(7, 7):message("first emoji")
+      :label(16, 16):message("second emoji")
+      :label(25, 25):message("third emoji")
+      :source(src):render()
+    )
+    lu.assertEquals(msg, [[
+Error: emoji test
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | apple 🍎 orange 🍊 banana 🍌
+   |       |^        |^        |^
+   |       `----------------------- first emoji
+   |                 |         |
+   |                 `------------- second emoji
+   |                           |
+   |                           `--- third emoji
+---'
+]])
+  end
+
+  function TestWrite.test_unimportant_color()
+    local text = "this is a color test"
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(ariadne.config())
+      :title("Error", "unimportant color test")
+      :label(11, 15):message("color is here")
+      :source(text):render()
+    )
+    msg = ("%q"):format(msg)
+    lu.assertNotNil(msg:find("\\27%[38;5;249m"))
   end
 end
 
@@ -2044,9 +2130,191 @@ Error: test_multiline
   end
 end
 
+local TestFile = {}
+do
+  function TestFile.test_file_error()
+    local tmpname = os.tmpname()
+    -- this is a write only file
+    local file = assert(io.open(tmpname, "w"))
+    file:write("line one\nline two with error\nline three\n")
+
+    local msg =
+        ariadne.report(12)
+        :config(no_color_ascii())
+        :title("Error", "test_file_error")
+        :label(12, 16):message("found here")
+        :source(file)
+
+    lu.assertErrorMsgContains("musubi: file operation failed",
+      function() msg:render() end)
+
+    file:close()
+    os.remove(tmpname)
+  end
+
+  local function write_temp_file(content)
+    local tmpname = os.tmpname()
+    local file = assert(io.open(tmpname, "w"))
+    file:write(content)
+    file:close()
+    return tmpname
+  end
+
+  function TestFile.test_file_empty()
+    -- create an empty file
+    local tmpname = write_temp_file("")
+
+    local file = assert(io.open(tmpname, "r"))
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii())
+      :title("Error", "test_file_empty")
+      :label(1, 1):message("label")
+      :source(file):render()
+    )
+    file:close()
+
+    lu.assertEquals(msg, [[
+Error: test_file_empty
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 |
+   | |
+   | `- label
+---'
+]])
+  end
+
+  function TestFile.test_file_multiline()
+    local code = "first line\nsecond line with error\nthird line\n"
+    local tmpname = write_temp_file(code)
+
+    local file = assert(io.open(tmpname, "r"))
+    local msg = remove_trailing(
+      ariadne.report(14)
+      :config(no_color_ascii())
+      :title("Error", "test_file_multiline")
+      :label(29, 33):message("found here")
+      :label(1, #code):message("whole file")
+      :source(file):render()
+    )
+    file:close()
+    os.remove(tmpname)
+
+    lu.assertEquals(msg, [[
+Error: test_file_multiline
+   ,-[ <unknown>:2:3 ]
+   |
+ 1 | ,-> first line
+ 2 | |   second line with error
+   | |                    ^^|^^
+   | |                      `---- found here
+ 3 | |-> third line
+   | |
+   | `---------------- whole file
+---'
+]])
+  end
+
+  function TestFile.test_file_end()
+    local code = "こにちわ"
+    local tmpname = write_temp_file(code)
+
+    local file = assert(io.open(tmpname, "r"))
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii())
+      :title("Error", "test_file_end")
+      :label(1, #code):message("label")
+      :source(file):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_file_end
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | こにちわ
+   | ^^^^|^^^
+   |     `----- label
+---'
+]])
+    file:close()
+    os.remove(tmpname)
+
+    code = "emoji test 🍎🍊🍌"
+    tmpname = write_temp_file(code)
+    file = assert(io.open(tmpname, "r"))
+    msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii())
+      :title("Error", "test_file_emoji")
+      :label(1, #code):message("label")
+      :source(file):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_file_emoji
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | emoji test 🍎🍊🍌
+   | ^^^^^^^|^^^^^^^^^
+   |        `----------- label
+---'
+]])
+    file:close()
+    os.remove(tmpname)
+
+    code = "invalid utf8 \255"
+    tmpname = write_temp_file(code)
+    file = assert(io.open(tmpname, "r"))
+    msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii())
+      :title("Error", "test_file_invalid_utf8")
+      :label(1, #code):message("label")
+      :source(file):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_file_invalid_utf8
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | invalid utf8 ]] .. "\255" .. [[
+
+   | ^^^^^^^|^^^^^^
+   |        `-------- label
+---'
+]])
+    file:close()
+    os.remove(tmpname)
+  end
+
+  function TestFile.test_file_name()
+    local code = "test content"
+    local tmpname = write_temp_file(code)
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii())
+      :title("Error", "test_file_name")
+      :label(1, 4):message("label")
+      :file(tmpname):render()
+    )
+    os.remove(tmpname)
+    lu.assertEquals(msg, [[
+Error: test_file_name
+   ,-[ ]] .. tmpname .. [[:1:1 ]
+   |
+ 1 | test content
+   | ^^|^
+   |   `--- label
+---'
+]])
+  end
+end
+
 _G.TestColor = TestColor
 _G.TestWrite = TestWrite
 _G.TestLineWidth = TestLineWidth
 _G.TestLineWindowing = TestLineWindowing
+if not use_ref then
+  _G.TestFile = TestFile
+end
 
 os.exit(lu.LuaUnit.run())

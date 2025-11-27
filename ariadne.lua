@@ -1494,6 +1494,7 @@ local ColorGenerator = meta "ColorGenerator"
 --- @overload fun(opts?: table): ConfigAPI
 local Config = meta "Config"
 --- @class ReportAPI
+--- @field file fun(self: ReportAPI, name: string): ReportAPI mock for c port
 --- @field data Report
 --- @field current_label? Label
 --- @field cache Cache
@@ -1661,7 +1662,7 @@ function Report:help(help)
     return self
 end
 
---- @type fun(self: ReportAPI, code: string, name?: string, offset?: integer): ReportAPI
+--- @type fun(self: ReportAPI, code: string|file*, name?: string, offset?: integer): ReportAPI
 function Report:source(code, name, offset)
     local cache = self.cache
     if not cache then
@@ -1669,7 +1670,7 @@ function Report:source(code, name, offset)
         self.cache = cache
     end
     name = name or "<unknown>"
-    local src = src_new(code, name, offset)
+    local src = src_new(code --[[@as string]], name, offset)
     self.cache[name] = src
     self.cache[#self.cache + 1] = src
     return self
@@ -1687,4 +1688,5 @@ return {
     colorgen = ColorGenerator,
     config = Config,
     report = Report,
+    version = "0.1.0-ref"
 }
