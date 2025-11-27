@@ -64,19 +64,19 @@ static int Lmu_config_new(lua_State *L) {
 
     mu_Config *config = (mu_Config *)lua_newuserdata(L, sizeof(mu_Config));
     mu_initconfig(config);
-    luaL_getmetatable(L, LMU_CONFIG_TYPE); /* 2 */
-    lua_pushvalue(L, -1);                  /* 2->3 */
-    lua_setmetatable(L, -3);               /* (3) */
+    luaL_getmetatable(L, LMU_CONFIG_TYPE);
+    lua_pushvalue(L, -1);
+    lua_setmetatable(L, -3);
     if (ty == LUA_TTABLE) {
-        lua_pushnil(L);           /* 3 */
-        while (lua_next(L, 1)) {  /* t[3]->3,4 */
-            lua_pushvalue(L, -5); /* 1->5 */
-            lua_pushvalue(L, -3); /* 3->6 */
+        lua_pushnil(L);
+        while (lua_next(L, 1)) { /* o mt k v */
+            lua_pushvalue(L, -4);
+            lua_pushvalue(L, -3);
             if (lua_gettable(L, -5) == LUA_TNIL)
                 luaL_error(L, "invalid config field '%s'", lua_tostring(L, -4));
-            lua_insert(L, -2); /* c mt k v f c */
+            lua_insert(L, -2); /* o mt k v f o */
             lua_pushvalue(L, -3);
-            lua_call(L, 2, 0); /* c mt k v */
+            lua_call(L, 2, 0); /* o mt k v */
             lua_pop(L, 1);
         }
     }
@@ -139,7 +139,7 @@ static int Lmu_config_label_attach(lua_State *L) {
 }
 
 static int Lmu_config_index_type(lua_State *L) {
-    const char *opts[] = {"char", "byte", NULL};
+    const char *opts[] = {"byte", "char", NULL};
     mu_Config  *config = lmu_checkconfig(L, 1);
     config->index_type = luaL_checkoption(L, 2, "char", opts);
     return lua_settop(L, 1), 1;
@@ -154,7 +154,7 @@ static int Lmu_config_color(lua_State *L) {
 
 static int Lmu_config_char_set(lua_State *L) {
     mu_Config  *config = lmu_checkconfig(L, 1);
-    const char *opts[] = {"ansi", "unicode", NULL};
+    const char *opts[] = {"ascii", "unicode", NULL};
     int         opt = luaL_checkoption(L, 2, "unicode", opts);
     if (opt == 0) config->char_set = mu_ansi();
     else config->char_set = mu_unicode();
@@ -184,6 +184,10 @@ static void lmu_openconfig(lua_State *L) {
         luaL_setfuncs(L, libs, 0);
         lua_pushvalue(L, -1);
         lua_setfield(L, -2, "__index");
+        lua_createtable(L, 0, 1);
+        lua_pushcfunction(L, Lmu_config_libcall);
+        lua_setfield(L, -2, "__call");
+        lua_setmetatable(L, -2);
     }
 }
 
@@ -193,13 +197,13 @@ typedef struct lmu_Report {
     mu_Report *R;
     lua_State *L;
 
-    size_t pos;
-    mu_Id  src_id;
-    int    config_ref;
-    int    custom_level_ref;
-    int    msg_ref;
-    int    code_ref;
-    int    color_ref;
+    ssize_t pos;
+    mu_Id   src_id;
+    int     config_ref;
+    int     custom_level_ref;
+    int     msg_ref;
+    int     code_ref;
+    int     color_ref;
 
     mu_ColorCode chunk_buf;
 } lmu_Report;
@@ -213,15 +217,15 @@ static void lmu_initrefs(lmu_Report *lr) {
 }
 
 static int Lmu_report_new(lua_State *L) {
-    size_t      pos = (size_t)luaL_optinteger(L, 1, 0);
-    mu_Id       src_id = (mu_Id)luaL_optinteger(L, 2, 0);
+    ssize_t     pos = (ssize_t)luaL_optinteger(L, 1, 1);
+    mu_Id       src_id = (mu_Id)luaL_optinteger(L, 2, 1);
     lmu_Report *lr = (lmu_Report *)lua_newuserdata(L, sizeof(lmu_Report));
     memset(lr, 0, sizeof(lmu_Report));
     lua_createtable(L, 8, 0);
     lua_setuservalue(L, -2);
     lr->R = mu_new(NULL, NULL);
-    lr->pos = pos;
-    lr->src_id = src_id;
+    lr->pos = pos - 1;
+    lr->src_id = src_id - 1;
     lmu_initrefs(lr);
     luaL_setmetatable(L, LMU_REPORT_TYPE);
     return 1;
@@ -308,8 +312,8 @@ static int Lmu_report_label(lua_State *L) {
     mu_Report *R = lmu_checkreport(L, 1)->R;
     size_t     start = (size_t)luaL_checkinteger(L, 2);
     size_t     end = (size_t)luaL_optinteger(L, 3, start - 1);
-    mu_Id      src_id = (mu_Id)luaL_optinteger(L, 4, 0);
-    lmu_checkerror(L, mu_label(R, start - 1, end, src_id));
+    mu_Id      src_id = (mu_Id)luaL_optinteger(L, 4, 1);
+    lmu_checkerror(L, mu_label(R, start - 1, end, src_id - 1));
     return lua_settop(L, 1), 1;
 }
 
@@ -339,35 +343,45 @@ static void lmu_pushcolorkind(lua_State *L, mu_ColorKind kind) {
     }
 }
 
+typedef struct lmu_ColorFunc {
+    lmu_Report *lr;
+    int         func_ref;
+} lmu_ColorFunc;
+
 static mu_Chunk lmu_color_func(void *ud, mu_ColorKind kind) {
-    lmu_Report *lr = (lmu_Report *)ud;
-    lua_State  *L = lr->L;
+    lmu_ColorFunc *cf = (lmu_ColorFunc *)ud;
+
+    lua_State  *L = cf->lr->L;
     size_t      len;
     const char *s;
-
-    lua_rawgeti(L, 3, lr->color_ref);
+    lua_rawgeti(L, 3, cf->func_ref);
     lmu_pushcolorkind(L, kind);
     lua_call(L, 1, 1);
     s = luaL_checklstring(L, -1, &len);
     len = (len < MU_COLOR_CODE_SIZE - 1) ? len : MU_COLOR_CODE_SIZE - 1;
-    lr->chunk_buf[0] = len;
-    memcpy(lr->chunk_buf + 1, s, len);
+    cf->lr->chunk_buf[0] = len;
+    memcpy(cf->lr->chunk_buf + 1, s, len);
     lua_pop(L, 1);
-    return lr->chunk_buf;
+    return cf->lr->chunk_buf;
 }
 
 static int Lmu_report_color(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
     int         ty = lua_type(L, 2);
+    lua_getuservalue(L, 1);
     if (ty == LUA_TUSERDATA) {
         mu_ColorCode *code =
             (mu_ColorCode *)luaL_checkudata(L, 2, LMU_COLORCODE_TYPE);
         lmu_checkerror(L, mu_color(lr->R, mu_fromcolorcode, code));
     } else {
+        lmu_ColorFunc *cf;
         luaL_checktype(L, 2, LUA_TFUNCTION);
-        lmu_checkerror(L, mu_color(lr->R, lmu_color_func, lr));
+        cf = (lmu_ColorFunc *)lua_newuserdata(L, sizeof(lmu_ColorFunc));
+        lmu_checkerror(L, mu_color(lr->R, lmu_color_func, cf));
+        lua_pushvalue(L, 2);
+        cf->lr = lr, cf->func_ref = luaL_ref(L, -3);
+        lua_replace(L, 2);
     }
-    lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     lmu_register(L, &lr->color_ref);
     return lua_settop(L, 1), 1;
@@ -412,6 +426,7 @@ static int Lmu_report_source(lua_State *L) {
     mu_Source  *src;
     int         ty = lua_type(L, 2);
     const char *name = luaL_optstring(L, 3, "<unknown>");
+    int         offset = (int)luaL_optinteger(L, 4, 0);
     luaL_argcheck(L, ty == LUA_TSTRING || ty == LUA_TUSERDATA, 2,
                   "string expected");
     if (ty == LUA_TUSERDATA) {
@@ -422,6 +437,7 @@ static int Lmu_report_source(lua_State *L) {
         const char *s = luaL_checklstring(L, 2, &len);
         src = mu_memory_source(lr->R, s, len, name);
     }
+    src->line_no_offset = offset;
     lmu_checkerror(L, mu_source(lr->R, src));
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
@@ -457,7 +473,7 @@ static int Lmu_report_render(lua_State *L) {
     luaL_argcheck(L, ty == LUA_TFUNCTION || ty == LUA_TNONE, 2,
                   "optional function 'writer' expected");
     lua_settop(L, 2);
-    lua_getmetatable(L, 1);
+    lua_getuservalue(L, 1);
     if (ty == LUA_TFUNCTION) {
         lmu_checkerror(L, mu_writer(lr->R, lmu_func_writer, lr));
         lmu_checkerror(L, mu_render(lr->R, lr->pos, lr->src_id));

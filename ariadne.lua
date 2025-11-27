@@ -676,7 +676,9 @@ local function sort_line_labels(line_labels)
         elseif a.col ~= b.col then
             return a.col < b.col
         end
-        return a.info.start_char > b.info.start_char
+        local alen = a.info.end_char and (a.info.end_char - a.info.start_char) or 0
+        local blen = b.info.end_char and (b.info.end_char - b.info.start_char) or 0
+        return alen < blen
     end)
 end
 
@@ -1141,23 +1143,20 @@ local function sg_calc_location(group, src, pos, cfg)
             if line and pos <= line_byte_end then
                 col_no = assert(utf8_len(src.text, line.byte_offset, pos - 1)) + 1
             else
-                line_no = nil
+                line, line_no = nil, nil
             end
         else
             line_no = src_offset_line(src, pos)
             line = src[line_no]
-            if line then
-                col_no = line_col(line, pos)
-            end
+            if line then col_no = line_col(line, pos) end
         end
     else
         local start = (group.labels[1] or group.multi_labels[1]).start_char
         line_no = src_offset_line(src, start)
         line = src[line_no]
-        if line then
-            col_no = line_col(line, start)
-        end
+        if line then col_no = line_col(line, start) end
     end
+    if not line or col_no > line.len + 1 then line_no = nil end
     if not line_no then return "?:?" end
     return ("%d:%d"):format(src_shifted_line_no(src, line_no), col_no)
 end
@@ -1502,7 +1501,7 @@ local Config = meta "Config"
 --- @field data Report
 --- @field current_label? Label
 --- @field cache Cache
---- @overload fun(pos?: integer, id?: string): ReportAPI
+--- @overload fun(pos?: integer, id?: string|integer): ReportAPI
 local Report = meta "Report"
 
 --- @type fun(min_brightness?: number): ColorGeneratorAPI
@@ -1590,7 +1589,7 @@ function Config:char_set(char_set)
     return self
 end
 
---- @type fun(pos?: integer, id?: string): ReportAPI
+--- @type fun(pos?: integer, id?: string|integer): ReportAPI
 function Report.new(pos, id)
     --- @type ReportAPI
     return setmetatable({ data = report_new(pos, id or 1) }, Report --[[@as metatable]])

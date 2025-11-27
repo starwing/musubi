@@ -2,3 +2,7 @@ ariadne
 test.*
 luacov.*
 *.so
+lcov.info
+*.gcda
+*.gcno
+*.dSYM
