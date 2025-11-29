@@ -501,11 +501,12 @@ static int muD_find(const range_table *t, size_t size, utfint ch) {
 }
 
 static int muD_width(utfint ch, int ambiwidth) {
+    if (muD_find(zerowidth_table, muD_tablesize(zerowidth_table), ch)) return 0;
     if (muD_find(doublewidth_table, muD_tablesize(doublewidth_table), ch))
         return 2;
     if (muD_find(ambiwidth_table, muD_tablesize(ambiwidth_table), ch))
         return ambiwidth;
-    return !muD_find(zerowidth_table, muD_tablesize(zerowidth_table), ch);
+    return 1;
 }
 
 static mu_Width muD_strwidth(mu_Slice s, mu_Width ambi) {
@@ -520,7 +521,7 @@ static mu_Width muD_keep_suffix(mu_Slice *s, mu_Width width, mu_Width ambi) {
     for (; s->p < s->e && width != 0; width -= cw) {
         cw = muD_width(muD_rdecode(s), ambi);
         if (width < cw) break;
-        prev = s->e;
+        if (cw) prev = s->e;
     }
     return *s = muD_slice(prev, end - prev), width;
 }
@@ -749,15 +750,24 @@ static int muC_fill_llcache(mu_Report *R) {
 }
 
 static void muC_fill_widthcache(mu_Report *R, size_t len, mu_Slice data) {
-    mu_Width width = 0, **wc = &R->width_cache;
+    mu_Width chwidth, width = 0, **wc = &R->width_cache;
+    utfint   prev = 0;
     muA_reset(R, *wc);
     muA_reserve(R, *wc, len + 1);
+    int i = 0;
     while (data.p < data.e) {
         utfint ch = muD_decode(&data);
+        if (ch == '\t')
+            chwidth = R->config->tab_width - (width % R->config->tab_width);
+        else if (prev == 0x200D) chwidth = 0;
+        else if (ch >= 0x1F3FB && ch <= 0x1F3FF) chwidth = 0;
+        else if ((prev >= 0x1F1E6 && prev <= 0x1F1FF)
+                 && (ch >= 0x1F1E6 && ch <= 0x1F1FF)) /* regional indicator */
+            width += 1, chwidth = 0, ch = 0;
+        else chwidth = muD_width(ch, R->config->ambiwidth);
         *muA_push(R, *wc) = width;
-        width += ch == '\t' ?
-                     (R->config->tab_width - (width % R->config->tab_width)) :
-                     muD_width(ch, R->config->ambiwidth);
+        width += chwidth;
+        prev = ch;
     }
     *muA_push(R, *wc) = width;
     while (muA_size(*wc) < len + 1) *muA_push(R, *wc) = width;
@@ -818,14 +828,15 @@ static void muC_fill_cluster(mu_Report *R) {
     }
 }
 
-static int muC_widthindex(mu_Report *R, mu_Width width, mu_Col l, mu_Col u) {
+static mu_Col muC_widthindex(mu_Report *R, mu_Width width, mu_Col l, mu_Col u) {
     mu_Width delta = R->width_cache[l];
+    mu_Col   start = l;
     while (l < u) {
-        int m = l + ((u - l) >> 1);
-        if ((R->width_cache[m] - delta) < width) l = m + 1;
+        mu_Col m = l + ((u - l) >> 1);
+        if ((R->width_cache[m] - delta) <= width) l = m + 1;
         else u = m;
     }
-    return l - (R->width_cache[l] - delta > width);
+    return l - (l > start && R->width_cache[l] - delta > width);
 }
 
 static void muC_calc_colrange(mu_Report *R, mu_Cluster *c) {
@@ -863,7 +874,9 @@ static void muC_calc_colrange(mu_Report *R, mu_Cluster *c) {
         mu_Width desired = (limited - essential) / 2;
         balance = desired + mu_max(0, desired - avail);
     }
-    c->start_col = muC_widthindex(R, skip + balance, 1, line_part) - 1;
+    c->start_col = muC_widthindex(R, skip + balance, 0, line_part);
+    if (R->width_cache[c->start_col] < skip + balance)
+        c->start_col = muC_widthindex(R, skip + balance + 1, 0, line_part);
     c->end_col = muC_widthindex(
         R, 1 + c->max_msg_width + balance - R->ellipsis_width, line_part, len);
 }

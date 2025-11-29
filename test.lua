@@ -2309,12 +2309,127 @@ Error: test_file_name
   end
 end
 
+local TestUnicode = {}
+do
+  local function test_case()
+    -- it should has width 5+4+2+2+2+2+3=20
+    -- code: "Test:café̄👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end"
+    return "Test:caf" .. utf8.char(0xE9, 0x304,
+          0x1F44B, 0x1F3FE,
+          0x1F1FA, 0x1F1F8,
+          0x1F1E8, 0x1F1F3,
+          0x1F468, 0x200D, 0x1F527,
+          0x1F468, 0x1F3FD, 0x200D, 0x2764, 0xFE0F, 0x200D, 0x1F468, 0x1F3FB) ..
+        "end"
+  end
+  function TestUnicode.test_width()
+    local code = test_case()
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii())
+      :title("Error", "test_unicode_width")
+      :label(28, 30):message("end is here")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_unicode_width
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | Test:café̄👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
+   |                    ^|^
+   |                     `--- end is here
+---'
+]])
+  end
+
+  function TestUnicode.test_break_normal()
+    local code = test_case()
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii():limit_width(29))
+      :title("Error", "test_unicode_break")
+      :label(28, 30):message("1")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_unicode_break
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ...café̄👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
+   |                  ^|^
+   |                   `--- 1
+---'
+]])
+  end
+
+  function TestUnicode.test_break_1()
+    local code = test_case()
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii():limit_width(26))
+      :title("Error", "test_unicode_break")
+      :label(28, 30):message("1")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_unicode_break
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ...é̄👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
+   |               ^|^
+   |                `--- 1
+---'
+]])
+  end
+
+  function TestUnicode.test_break_2()
+    local code = test_case()
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii():limit_width(25))
+      :title("Error", "test_unicode_break")
+      :label(28, 30):message("1")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_unicode_break
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ...👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
+   |              ^|^
+   |               `--- 1
+---'
+]])
+  end
+
+  function TestUnicode.test_break_3()
+    local code = test_case()
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii():limit_width(24))
+      :title("Error", "test_unicode_break")
+      :label(28, 30):message("1")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_unicode_break
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ...🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
+   |            ^|^
+   |             `--- 1
+---'
+]])
+  end
+end
+
 _G.TestColor = TestColor
 _G.TestWrite = TestWrite
 _G.TestLineWidth = TestLineWidth
 _G.TestLineWindowing = TestLineWindowing
 if not use_ref then
   _G.TestFile = TestFile
+  _G.TestUnicode = TestUnicode
 end
 
 os.exit(lu.LuaUnit.run())
