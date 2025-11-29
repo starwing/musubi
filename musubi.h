@@ -269,9 +269,10 @@ MU_NS_END
 #define MU_MIN_FILENAME_WIDTH 12
 #endif /* MU_MIN_FILENAME_WIDTH */
 
-#define mu_min(a, b)    ((a) < (b) ? (a) : (b))
-#define mu_max(a, b)    ((a) > (b) ? (a) : (b))
-#define mu_asc(a, b, c) ((a) <= (b) && (b) <= (c))
+#define mu_min(a, b)        ((a) < (b) ? (a) : (b))
+#define mu_max(a, b)        ((a) > (b) ? (a) : (b))
+#define mu_asc(a, b, c)     ((a) <= (b) && (b) <= (c))
+#define mu_clamp(v, lo, hi) (mu_max((lo), mu_min((hi), (v))))
 
 #if !MU_NO_DEBUG
 #define LOG(fmt, ...) (fprintf(stderr, fmt "\n", ##__VA_ARGS__))
@@ -1030,14 +1031,12 @@ static void muG_init_info(mu_Report *R, mu_Label *label, mu_LabelInfo *out) {
             end_line = start_line, out->end_char = out->start_char;
         else out->end_char = muM_bytes2chars(src, end_pos, &end_line);
     }
-    out->start_char = mu_max(out->start_char, start_line->offset);
-    out->end_char = mu_max(out->end_char, end_line->offset);
-    out->start_char =
-        mu_min(out->start_char, muM_lineend(start_line) + start_line->newline);
-    out->end_char =
-        mu_min(out->end_char, muM_lineend(end_line) + end_line->newline);
     out->label = label;
     out->multi = (start_line != end_line);
+    out->start_char = mu_clamp(out->start_char, start_line->offset,
+                               muM_lineend(start_line) + start_line->newline);
+    out->end_char = mu_clamp(out->end_char, end_line->offset,
+                             muM_lineend(end_line) + end_line->newline);
 }
 
 static int muG_cmp_li(const void *lhf, const void *rhf) {
@@ -1077,7 +1076,7 @@ static int muG_make_groups(mu_Report *R) {
     return MU_OK;
 }
 
-/* rendering */
+/* margin rendering */
 
 typedef enum mu_Margin {
     MU_MARGIN_NONE,
@@ -1085,6 +1084,110 @@ typedef enum mu_Margin {
     MU_MARGIN_ARROW,
     MU_MARGIN_ELLIPSIS
 } mu_Margin;
+
+typedef struct mu_MarginInfo {
+    mu_Margin t;            /* type of margin */
+    int       is_start;     /* whether `li` is the label start */
+    int       ptr_is_start; /* whether `ptr` is the label start */
+
+    size_t first_char; /* first character position in the source */
+    size_t last_char;  /* last character position in the source */
+
+    const mu_LabelInfo *li;     /* label for current column */
+    const mu_LabelInfo *hbar;   /* whether horizontal bar is present */
+    const mu_LabelInfo *ptr;    /* arrow pointer label in margin */
+    const mu_LabelInfo *corner; /* whether draw corner in current column */
+    const mu_LabelInfo *vbar;   /* whether draw vbar in current column */
+    const mu_LineLabel *report; /* current renderering arrow */
+} mu_MarginInfo;
+
+static void muR_decide_margin(mu_Report *R, mu_MarginInfo *mi) {
+    const mu_Cluster *c = R->cur_cluster;
+    if (muM_lastchar(mi->li) >= mi->first_char
+        && mi->li->start_char <= mi->last_char) {
+        int is_margin = c && c->margin_label.info == mi->li;
+        int is_end =
+            mu_asc(mi->first_char, muM_lastchar(mi->li), mi->last_char);
+        if (is_margin && mi->t == MU_MARGIN_LINE)
+            mi->ptr = mi->li, mi->ptr_is_start = mi->is_start;
+        else if (!mi->is_start && (!is_end || mi->t == MU_MARGIN_LINE))
+            mi->vbar = mi->li;
+        else if (mi->report && mi->report->info == mi->li) {
+            if (mi->t != MU_MARGIN_ARROW && !mi->is_start) mi->vbar = mi->li;
+            else if (is_margin) mi->vbar = c->margin_label.info;
+            if (mi->t == MU_MARGIN_ARROW && (!is_margin || !mi->is_start))
+                mi->hbar = mi->li, mi->corner = mi->li;
+        } else if (mi->report) {
+            unsigned j, llen = muA_size(c->line_labels);
+            int      info_is_below = 0;
+            if (!is_margin) {
+                for (j = 0; j < llen; ++j) {
+                    mu_LineLabel *ll = &c->line_labels[j];
+                    if (ll->info == mi->li) break;
+                    if ((info_is_below = (ll == mi->report))) break;
+                }
+            }
+            if ((mi->is_start != info_is_below
+                 && (mi->is_start || !is_margin || mi->li->label->width)))
+                mi->vbar = mi->li;
+        }
+    }
+    if (!mi->hbar && mi->ptr && mi->t == MU_MARGIN_LINE && mi->li != mi->ptr)
+        mi->hbar = mi->ptr;
+}
+
+static int muR_draw_margin(mu_Report *R, const mu_MarginInfo *mi) {
+    if (mi->corner) {
+        muX(muW_use_color(R, mi->corner->label, MU_COLOR_LABEL));
+        muX(muW_draw(R, mi->is_start ? MU_DRAW_LTOP : MU_DRAW_LBOT, 1));
+        if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
+    } else if (mi->vbar && mi->hbar && !R->config->cross_gap) {
+        muX(muW_use_color(R, mi->vbar->label, MU_COLOR_LABEL));
+        muX(muW_draw(R, MU_DRAW_XBAR, 1));
+        if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
+    } else if (mi->hbar) {
+        muX(muW_use_color(R, mi->hbar->label, MU_COLOR_LABEL));
+        muX(muW_draw(R, MU_DRAW_HBAR, R->config->compact ? 1 : 2));
+    } else if (mi->vbar) {
+        mu_Draw draw =
+            mi->t == MU_MARGIN_ELLIPSIS ? MU_DRAW_VBAR_GAP : MU_DRAW_VBAR;
+        muX(muW_use_color(R, mi->vbar->label, MU_COLOR_LABEL));
+        muX(muW_draw(R, draw, 1));
+        if (!R->config->compact) muX(muW_draw(R, MU_DRAW_SPACE, 1));
+    } else if (mi->ptr && mi->t == MU_MARGIN_LINE) {
+        mu_Draw draw = MU_DRAW_HBAR;
+        muX(muW_use_color(R, mi->ptr->label, MU_COLOR_LABEL));
+        if (mi->li == mi->ptr) {
+            if (mi->ptr_is_start) draw = MU_DRAW_LTOP;
+            else if (!mi->li->label->width) draw = MU_DRAW_LBOT;
+            else draw = MU_DRAW_LCROSS;
+        }
+        muX(muW_draw(R, draw, 1));
+        if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
+    } else {
+        muX(muW_use_color(R, NULL, MU_COLOR_RESET));
+        muX(muW_draw(R, MU_DRAW_SPACE, R->config->compact ? 1 : 2));
+    }
+    return MU_OK;
+}
+
+static int muR_draw_margin_tail(mu_Report *R, const mu_MarginInfo *mi) {
+    if (mi->hbar && (mi->t != MU_MARGIN_LINE || mi->hbar != mi->ptr)) {
+        muX(muW_use_color(R, mi->hbar->label, MU_COLOR_LABEL));
+        muX(muW_draw(R, MU_DRAW_HBAR, 1));
+        if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
+    } else if (mi->ptr && mi->t == MU_MARGIN_LINE) {
+        muX(muW_use_color(R, mi->ptr->label, MU_COLOR_LABEL));
+        muX(muW_draw(R, MU_DRAW_RARROW, 1));
+        if (!R->config->compact) muX(muW_draw(R, MU_DRAW_SPACE, 1));
+    } else {
+        muX(muW_use_color(R, NULL, MU_COLOR_RESET));
+        muX(muW_draw(R, MU_DRAW_SPACE, R->config->compact ? 1 : 2));
+    }
+    return MU_OK;
+}
+
+/* rendering */
 
 static int muR_header(mu_Report *R) {
     switch (R->level) {
@@ -1173,93 +1276,22 @@ static int muR_margin(mu_Report *R, const mu_LineLabel *report, mu_Margin t) {
     const mu_Group   *g = R->cur_group;
     const mu_Line    *line = R->cur_line;
     const mu_Cluster *c = R->cur_cluster;
+    unsigned          i, size = muA_size(g->multi_labels);
 
-    unsigned i, size = muA_size(g->multi_labels);
-    size_t   first_char = line->offset + (c ? c->min_col : 0);
-    size_t   last_char = line->offset + (c ? c->end_col : line->len);
-    int      ptr_is_start = 0;
-
-    const mu_LabelInfo *hbar = NULL, *ptr = NULL;
+    mu_MarginInfo mi;
     if (size == 0) return MU_OK;
+    memset(&mi, 0, sizeof(mu_MarginInfo));
+    mi.t = t, mi.report = report;
+    mi.first_char = line->offset + (c ? c->min_col : 0);
+    mi.last_char = line->offset + (c ? c->end_col : line->len);
     for (i = 0; i < size; ++i) {
-        const mu_LabelInfo *li = &g->multi_labels[i];
-        const mu_LabelInfo *vbar = NULL, *corner = NULL;
-        int is_start = mu_asc(first_char, li->start_char, last_char);
-        if (muM_lastchar(li) >= first_char && li->start_char <= last_char) {
-            int is_margin = c && c->margin_label.info == li;
-            int is_end = mu_asc(first_char, muM_lastchar(li), last_char);
-            if (is_margin && t == MU_MARGIN_LINE)
-                ptr = li, ptr_is_start = is_start;
-            else if (!is_start && (!is_end || t == MU_MARGIN_LINE)) vbar = li;
-            else if (report && report->info == li) {
-                if (t != MU_MARGIN_ARROW && !is_start) vbar = li;
-                else if (is_margin) vbar = c->margin_label.info;
-                if (t == MU_MARGIN_ARROW && (!is_margin || !is_start))
-                    hbar = li, corner = li;
-            } else if (report) {
-                unsigned j, llen = muA_size(c->line_labels);
-                int      info_is_below = 0;
-                if (!is_margin) {
-                    for (j = 0; j < llen; ++j) {
-                        mu_LineLabel *ll = &c->line_labels[j];
-                        if (ll->info == li) break;
-                        if ((info_is_below = (ll == report))) break;
-                    }
-                }
-                if ((is_start != info_is_below
-                     && (is_start || !is_margin || li->label->width)))
-                    vbar = li;
-            }
-        }
-        if (!hbar && ptr && t == MU_MARGIN_LINE && li != ptr) hbar = ptr;
-
-        if (corner) {
-            muX(muW_use_color(R, corner->label, MU_COLOR_LABEL));
-            muX(muW_draw(R, is_start ? MU_DRAW_LTOP : MU_DRAW_LBOT, 1));
-            if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
-        } else if (vbar && hbar && !R->config->cross_gap) {
-            muX(muW_use_color(R, vbar->label, MU_COLOR_LABEL));
-            muX(muW_draw(R, MU_DRAW_XBAR, 1));
-            if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
-        } else if (hbar) {
-            muX(muW_use_color(R, hbar->label, MU_COLOR_LABEL));
-            muX(muW_draw(R, MU_DRAW_HBAR, R->config->compact ? 1 : 2));
-        } else if (vbar) {
-            mu_Draw draw =
-                t == MU_MARGIN_ELLIPSIS ? MU_DRAW_VBAR_GAP : MU_DRAW_VBAR;
-            muX(muW_use_color(R, vbar->label, MU_COLOR_LABEL));
-            muX(muW_draw(R, draw, 1));
-            if (!R->config->compact) muX(muW_draw(R, MU_DRAW_SPACE, 1));
-        } else if (ptr && t == MU_MARGIN_LINE) {
-            mu_Draw draw = MU_DRAW_HBAR;
-            muX(muW_use_color(R, ptr->label, MU_COLOR_LABEL));
-            if (li == ptr) {
-                if (ptr_is_start) draw = MU_DRAW_LTOP;
-                else if (!li->label->width) draw = MU_DRAW_LBOT;
-                else draw = MU_DRAW_LCROSS;
-            }
-            muX(muW_draw(R, draw, 1));
-            if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
-        } else {
-            muX(muW_use_color(R, NULL, MU_COLOR_RESET));
-            muX(muW_draw(R, MU_DRAW_SPACE, R->config->compact ? 1 : 2));
-        }
+        mi.li = &g->multi_labels[i];
+        mi.corner = mi.vbar = NULL;
+        mi.is_start = mu_asc(mi.first_char, mi.li->start_char, mi.last_char);
+        muR_decide_margin(R, &mi);
+        muX(muR_draw_margin(R, &mi));
     }
-
-    if (hbar && (t != MU_MARGIN_LINE || hbar != ptr)) {
-        muX(muW_use_color(R, hbar->label, MU_COLOR_LABEL));
-        muX(muW_draw(R, MU_DRAW_HBAR, 1));
-        if (!R->config->compact) muX(muW_draw(R, MU_DRAW_HBAR, 1));
-    } else if (ptr && t == MU_MARGIN_LINE) {
-        muX(muW_use_color(R, ptr->label, MU_COLOR_LABEL));
-        muX(muW_draw(R, MU_DRAW_RARROW, 1));
-        if (!R->config->compact) muX(muW_draw(R, MU_DRAW_SPACE, 1));
-    } else {
-        muX(muW_use_color(R, NULL, MU_COLOR_RESET));
-        muX(muW_draw(R, MU_DRAW_SPACE, R->config->compact ? 1 : 2));
-    }
-    /* don't reset here, to connect lines of arrows */
-    return MU_OK;
+    return muR_draw_margin_tail(R, &mi);
 }
 
 static int muR_line(mu_Report *R, mu_Slice data) {
