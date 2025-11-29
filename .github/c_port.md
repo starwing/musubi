@@ -219,7 +219,7 @@ mu_label(R, 0, 5, 0);  // Covers characters at positions 0,1,2,3,4 (NOT 5)
 The function `muM_contains(pos, line)` allows `pos` to point **one past** the line end:
 ```c
 // Returns true if: line->offset <= pos < line->offset + line->len + 1
-static int muM_contains(unsigned pos, const mu_Line *line) {
+static int muM_contains(unsigned pos, mu_CL line) {
     return pos >= line->offset && pos < line->offset + line->len + 1;
 }
 ```
