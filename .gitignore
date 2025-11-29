@@ -7,3 +7,8 @@ lcov.info
 *.gcda
 *.gcno
 *.dSYM
+
+*.dll
+*.exp
+*.lib
+*.pdb
