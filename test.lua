@@ -414,7 +414,7 @@ Error: unexpected end of file
               :label(i, j):message("Label")
               :source(text):render()
         end)
-        lu.assertTrue(ok)
+        lu.assertTrue(ok, result)
         lu.assertEquals(type(result), "string")
       end
     end
@@ -1207,18 +1207,17 @@ Error: test default colors
         :source(src):render()
     -- Expected: "Error:" in red, skipped margin ":" in dim gray
     msg = ("%q"):format(msg)
-    lu.assertNotNil(msg:find("\\27%[31mError:\\27%[0m"))
-    --     lu.assertEquals(msg, [[
-    -- "\27[31mError:\27[0m test default colors\
-    --    \27[38;5;246m,-[\27[0m <unknown>:1:1 \27[38;5;246m]\27[0m\
-    --    \27[38;5;246m|\27[0m\
-    --  \27[38;5;246m1 |\27[0m \27[38;5;249mapple\27[0m\
-    --    \27[38;5;240m| \27[0m\27[39m^^^|^^\27[0m  \
-    --    \27[38;5;240m| \27[0m   \27[39m`----\27[0m spans multiple lines\
-    --    \27[38;5;240m| \
-    --    | \27[0m\27[38;5;115mNote: note with default colors\
-    -- \27[0m\27[38;5;246m---'\27[0m\
-    -- "]])
+    lu.assertEquals(msg, [[
+"\27[31mError:\27[0m test default colors\
+   \27[38;5;246m,-[\27[0m <unknown>:1:1 \27[38;5;246m]\27[0m\
+   \27[38;5;246m|\27[0m\
+ \27[38;5;246m1 |\27[0m \27[39mapple\27[0m\
+   \27[38;5;240m|\27[0m \27[39m^^^|^^\27[0m  \
+   \27[38;5;240m|\27[0m    \27[39m`----\27[0m spans multiple lines\
+   \27[38;5;240m|\27[0m \
+   \27[38;5;240m|\27[0m \27[38;5;115mNote: note with default colors\27[0m\
+\27[38;5;246m---'\27[0m\
+"]])
 
     msg = ("%q"):format(remove_trailing(
       ariadne.report(1)
@@ -1226,10 +1225,9 @@ Error: test default colors
       :title("Advice", "test default colors")
       :source(src):render()
     ))
-    lu.assertNotNil(msg:find("\\27%[38;5;147mAdvice:\\27%[0m"))
-    --     lu.assertEquals(msg, [[
-    -- "\27[38;5;147mAdvice:\27[0m test default colors\
-    -- "]])
+    lu.assertEquals(msg, [[
+"\27[38;5;147mAdvice:\27[0m test default colors\
+"]])
 
     msg = ("%q"):format(remove_trailing(
       ariadne.report(1)
@@ -1237,10 +1235,9 @@ Error: test default colors
       :title("Warning", "test default colors")
       :source(src):render()
     ))
-    lu.assertNotNil(msg:find("\\27%[33mWarning:\\27%[0m"))
-    --     lu.assertEquals(msg, [[
-    -- "\27[33mWarning:\27[0m test default colors\
-    -- "]])
+    lu.assertEquals(msg, [[
+"\27[33mWarning:\27[0m test default colors\
+"]])
   end -- Test 2: Compact mode with multiline arrows (line 1413)
 
   -- Test 3: cross_gap disabled (line 1409)
@@ -1523,7 +1520,7 @@ Error: emoji test
   end
 end
 
-local TestLineWidth = {}
+local TestLocLimit = {}
 do
   -- Phase 1: Header Truncation Tests (MVP: simple suffix truncation)
   -- Header format: "   ,-[ {path}:{line}:{col} ]"
@@ -1532,7 +1529,7 @@ do
   -- Ellipsis width = 3 (ASCII "...")
   -- Suffix width = available - 3
 
-  function TestLineWidth.test_header_no_truncation_short_path()
+  function TestLocLimit.test_header_no_truncation_short_path()
     -- Path is short, no truncation needed
     local src = "apple"
     local msg = remove_trailing(
@@ -1553,7 +1550,7 @@ Error: test_header_no_truncation_short_path
 ]])
   end
 
-  function TestLineWidth.test_header_truncation_long_path()
+  function TestLocLimit.test_header_truncation_long_path()
     -- Path exceeds line_width, should truncate from start (keep suffix)
     -- Generate long path: ("dir/"):rep(20) = "dir/dir/.../dir/" (80 chars)
     local src = "apple"
@@ -1576,7 +1573,7 @@ Error: test_header_truncation_long_path
 ]])
   end
 
-  function TestLineWidth.test_header_truncation_large_line_number()
+  function TestLocLimit.test_header_truncation_large_line_number()
     -- Generate a file with many lines to test large line numbers
     -- Use ("line\n"):rep(200) instead of manual loop
     local src = ("line\n"):rep(200) .. "target"
@@ -1603,7 +1600,7 @@ Error: test_header_truncation_large_line_number
 ]])
   end
 
-  function TestLineWidth.test_header_truncation_utf8_path()
+  function TestLocLimit.test_header_truncation_utf8_path()
     -- Path with UTF-8 characters (CJK chars are width 2)
     -- "目录" = 4 display width, repeat 20 times = 80 display width
     local text = "apple"
@@ -1626,7 +1623,7 @@ Error: test_header_truncation_utf8_path
 ]])
   end
 
-  function TestLineWidth.test_header_truncation_tab_in_path()
+  function TestLocLimit.test_header_truncation_tab_in_path()
     -- Path contains tab character (should normalize to spaces before width calc)
     -- Tab width = 4 (default)
     local text = "apple"
@@ -1656,7 +1653,7 @@ Error: test_header_truncation_tab_in_path
 ]])
   end
 
-  function TestLineWidth.test_header_truncation_very_narrow()
+  function TestLocLimit.test_header_truncation_very_narrow()
     -- Very narrow line_width: available = 25 - 9 = 16
     local text = "apple"
     local long_path = ("dir/"):rep(20) .. "source.lua"
@@ -1680,7 +1677,7 @@ Error: test_header_truncation_very_narrow
 ]])
   end
 
-  function TestLineWidth.test_header_no_truncation_when_nil()
+  function TestLocLimit.test_header_no_truncation_when_nil()
     -- line_width = nil, no truncation should occur
     local text = "apple"
     local long_path = ("dir/"):rep(20) .. "file.lua"
@@ -1705,7 +1702,7 @@ Error: test_header_no_truncation_when_nil
 ]])
   end
 
-  function TestLineWidth.test_header_truncation_exact_boundary()
+  function TestLocLimit.test_header_truncation_exact_boundary()
     -- Path exactly matches available width, no truncation
     local text = "apple"
     -- line_width=30, line_no_width=1, loc="1:1"(3 chars)
@@ -1730,7 +1727,7 @@ Error: test_header_truncation_exact_boundary
 ]])
   end
 
-  function TestLineWidth.test_header_truncation_one_over_boundary()
+  function TestLocLimit.test_header_truncation_one_over_boundary()
     -- Path exceeds available width by exactly 1 char
     local text = "apple"
     local long_name = ("x"):rep(15) .. ".lua"
@@ -1753,9 +1750,9 @@ Error: test_header_truncation_one_over_boundary
   end
 end
 
-TestLineWindowing = {}
+TestLineLimit = {}
 do
-  function TestLineWindowing.test_single_label_at_end_of_long_line()
+  function TestLineLimit.test_single_label_at_end_of_long_line()
     -- Label at the very end of a 900+ char line
     -- Should show ellipsis prefix + local context
     local text = string.rep("apple == ", 100) .. "orange"
@@ -1780,7 +1777,27 @@ Error: test_single_label_at_end_of_long_line
 ]])
   end
 
-  function TestLineWindowing.test_single_label_in_middle_of_long_line()
+  function TestLineLimit.test_tab_width()
+    local code = ("\t"):rep(20) .. "error"
+    local msg = remove_trailing(
+      ariadne.report(21)
+      :config(no_color_ascii():limit_width(40):tab_width(4))
+      :title("Error", "test_tab_width")
+      :label(21, 25):message("here")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_tab_width
+   ,-[ <unknown>:1:21 ]
+   |
+ 1 | ...                    error
+   |                        ^^|^^
+   |                          `---- here
+---'
+]])
+  end
+
+  function TestLineLimit.test_single_label_in_middle_of_long_line()
     -- Label in the middle of a long line
     -- Should center the label in the available width
     local prefix = string.rep("a", 400)
@@ -1807,7 +1824,7 @@ Error: test_single_label_in_middle_of_long_line
 ]])
   end
 
-  function TestLineWindowing.test_small_msg()
+  function TestLineLimit.test_small_msg()
     local text = ("a"):rep(400) .. "error" .. ("b"):rep(400)
     local msg = remove_trailing(
       ariadne.report(401)
@@ -1828,7 +1845,7 @@ Error: test_small_msg
 ]])
   end
 
-  function TestLineWindowing.test_minimum_line_width()
+  function TestLineLimit.test_minimum_line_width()
     -- Label at the start of a long line
     -- Should NOT show ellipsis, just truncate the end
     local text = ("a"):rep(400) .. "error" .. ("b"):rep(400)
@@ -1854,7 +1871,7 @@ Error: test_minimum_line_width
 ]])
   end
 
-  function TestLineWindowing.test_fit_line_width()
+  function TestLineLimit.test_fit_line_width()
     -- Label at the start of a long line
     -- Should NOT show ellipsis, just truncate the end
     local text = ("a"):rep(55) .. "error" .. ("b"):rep(16)
@@ -1879,7 +1896,7 @@ Error: test_fit_line_width
 ]])
   end
 
-  function TestLineWindowing.test_single_label_at_start_of_long_line()
+  function TestLineLimit.test_single_label_at_start_of_long_line()
     -- Label at the start of a long line
     -- Should NOT show ellipsis, just truncate the end
     local text = "error" .. string.rep("x", 900)
@@ -1905,7 +1922,7 @@ Error: test_single_label_at_start_of_long_line
 ]])
   end
 
-  function TestLineWindowing.test_no_windowing_when_line_fits()
+  function TestLineLimit.test_no_windowing_when_line_fits()
     -- Line is short enough to fit within line_width
     -- Should NOT apply windowing
     local text = "short line with error"
@@ -1930,7 +1947,7 @@ Error: test_no_windowing_when_line_fits
 ]])
   end
 
-  function TestLineWindowing.test_no_windowing_when_line_width_nil()
+  function TestLineLimit.test_no_windowing_when_line_width_nil()
     -- line_width = nil, should display full line
     local text = string.rep("a", 200)
     local msg = remove_trailing(
@@ -1946,7 +1963,7 @@ Error: test_no_windowing_when_line_fits
     lu.assertTrue(msg:find(expected_line, 1, true) ~= nil, "Should show full line")
   end
 
-  function TestLineWindowing.test_multiple_labels_on_long_line()
+  function TestLineLimit.test_multiple_labels_on_long_line()
     -- Multiple labels on same long line
     -- Should window based on leftmost label (min_col)
     local prefix = string.rep("a", 100)
@@ -1980,7 +1997,7 @@ Error: test_multiple_labels_on_long_line
 ]])
   end
 
-  function TestLineWindowing.test_cjk_characters_in_line()
+  function TestLineLimit.test_cjk_characters_in_line()
     -- Line with CJK characters (width 2 each)
     -- Should correctly calculate display width
     local text = string.rep("中", 50) .. "错误" .. string.rep("文", 50)
@@ -2005,7 +2022,7 @@ Error: test_cjk_characters_in_line
 ]])
   end
 
-  function TestLineWindowing.test_mixed_ascii_cjk_characters()
+  function TestLineLimit.test_mixed_ascii_cjk_characters()
     -- Mixed ASCII and CJK characters
     -- ASCII width 1, CJK width 2
     local prefix = string.rep("a", 200)
@@ -2031,7 +2048,7 @@ Error: test_mixed_ascii_cjk_characters
 ]])
   end
 
-  function TestLineWindowing.test_order_disrupts_spatial_clustering()
+  function TestLineLimit.test_order_disrupts_spatial_clustering()
     local text = ("a"):rep(100)
     local msg = remove_trailing(
       ariadne.report(10)
@@ -2054,7 +2071,7 @@ Error: test_order_disrupts_spatial_clustering
 ]])
   end
 
-  function TestLineWindowing.test_cluster_width_calculation()
+  function TestLineLimit.test_cluster_width_calculation()
     local text = ("a"):rep(200)
     local msg = remove_trailing(
       ariadne.report(100)
@@ -2078,7 +2095,7 @@ Error: test_cluster_width_calculation
 ]])
   end
 
-  function TestLineWindowing.test_margin_per_cluster()
+  function TestLineLimit.test_margin_per_cluster()
     local src = ("a"):rep(200) .. "\nbbbbb"
     local msg = remove_trailing(
       ariadne.report(100)
@@ -2108,7 +2125,7 @@ Error: test_margin_per_cluster
 ]])
   end
 
-  function TestLineWindowing.test_multiline()
+  function TestLineLimit.test_multiline()
     local src = ("first line\n") .. ("a"):rep(200)
     local msg = remove_trailing(
       ariadne.report(15)
@@ -2425,8 +2442,8 @@ end
 
 _G.TestColor = TestColor
 _G.TestWrite = TestWrite
-_G.TestLineWidth = TestLineWidth
-_G.TestLineWindowing = TestLineWindowing
+_G.TestLocLimit = TestLocLimit
+_G.TestLineLimit = TestLineLimit
 if not use_ref then
   _G.TestFile = TestFile
   _G.TestUnicode = TestUnicode
