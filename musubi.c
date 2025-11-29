@@ -1,9 +1,19 @@
+#ifdef _MSC_VER
+#define _CRT_SECURE_NO_DEPRECATE 1
+#define _CRT_SECURE_NO_WARNINGS  1
+#endif
+
 #define LUA_LIB
 #include <lauxlib.h>
 #include <lua.h>
 
 #define MU_STATIC_API
 #include "musubi.h"
+
+#ifdef _MSC_VER
+#pragma execution_character_set("utf-8")
+#define strcasecmp _stricmp
+#endif
 
 #define LMU_REPORT_TYPE    "musubi.Report"
 #define LMU_CONFIG_TYPE    "musubi.Config"
@@ -197,13 +207,13 @@ typedef struct lmu_Report {
     mu_Report *R;
     lua_State *L;
 
-    ssize_t pos;
-    mu_Id   src_id;
-    int     config_ref;
-    int     custom_level_ref;
-    int     msg_ref;
-    int     code_ref;
-    int     color_ref;
+    size_t pos;
+    mu_Id  src_id;
+    int    config_ref;
+    int    custom_level_ref;
+    int    msg_ref;
+    int    code_ref;
+    int    color_ref;
 
     mu_ColorCode chunk_buf;
 } lmu_Report;
@@ -217,7 +227,7 @@ static void lmu_initrefs(lmu_Report *lr) {
 }
 
 static int Lmu_report_new(lua_State *L) {
-    ssize_t     pos = (ssize_t)luaL_optinteger(L, 1, 1);
+    size_t      pos = (size_t)luaL_optinteger(L, 1, 1);
     mu_Id       src_id = (mu_Id)luaL_optinteger(L, 2, 1);
     lmu_Report *lr = (lmu_Report *)lua_newuserdata(L, sizeof(lmu_Report));
     memset(lr, 0, sizeof(lmu_Report));
@@ -360,7 +370,7 @@ static mu_Chunk lmu_color_func(void *ud, mu_ColorKind kind) {
     lua_call(L, 1, 1);
     s = luaL_checklstring(L, -1, &len);
     len = (len < MU_COLOR_CODE_SIZE - 1) ? len : MU_COLOR_CODE_SIZE - 1;
-    cf->lr->chunk_buf[0] = len;
+    cf->lr->chunk_buf[0] = (char)len;
     memcpy(cf->lr->chunk_buf + 1, s, len);
     lua_pop(L, 1);
     return cf->lr->chunk_buf;

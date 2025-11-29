@@ -2445,7 +2445,9 @@ _G.TestWrite = TestWrite
 _G.TestLocLimit = TestLocLimit
 _G.TestLineLimit = TestLineLimit
 if not use_ref then
-  _G.TestFile = TestFile
+  if package.config:sub(1, 1) ~= "\\" then
+    _G.TestFile = TestFile
+  end
   _G.TestUnicode = TestUnicode
 end
 
