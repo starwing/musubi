@@ -1,0 +1,26 @@
+[package]
+name = "musubi"
+version = "0.1.0"
+edition = "2024"
+authors = ["Xavier Wang <xavierxwang@gmail.com>"]
+description = "Rust bindings for musubi diagnostic renderer"
+license = "MIT"
+repository = "https://github.com/starwing/musubi"
+keywords = ["diagnostics", "error-reporting", "terminal"]
+categories = ["development-tools", "command-line-interface"]
+
+[lib]
+name = "musubi"
+path = "src/lib.rs"
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+
+[dependencies]
+
+[build-dependencies]
+cc = "1.0"
+
+[dev-dependencies]
+insta = "1.44.3"

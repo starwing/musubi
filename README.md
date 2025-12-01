@@ -84,7 +84,7 @@ def six =
 
 **Output:**
 
-![demo](demo.svg)
+![demo](misc/demo.svg)
 
 ---
 
@@ -203,20 +203,20 @@ mu.report(0)
 
 ### Report Builder
 
-| Method                             | Description                                                  |
-| ---------------------------------- | ------------------------------------------------------------ |
-| `mu.report(pos, src_id?)`          | Create a new report at position `pos`                        |
-| `:title(level, message)`           | Set report level (`"Error"`, `"Warning"`) and title          |
-| `:code(code)`                      | Set optional error code (e.g., `"E0308"`)                    |
-| `:label(start, end?, src_id?)`     | Add a label span (half-open interval `[start, end)`)         |
-| `:message(text, width?)`           | Attach message to the last added label                       |
-| `:color(color)`                    | Set color for the last added label                           |
-| `:order(n)`                        | Set display order for the last label                         |
-| `:priority(n)`                     | Set priority for clustering                                  |
-| `:note(text)`                      | Add a note to the footer                                     |
-| `:help(text)`                      | Add a help message to the footer                             |
+| Method                             | Description                                                        |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| `mu.report(pos, src_id?)`          | Create a new report at position `pos`                              |
+| `:title(level, message)`           | Set report level (`"Error"`, `"Warning"`) and title                |
+| `:code(code)`                      | Set optional error code (e.g., `"E0308"`)                          |
+| `:label(start, end?, src_id?)`     | Add a label span (half-open interval `[start, end)`)               |
+| `:message(text, width?)`           | Attach message to the last added label                             |
+| `:color(color)`                    | Set color for the last added label                                 |
+| `:order(n)`                        | Set display order for the last label                               |
+| `:priority(n)`                     | Set priority for clustering                                        |
+| `:note(text)`                      | Add a note to the footer                                           |
+| `:help(text)`                      | Add a help message to the footer                                   |
 | `:source(content, name?, offset?)` | Register a source (string or FILE*) with line offset (`0` default) |
-| `:render(writer?)`                 | Render the report (returns string or calls writer function)  |
+| `:render(writer?)`                 | Render the report (returns string or calls writer function)        |
 
 ### Configuration
 

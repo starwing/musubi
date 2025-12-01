@@ -1,7 +1,8 @@
-UCD
+/misc/UCD
 ariadne
 test.*
 luacov.*
+*.o
 *.so
 lcov.info
 *.gcda
@@ -12,3 +13,13 @@ lcov.info
 *.exp
 *.lib
 *.pdb
+
+/luarocks
+/lua
+/lua_modules
+/.luarocks
+/luarocks
+
+/src/.lib.rs.pending-snap
+/target
+/Cargo.lock

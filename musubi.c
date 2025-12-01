@@ -166,7 +166,7 @@ static int Lmu_config_char_set(lua_State *L) {
     mu_Config  *config = lmu_checkconfig(L, 1);
     const char *opts[] = {"ascii", "unicode", NULL};
     int         opt = luaL_checkoption(L, 2, "unicode", opts);
-    if (opt == 0) config->char_set = mu_ansi();
+    if (opt == 0) config->char_set = mu_ascii();
     else config->char_set = mu_unicode();
     return lua_settop(L, 1), 1;
 }
@@ -295,12 +295,14 @@ static int Lmu_report_config(lua_State *L) {
 
 static int Lmu_report_title(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
-    const char *custom_level = luaL_optstring(L, 2, NULL);
-    const char *msg = luaL_optstring(L, 3, NULL);
+    size_t      cllen, msglen;
+    const char *custom_level = luaL_optlstring(L, 2, NULL, &cllen);
+    const char *msg = luaL_optlstring(L, 3, NULL, &msglen);
     mu_Level    level = MU_CUSTOM_LEVEL;
     if (strcasecmp(custom_level, "error") == 0) level = MU_ERROR;
     else if (strcasecmp(custom_level, "warning") == 0) level = MU_WARNING;
-    lmu_checkerror(L, mu_title(lr->R, level, custom_level, msg));
+    lmu_checkerror(L, mu_title(lr->R, level, mu_lslice(custom_level, cllen),
+                               mu_lslice(msg, msglen)));
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     lmu_register(L, &lr->custom_level_ref);
@@ -311,8 +313,9 @@ static int Lmu_report_title(lua_State *L) {
 
 static int Lmu_report_code(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
-    const char *code = luaL_checkstring(L, 2);
-    lmu_checkerror(L, mu_code(lr->R, code));
+    size_t      len;
+    const char *code = luaL_checklstring(L, 2, &len);
+    lmu_checkerror(L, mu_code(lr->R, mu_lslice(code, len)));
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     lmu_register(L, &lr->code_ref);
@@ -330,9 +333,10 @@ static int Lmu_report_label(lua_State *L) {
 
 static int Lmu_report_message(lua_State *L) {
     mu_Report  *R = lmu_checkreport(L, 1)->R;
-    const char *msg = luaL_checkstring(L, 2);
+    size_t      len;
+    const char *msg = luaL_checklstring(L, 2, &len);
     int         width = (int)luaL_optinteger(L, 3, 0);
-    lmu_checkerror(L, mu_message(R, msg, width));
+    lmu_checkerror(L, mu_message(R, mu_lslice(msg, len), width));
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     luaL_ref(L, -2); /* store the message string */
@@ -414,8 +418,9 @@ static int Lmu_report_priority(lua_State *L) {
 
 static int Lmu_report_help(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
-    const char *help = luaL_checkstring(L, 2);
-    lmu_checkerror(L, mu_help(lr->R, help));
+    size_t      len;
+    const char *help = luaL_checklstring(L, 2, &len);
+    lmu_checkerror(L, mu_help(lr->R, mu_lslice(help, len)));
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     luaL_ref(L, -2); /* store the help string */
@@ -424,8 +429,9 @@ static int Lmu_report_help(lua_State *L) {
 
 static int Lmu_report_note(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
-    const char *note = luaL_checkstring(L, 2);
-    lmu_checkerror(L, mu_note(lr->R, note));
+    size_t      len;
+    const char *note = luaL_checklstring(L, 2, &len);
+    lmu_checkerror(L, mu_note(lr->R, mu_lslice(note, len)));
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     luaL_ref(L, -2); /* store the note string */
@@ -436,17 +442,19 @@ static int Lmu_report_source(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
     mu_Source  *src;
     int         ty = lua_type(L, 2);
-    const char *name = luaL_optstring(L, 3, "<unknown>");
+    size_t      namelen;
+    const char *name = luaL_optlstring(L, 3, "<unknown>", &namelen);
     int         offset = (int)luaL_optinteger(L, 4, 0);
     luaL_argcheck(L, ty == LUA_TSTRING || ty == LUA_TUSERDATA, 2,
                   "string/file* expected");
     if (ty == LUA_TUSERDATA) {
         FILE **fp = (FILE **)luaL_checkudata(L, 2, "FILE*");
-        src = mu_file_source(lr->R, *fp, name);
+        src = mu_file_source(lr->R, *fp, mu_lslice(name, namelen));
     } else {
         size_t      len;
         const char *s = luaL_checklstring(L, 2, &len);
-        src = mu_memory_source(lr->R, s, len, name);
+        src = mu_memory_source(lr->R, mu_lslice(s, len),
+                               mu_lslice(name, namelen));
     }
     src->line_no_offset = offset;
     lmu_checkerror(L, mu_source(lr->R, src));
@@ -460,9 +468,10 @@ static int Lmu_report_source(lua_State *L) {
 
 static int Lmu_report_file(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
-    const char *name = luaL_optstring(L, 2, "<unknown>");
+    size_t      namelen;
+    const char *name = luaL_optlstring(L, 2, "<unknown>", &namelen);
     int         offset = (int)luaL_optinteger(L, 3, 0);
-    mu_Source  *src = mu_file_source(lr->R, NULL, name);
+    mu_Source  *src = mu_file_source(lr->R, NULL, mu_lslice(name, namelen));
     luaL_argcheck(L, src != NULL, 2, "file source creation failed");
     src->line_no_offset = offset;
     lmu_checkerror(L, mu_source(lr->R, src));

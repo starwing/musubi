@@ -1,3 +1,4 @@
+package.path = "tests/?.lua;" .. package.path
 local lu = require "luaunit"
 local use_ref = os.getenv("REF") == "1"
 --- @module 'ariadne'
