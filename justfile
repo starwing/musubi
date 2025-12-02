@@ -8,6 +8,9 @@ lua:
     /I C:\Devel\Lua54\include C:\Devel\Lua54\lib\lua54.lib \
     /LD musubi.c /Felua-utf8.dll
 
+test: lua
+    lua tests/test.lua
+
 coverage:
     rm -f *.gc*
     CFLAGS="--coverage -ggdb" LDFLAGS=--coverage \

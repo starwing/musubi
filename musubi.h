@@ -433,11 +433,10 @@ static void muA_reserve_(mu_Report *R, void **A, size_t esize, unsigned n) {
 
 #include "unidata.h"
 
+#define muD_bytelen(s)   ((size_t)((s).e - (s).p))
 #define muD_tablesize(t) (sizeof(t) / sizeof((t)[0]))
 
 /* clang-format off */
-static size_t muD_bytelen(mu_Slice s) { return (size_t)(s.e - s.p); }
-
 MU_API mu_Slice mu_slice(const char *p)
 { return mu_lslice(p, strlen(p)); }
 
@@ -567,11 +566,11 @@ MU_API mu_Chunk mu_fromcolorcode(void *ud, mu_ColorKind k) {
 
 /* clang-format off */
 static int muW_write(mu_Report *R, mu_Slice s)
-{ return (assert(R->writer), R->writer(R->writer_ud, s.p, muD_bytelen(s))); }
-/* clang-format on */
+{ return assert(R->writer), R->writer(R->writer_ud, s.p, muD_bytelen(s)); }
 
-#define muW_chunk(R, chunk) \
-    muW_write(R, mu_lslice(chunk + 1, (size_t)(chunk[0] & 0xFF)))
+static int muW_chunk(mu_Report *R, mu_Chunk chunk)
+{ return muW_write(R, mu_lslice((chunk) + 1, (size_t)((chunk)[0] & 0xFF))); }
+/* clang-format on */
 
 static int muW_replace(mu_Report *R, mu_Slice s, char oldc, char newc) {
     while (s.p < s.e) {
@@ -631,30 +630,22 @@ static int muW_draw(mu_Report *R, mu_Draw cs, int count) {
 /* misc utils */
 
 /* clang-format off */
+static size_t muM_lastchar(mu_CLI li)
+{ return li->end_char - (li->end_char > li->start_char); }
+
 static size_t muM_lineend(mu_CL line)
 { return line->offset + line->len; }
-
-static mu_Col muM_col(size_t pos, mu_CLL ll, mu_CL line)
-{ return ll->info->multi ? ll->col : (mu_Col)(pos - line->offset); }
 
 static int muM_contains(size_t pos, mu_CL line)
 { return pos >= line->offset && pos < muM_lineend(line) + 1; }
 
-static size_t muM_lastchar(mu_CLI  li)
-{ return li->end_char - (li->end_char > li->start_char); }
+static mu_Col muM_col(size_t pos, mu_CLL ll, mu_CL line)
+{ return ll->info->multi ? ll->col : (mu_Col)(pos - line->offset); }
 /* clang-format on */
 
 static mu_Width muM_marginwidth(mu_Report *R) {
     unsigned size = muA_size(R->cur_group->multi_labels);
     return (size ? size + 1 : 0) * (R->config->compact ? 1 : 2);
-}
-
-static int muM_line_in_labels(mu_CL line, mu_CLI li) {
-    unsigned i, size;
-    size_t   check = line->offset;
-    for (i = 0, size = muA_size(li); i < size; ++i)
-        if (mu_asc(li[i].start_char, check, muM_lastchar(&li[i]))) return 1;
-    return 0;
 }
 
 static size_t muM_bytes2chars(mu_Source *src, size_t pos, mu_CL *line) {
@@ -666,6 +657,22 @@ static size_t muM_bytes2chars(mu_Source *src, size_t pos, mu_CL *line) {
         r += 1, muD_advance(&s), pos -= mu_min(pos, (size_t)(s.p - p));
     }
     return r + pos;
+}
+
+static void muM_level(mu_Level l, mu_ColorKind *k, mu_Slice *s) {
+    switch (l) {
+    case MU_ERROR:   *k = MU_COLOR_ERROR, *s = muD_literal("Error"); break;
+    case MU_WARNING: *k = MU_COLOR_WARNING, *s = muD_literal("Warning"); break;
+    default:         *k = MU_COLOR_KIND; break;
+    }
+}
+
+static int muM_line_in_labels(mu_CL line, mu_CLI li) {
+    unsigned i, size;
+    size_t   check = line->offset;
+    for (i = 0, size = muA_size(li); i < size; ++i)
+        if (mu_asc(li[i].start_char, check, muM_lastchar(&li[i]))) return 1;
+    return 0;
 }
 
 static void muM_calc_linenowidth(mu_Report *R) {
@@ -1175,18 +1182,25 @@ static int muR_draw_margin_tail(mu_Report *R, const mu_MarginInfo *mi) {
 
 /* rendering */
 
-static void muR_level(mu_Level l, mu_ColorKind *k, mu_Slice *s) {
-    switch (l) {
-    case MU_ERROR:   *k = MU_COLOR_ERROR, *s = muD_literal("Error"); break;
-    case MU_WARNING: *k = MU_COLOR_WARNING, *s = muD_literal("Warning"); break;
-    default:         *k = MU_COLOR_KIND; break;
-    }
+static void muR_cleanup(mu_Report *R) {
+    unsigned i, size;
+    if (!R) return;
+    R->cur_color_label = NULL;
+    R->cur_color_kind = MU_COLOR_RESET;
+    for (i = 0, size = muA_size(R->groups); i < size; i++)
+        muG_cleanup(R, &R->groups[i]);
+    muA_reset(R, R->groups);
+    for (i = 0, size = muA_size(R->clusters); i < size; i++)
+        muC_cleanup(R, &R->clusters[i]);
+    muA_reset(R, R->clusters);
+    muA_reset(R, R->ll_cache);
+    muA_reset(R, R->width_cache);
 }
 
 static int muR_header(mu_Report *R) {
     mu_ColorKind level_color;
     mu_Slice     level_slice = R->custom_level;
-    muR_level(R->level, &level_color, &level_slice);
+    muM_level(R->level, &level_color, &level_slice);
     muX(muW_color(R, level_color));
     if (R->code.p) {
         muX(muW_draw(R, MU_DRAW_LBOX, 1));
@@ -1823,7 +1837,11 @@ static mu_Config muM_default = {
     /* .index_type       = */ MU_INDEX_CHAR,
     /* .color            = */ mu_default_color,
     /* .color_ud         = */ NULL,
+#ifdef _WIN32
+    /* .char_set         = */ &muM_nicode_charset,
+#else
     /* .char_set         = */ &muM_unicode_charset,
+#endif /* _WIN32 */
 };
 
 /* clang-format off */
@@ -1832,21 +1850,6 @@ MU_API void mu_initconfig(mu_Config *config)
 /* clang-format on */
 
 /* API */
-
-static void muR_cleanup(mu_Report *R) {
-    unsigned i, size;
-    if (!R) return;
-    R->cur_color_label = NULL;
-    R->cur_color_kind = MU_COLOR_RESET;
-    for (i = 0, size = muA_size(R->groups); i < size; i++)
-        muG_cleanup(R, &R->groups[i]);
-    muA_reset(R, R->groups);
-    for (i = 0, size = muA_size(R->clusters); i < size; i++)
-        muC_cleanup(R, &R->clusters[i]);
-    muA_reset(R, R->clusters);
-    muA_reset(R, R->ll_cache);
-    muA_reset(R, R->width_cache);
-}
 
 MU_API int mu_source(mu_Report *R, mu_Source *src) {
     if (!R || !src) return MU_ERRPARAM;
