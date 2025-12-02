@@ -107,10 +107,10 @@ Error: can't compare apples with oranges
     local text = "apple == orange;"
     local msg = remove_trailing(
       ariadne.report(1)
-      :config(no_color_ascii())
       :title("Error", "can't compare apples with oranges")
       :label(1, 5)
       :label(10, 15)
+      :config(no_color_ascii())
       :source(text):render()
     )
 
