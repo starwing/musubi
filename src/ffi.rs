@@ -11,6 +11,8 @@ pub const MU_OK: c_int = 0;
 pub const MU_ERRPARAM: c_int = -1;
 pub const MU_ERRSRC: c_int = -2;
 pub const MU_ERRFILE: c_int = -3;
+pub const MU_ERR_SRCINIT: c_int = -101;
+pub const MU_ERR_WRITER: c_int = -102;
 
 pub const MU_CHUNK_MAX_SIZE: usize = 63;
 pub const MU_COLOR_CODE_SIZE: usize = 32;
@@ -91,11 +93,11 @@ pub struct mu_Report {
 // mu_Line (opaque, only used as pointer)
 #[repr(C)]
 pub struct mu_Line {
-    offset: usize,
-    byte_offset: usize,
-    len: c_uint,
-    byte_len: c_uint,
-    newline: c_uint,
+    pub offset: usize,
+    pub byte_offset: usize,
+    pub len: c_uint,
+    pub byte_len: c_uint,
+    pub newline: c_uint,
 }
 
 // Function pointer types for mu_Source
@@ -112,8 +114,11 @@ pub type mu_SourceLineForBytes =
 /// mu_Source struct - not opaque, we need to read the `id` field
 #[repr(C)]
 pub struct mu_Source {
-    pub ud: *mut c_void,
+    pub size: usize,
+    pub R: *mut mu_Report,
     pub name: mu_Slice,
+    pub lines: *mut mu_Line,
+
     pub line_no_offset: c_int,
     pub id: mu_Id,
     pub gidx: c_int,
@@ -127,16 +132,47 @@ pub struct mu_Source {
 }
 
 // Type aliases
-pub type mu_Id = c_uint;
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct mu_Id(c_uint);
+
 pub type mu_Chunk = *const c_char;
 pub type mu_Charset = [mu_Chunk; mu_Draw::MU_DRAW_COUNT as usize];
 
+impl From<i32> for mu_Id {
+    fn from(value: i32) -> Self {
+        mu_Id(value.max(0) as c_uint)
+    }
+}
+
+impl From<usize> for mu_Id {
+    fn from(value: usize) -> Self {
+        mu_Id(value as c_uint)
+    }
+}
+
 // Slice struct - matches C: struct mu_Slice { const char *p, *e; }
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct mu_Slice {
     pub p: *const c_char,
     pub e: *const c_char,
+}
+
+impl From<mu_Slice> for &[u8] {
+    fn from(slice: mu_Slice) -> Self {
+        let len = unsafe { slice.e.offset_from(slice.p) as usize };
+        unsafe { std::slice::from_raw_parts(slice.p as *const u8, len) }
+    }
+}
+
+impl std::fmt::Debug for mu_Slice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let len = unsafe { self.e.offset_from(self.p) as usize };
+        let slice = unsafe { std::slice::from_raw_parts(self.p as *const u8, len) };
+        let s = String::from_utf8_lossy(slice);
+        write!(f, "mu_Slice[{}]", s)
+    }
 }
 
 impl Default for mu_Slice {
@@ -234,6 +270,20 @@ unsafe extern "C" {
 
     // Source creation
     pub fn mu_newsource(R: *mut mu_Report, size: usize, name: mu_Slice) -> *mut mu_Source;
+    pub fn mu_updatelines(src: *mut mu_Source, data: mu_Slice);
+    pub fn mu_freesource(src: *mut mu_Source);
+    pub fn mu_getline(src: *mut mu_Source, line_no: c_uint) -> mu_Slice;
+    pub fn mu_lineforchars(
+        src: *mut mu_Source,
+        char_pos: usize,
+        out: *mut *const mu_Line,
+    ) -> c_uint;
+    pub fn mu_lineforbytes(
+        src: *mut mu_Source,
+        byte_pos: usize,
+        out: *mut *const mu_Line,
+    ) -> c_uint;
+
     pub fn mu_memory_source(R: *mut mu_Report, data: mu_Slice, name: mu_Slice) -> *mut mu_Source;
 
     // Color generator

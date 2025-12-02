@@ -12,7 +12,7 @@
 //!     .with_label(0..3)
 //!     .with_message("expected identifier");
 //!
-//! println!("{}", report.render_to_string(0, 0));
+//! println!("{}", report.render_to_string(0, 0).unwrap());
 //! ```
 
 mod ffi;
@@ -23,6 +23,8 @@ use std::io::{self, Write};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ptr::{self, null_mut};
+
+use crate::ffi::mu_Source;
 
 // ============================================================================
 // Public types (no FFI exposure)
@@ -267,18 +269,23 @@ impl CharSet {
 /// without heap allocation.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// # use musubi::{Config, ColorKind, Color};
+/// # use std::io::Write;
 /// struct MyColors;
 ///
 /// impl Color for MyColors {
-///     fn color(&self, kind: ColorKind, out: &mut ColorCode) {
+///     fn color(&self, w: &mut dyn Write, kind: ColorKind) -> std::io::Result<()> {
 ///         match kind {
-///             ColorKind::Error => out.write_str("\x1b[31m"),
-///             ColorKind::Reset => out.write_str("\x1b[0m"),
-///             _ => {}
-///         }
+///             ColorKind::Error => w.write(b"[")?,
+///             ColorKind::Reset => w.write(b"]")?,
+///             _ => 0,
+///         };
+///         Ok(())
 ///     }
 /// }
+///
+/// Config::new().with_color(&MyColors);
 /// ```
 pub trait Color {
     fn color(&self, w: &mut dyn Write, kind: ColorKind) -> std::io::Result<()>;
@@ -476,42 +483,298 @@ impl<'a> Config<'a> {
 /// Sources can be created from in-memory strings or with custom line providers.
 ///
 /// # Example
-/// ```ignore
-/// // Simple in-memory source
-/// let source = Source::new("let x = 42;", "main.rs");
+/// ```rust
+/// # use musubi::Source;
+/// # let mut report = musubi::Report::new();
 ///
-/// // Or use tuple syntax with Report
+/// // use tuple syntax with Report
 /// report.with_source(("let x = 42;", "main.rs"));
 /// ```
-pub struct Source<'a> {
-    content: &'a str,
-    name: &'a str,
-    line_no_offset: i32,
+pub trait Source {
+    /// Initialize the source (e.g., read lines).
+    fn init(&mut self) -> io::Result<()>;
+
+    /// Get a specific line by line number (0-based).
+    fn get_line(&self, line_no: usize) -> Option<&[u8]>;
+
+    /// Get line info struct by line number (0-based).
+    fn get_line_info(&self, line_no: usize) -> Option<Line>;
+
+    /// Get the line number and line info for a given character position.
+    fn line_for_chars(&self, char_pos: usize) -> Option<(usize, Line)>;
+
+    /// Get the line number and line info for a given byte position.
+    fn line_for_bytes(&self, byte_pos: usize) -> Option<(usize, Line)>;
 }
 
-impl<'a> Source<'a> {
-    /// Create a new source from content and name.
-    pub fn new(content: &'a str, name: &'a str) -> Self {
-        Self {
-            content,
-            name,
-            line_no_offset: 0,
+#[derive(Debug, Clone, Copy)]
+pub struct Line {
+    pub offset: usize,
+    pub byte_offset: usize,
+    pub len: u32,
+    pub byte_len: u32,
+    pub newline: u32,
+}
+
+impl From<*const ffi::mu_Line> for Line {
+    fn from(line: *const ffi::mu_Line) -> Self {
+        let line = unsafe { &*line };
+        Line {
+            offset: line.offset,
+            byte_offset: line.byte_offset,
+            len: line.len,
+            byte_len: line.byte_len,
+            newline: line.newline,
         }
     }
+}
 
-    /// Set the line number offset (default: 0).
-    ///
-    /// This adjusts the displayed line numbers. For example, if your
-    /// source starts at line 10 in the original file, set offset to 9.
-    pub fn with_line_offset(mut self, offset: i32) -> Self {
-        self.line_no_offset = offset;
-        self
+impl From<Line> for ffi::mu_Line {
+    fn from(line: Line) -> Self {
+        ffi::mu_Line {
+            offset: line.offset,
+            byte_offset: line.byte_offset,
+            len: line.len,
+            byte_len: line.byte_len,
+            newline: line.newline,
+        }
     }
 }
 
-impl<'a> From<(&'a str, &'a str)> for Source<'a> {
-    fn from(value: (&'a str, &'a str)) -> Self {
-        Source::new(value.0, value.1)
+pub trait IntoSource {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source;
+}
+
+struct MemorySource<'a> {
+    content: ffi::mu_Slice,
+    name: ffi::mu_Slice,
+    line_no_offset: c_int,
+    _marker: PhantomData<&'a str>,
+}
+
+impl<'a> IntoSource for &'a str {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
+        MemorySource {
+            content: self.into(),
+            name: Default::default(),
+            line_no_offset: 0,
+            _marker: PhantomData,
+        }
+        .into_source(report)
+    }
+}
+
+impl<'a> IntoSource for (&'a str, &'a str) {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
+        MemorySource {
+            content: self.0.into(),
+            name: self.1.into(),
+            line_no_offset: 0,
+            _marker: PhantomData,
+        }
+        .into_source(report)
+    }
+}
+
+impl<'a> IntoSource for (&'a str, &'a str, i32) {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
+        MemorySource {
+            content: self.0.into(),
+            name: self.1.into(),
+            line_no_offset: self.2.into(),
+            _marker: PhantomData,
+        }
+        .into_source(report)
+    }
+}
+
+impl<'a> IntoSource for MemorySource<'a> {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
+        unsafe {
+            let src = ffi::mu_memory_source(report.ptr, self.content, self.name);
+            (*src).line_no_offset = self.line_no_offset;
+            src
+        }
+    }
+}
+
+struct TraitSource<'a, S> {
+    src: S,
+    name: ffi::mu_Slice,
+    line_no_offset: c_int,
+    _marker: PhantomData<&'a str>,
+}
+
+impl<S: Source> IntoSource for S {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
+        TraitSource {
+            src: self,
+            name: Default::default(),
+            line_no_offset: 0,
+            _marker: PhantomData,
+        }
+        .into_source(report)
+    }
+}
+
+impl<S: Source> IntoSource for (S, &str) {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
+        TraitSource {
+            src: self.0,
+            name: self.1.into(),
+            line_no_offset: 0,
+            _marker: PhantomData,
+        }
+        .into_source(report)
+    }
+}
+
+impl<S: Source> IntoSource for (S, &str, i32) {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
+        TraitSource {
+            src: self.0,
+            name: self.1.into(),
+            line_no_offset: self.2.into(),
+            _marker: PhantomData,
+        }
+        .into_source(report)
+    }
+}
+
+impl<S: Source> IntoSource for TraitSource<'_, S> {
+    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
+        use std::ffi::c_uint;
+
+        #[repr(C)]
+        struct UdSource<'a, S> {
+            base: ffi::mu_Source,
+            src: Option<Box<S>>,
+            report: *mut Report<'a>,
+            line: ffi::mu_Line,
+        }
+
+        extern "C" fn init_fn<S: Source>(src: *mut ffi::mu_Source) -> c_int {
+            let ud = unsafe { &mut (*(src as *mut UdSource<S>)) };
+            let udsrc = unsafe { &mut *(ud as *mut UdSource<S>) };
+            match udsrc.src.as_mut().unwrap().init() {
+                Ok(_) => 0,
+                Err(err) => {
+                    unsafe { &mut *udsrc.report }.src_err = Some(err);
+                    ffi::MU_ERRFILE
+                }
+            }
+        }
+
+        extern "C" fn free_fn<S: Source>(src: *mut mu_Source) {
+            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
+            let _src = ud.src.take();
+            // Box<S> will be dropped automatically
+        }
+
+        extern "C" fn get_line_fn<S: Source>(
+            src: *mut ffi::mu_Source,
+            line_no: c_uint,
+        ) -> ffi::mu_Slice {
+            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
+            let udsrc = unsafe { &*(ud as *mut UdSource<S>) };
+            match udsrc.src.as_ref().unwrap().get_line(line_no as usize) {
+                Some(line) => ffi::mu_Slice {
+                    p: line.as_ptr() as *const c_char,
+                    e: unsafe { line.as_ptr().add(line.len()) as *const c_char },
+                },
+                None => ffi::mu_Slice {
+                    p: ptr::null(),
+                    e: ptr::null(),
+                },
+            }
+        }
+
+        extern "C" fn get_line_info_fn<S: Source>(
+            src: *mut ffi::mu_Source,
+            line_no: c_uint,
+        ) -> *const ffi::mu_Line {
+            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
+            let udsrc = unsafe { &mut *(ud as *mut UdSource<S>) };
+            match udsrc.src.as_ref().unwrap().get_line_info(line_no as usize) {
+                Some(line_info) => {
+                    udsrc.line = line_info.into();
+                    &udsrc.line
+                }
+                None => {
+                    udsrc.line = unsafe { std::mem::zeroed() };
+                    &udsrc.line
+                }
+            }
+        }
+
+        extern "C" fn line_for_chars_fn<S: Source>(
+            src: *mut ffi::mu_Source,
+            char_pos: usize,
+            out_line: *mut *const ffi::mu_Line,
+        ) -> c_uint {
+            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
+            let udsrc = unsafe { &*(ud as *mut UdSource<S>) };
+            match udsrc.src.as_ref().unwrap().line_for_chars(char_pos) {
+                Some((line_no, line_info)) => {
+                    if !out_line.is_null() {
+                        ud.line = line_info.into();
+                        // SAFETY: out_line is checked
+                        unsafe { *out_line = &ud.line };
+                    }
+                    line_no as c_uint
+                }
+                None => {
+                    // SAFETY: out_line is checked
+                    if !out_line.is_null() {
+                        unsafe { *out_line = std::mem::zeroed() };
+                    }
+                    0
+                }
+            }
+        }
+
+        extern "C" fn line_for_bytes_fn<S: Source>(
+            src: *mut ffi::mu_Source,
+            byte_pos: usize,
+            out_line: *mut *const ffi::mu_Line,
+        ) -> c_uint {
+            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
+            let udsrc = unsafe { &*(ud as *mut UdSource<S>) };
+            match udsrc.src.as_ref().unwrap().line_for_bytes(byte_pos) {
+                Some((line_no, line_info)) => {
+                    if !out_line.is_null() {
+                        ud.line = line_info.into();
+                        // SAFETY: out_line is checked
+                        unsafe { *out_line = &ud.line };
+                    }
+                    line_no as c_uint
+                }
+                None => {
+                    if !out_line.is_null() {
+                        // SAFETY: out_line is chkecked
+                        unsafe { *out_line = std::mem::zeroed() };
+                    }
+                    0
+                }
+            }
+        }
+
+        unsafe {
+            let size = std::mem::size_of::<UdSource<S>>();
+            let src = ffi::mu_newsource(report.ptr, size, self.name);
+            (*src).line_no_offset = self.line_no_offset;
+            {
+                let udsrc = src as *mut UdSource<S>;
+                (*udsrc).src = Some(Box::new(self.src));
+            }
+            (*src).init = Some(init_fn::<S>);
+            (*src).free = Some(free_fn::<S>);
+            (*src).get_line = Some(get_line_fn::<S>);
+            (*src).get_line_info = Some(get_line_info_fn::<S>);
+            (*src).line_for_chars = Some(line_for_chars_fn::<S>);
+            (*src).line_for_bytes = Some(line_for_bytes_fn::<S>);
+            src
+        }
     }
 }
 
@@ -538,7 +801,7 @@ impl From<std::ops::Range<usize>> for LabelSpan {
         LabelSpan {
             start: value.start,
             end: value.end,
-            src_id: 0,
+            src_id: 0.into(),
         }
     }
 }
@@ -548,29 +811,29 @@ impl From<std::ops::Range<i32>> for LabelSpan {
         LabelSpan {
             start: value.start.max(0) as usize,
             end: value.end.max(0) as usize,
-            src_id: 0,
+            src_id: 0.into(),
         }
     }
 }
 
 /// (Range, usize) tuple
-impl From<(std::ops::Range<usize>, usize)> for LabelSpan {
-    fn from(value: (std::ops::Range<usize>, usize)) -> Self {
+impl<SrcId: Into<ffi::mu_Id>> From<(std::ops::Range<usize>, SrcId)> for LabelSpan {
+    fn from(value: (std::ops::Range<usize>, SrcId)) -> Self {
         LabelSpan {
             start: value.0.start,
             end: value.0.end,
-            src_id: value.1 as ffi::mu_Id,
+            src_id: value.1.into(),
         }
     }
 }
 
 /// (Range, usize) tuple
-impl From<(std::ops::Range<i32>, usize)> for LabelSpan {
-    fn from(value: (std::ops::Range<i32>, usize)) -> Self {
+impl<SrcId: Into<ffi::mu_Id>> From<(std::ops::Range<i32>, SrcId)> for LabelSpan {
+    fn from(value: (std::ops::Range<i32>, SrcId)) -> Self {
         LabelSpan {
             start: value.0.start.max(0) as usize,
             end: value.0.end.max(0) as usize,
-            src_id: value.1 as ffi::mu_Id,
+            src_id: value.1.into(),
         }
     }
 }
@@ -599,9 +862,9 @@ impl From<(std::ops::Range<i32>, usize)> for LabelSpan {
 ///     .with_source(("let x = 42;", "main.rs"))   // src_id = 0
 ///     .with_source(("fn foo() {}", "lib.rs"))    // src_id = 1
 ///     .with_title(Level::Error, "Error")
-///     .with_label((0..3, 0usize)) // label in source 0
+///     .with_label((0..3, 0)) // label in source 0
 ///     .with_message("here")
-///     .with_label((3..6, 1usize)) // label in source 1
+///     .with_label((3..6, 1)) // label in source 1
 ///     .with_message("and here");
 /// ```
 ///
@@ -625,6 +888,7 @@ pub struct Report<'a> {
     ptr: *mut ffi::mu_Report,
     config: Option<Config<'a>>,
     color_uds: Vec<Box<ColorUd>>,
+    src_err: Option<io::Error>,
     _marker: PhantomData<&'a str>,
 }
 
@@ -637,6 +901,7 @@ impl<'a> Report<'a> {
             ptr,
             config: None,
             color_uds: Vec::new(),
+            src_err: None,
             _marker: PhantomData,
         }
     }
@@ -668,19 +933,11 @@ impl<'a> Report<'a> {
     ///
     /// let mut report = Report::new();
     /// report
-    ///     .with_source(("code", "file.rs"))           // ID 0
-    ///     .with_source(Source::new("x", "other.rs")); // ID 1
+    ///     .with_source(("code", "file.rs"))  // ID 0
+    ///     .with_source(("x", "other.rs"));   // ID 1
     /// ```
-    pub fn with_source<S: Into<Source<'a>>>(self, source: S) -> Self {
-        let src = source.into();
-        let src_ptr =
-            unsafe { ffi::mu_memory_source(self.ptr, src.content.into(), src.name.into()) };
-        // Set line offset if non-zero
-        if src.line_no_offset != 0 {
-            unsafe {
-                (*src_ptr).line_no_offset = src.line_no_offset;
-            }
-        }
+    pub fn with_source<S: IntoSource>(mut self, source: S) -> Self {
+        let src_ptr = source.into_source(&mut self);
         let result = unsafe { ffi::mu_source(self.ptr, src_ptr) };
         assert!(result == ffi::MU_OK, "Failed to register source");
         self
@@ -725,7 +982,7 @@ impl<'a> Report<'a> {
     /// report
     ///     .with_source(("let x = 42;", "main.rs"))
     ///     .with_title(Level::Error, "Error")
-    ///     .with_label((0..3, 0usize))  // label in source 0
+    ///     .with_label((0..3, 0))  // label in source 0
     ///     .with_message("here");
     /// ```
     pub fn with_label<L: Into<LabelSpan>>(self, span: L) -> Self {
@@ -802,7 +1059,7 @@ impl<'a> Report<'a> {
     ///
     /// - `pos`: The byte position in the source for header location display
     /// - `src_id`: The primary source ID (registration order)
-    pub fn render_to_string(&mut self, pos: usize, src_id: usize) -> String {
+    pub fn render_to_string(&mut self, pos: usize, src_id: usize) -> io::Result<String> {
         let mut writer = Vec::new();
         unsafe extern "C" fn string_writer_callback(
             ud: *mut c_void,
@@ -821,13 +1078,14 @@ impl<'a> Report<'a> {
                 &mut writer as *mut Vec<u8> as *mut c_void,
             )
         };
-        self.render(pos, src_id);
-        String::from_utf8(writer)
-            .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
+        self.render(pos, src_id).map(|_| {
+            String::from_utf8(writer)
+                .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
+        })
     }
 
     /// Render the report to stdout.
-    pub fn render_to_stdout(&mut self, pos: usize, src_id: usize) {
+    pub fn render_to_stdout(&mut self, pos: usize, src_id: usize) -> io::Result<()> {
         unsafe extern "C" fn stdout_writer_callback(
             _ud: *mut c_void,
             data: *const c_char,
@@ -843,7 +1101,7 @@ impl<'a> Report<'a> {
         }
 
         unsafe { ffi::mu_writer(self.ptr, Some(stdout_writer_callback), ptr::null_mut()) };
-        self.render(pos, src_id);
+        self.render(pos, src_id)
     }
 
     /// Render the report to a writer.
@@ -851,11 +1109,11 @@ impl<'a> Report<'a> {
         &mut self,
         pos: usize,
         src_id: usize,
-        writer: &mut W,
+        writer: &'a mut W,
     ) -> io::Result<()> {
         struct WriterWrapper<'a, W: Write> {
             writer: &'a mut W,
-            result: io::Result<()>,
+            report: *mut Report<'a>,
         }
 
         unsafe extern "C" fn writer_callback<W: Write>(
@@ -868,14 +1126,15 @@ impl<'a> Report<'a> {
             match w.writer.write_all(slice) {
                 Ok(_) => ffi::MU_OK,
                 Err(e) => {
-                    w.result = Err(e);
-                    ffi::MU_ERRFILE
+                    // SAFETY: report pointer is setted below, and this function only called during render()
+                    unsafe { &mut *w.report }.src_err = Some(e);
+                    ffi::MU_ERR_WRITER
                 }
             }
         }
         let mut wrapper = WriterWrapper {
             writer,
-            result: Ok(()),
+            report: self as *mut Report<'_>,
         };
         unsafe {
             ffi::mu_writer(
@@ -884,13 +1143,10 @@ impl<'a> Report<'a> {
                 &mut wrapper as *mut WriterWrapper<W> as *mut c_void,
             );
         }
-        match self.render(pos, src_id) {
-            ffi::MU_ERRFILE => return wrapper.result,
-            _ => Ok(()),
-        }
+        self.render(pos, src_id)
     }
 
-    fn render(&mut self, pos: usize, src_id: usize) -> c_int {
+    fn render(&mut self, pos: usize, src_id: impl Into<ffi::mu_Id>) -> io::Result<()> {
         let mut buf = [0u8; ffi::MU_COLOR_CODE_SIZE];
         let cs_buf: CharSetBuf;
         let cs: ffi::mu_Charset;
@@ -913,7 +1169,31 @@ impl<'a> Report<'a> {
         if let Some(cfg) = &self.config {
             unsafe { ffi::mu_config(self.ptr, &cfg.inner) };
         }
-        unsafe { ffi::mu_render(self.ptr, pos, src_id as ffi::mu_Id) }
+        match unsafe { ffi::mu_render(self.ptr, pos, src_id.into()) } {
+            ffi::MU_OK => Ok(()),
+            ffi::MU_ERR_SRCINIT => {
+                if let Some(err) = self.src_err.take() {
+                    return Err(err);
+                }
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Source init error during rendering",
+                ))
+            }
+            ffi::MU_ERR_WRITER => {
+                if let Some(err) = self.src_err.take() {
+                    return Err(err);
+                }
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Writer error during rendering",
+                ))
+            }
+            err_code => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Rendering failed with error code {}", err_code),
+            )),
+        }
     }
 }
 
@@ -1011,11 +1291,10 @@ mod tests {
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
             .with_title(Level::Error, "Test error")
             .with_code("E001")
-            .with_label(0..3usize)
+            .with_label(0..3)
             .with_message("this is a test");
 
-        let output = report.render_to_string(0, 0);
-        assert!(!output.is_empty());
+        let output = report.render_to_string(0, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1041,10 +1320,10 @@ mod tests {
             .with_config(config)
             .with_source(("hello", "test.rs"))
             .with_title(Level::Warning, "Test warning")
-            .with_label(0..5usize)
+            .with_label(0..5)
             .with_message("test");
 
-        let output = report.render_to_string(0, 0);
+        let output = report.render_to_string(0, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1062,10 +1341,10 @@ mod tests {
             .with_config(Config::new().with_color_disabled())
             .with_source(("code", "test.rs"))
             .with_title("Hint", "Consider this")
-            .with_label(0..4usize)
+            .with_label(0..4)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0);
+        let output = report.render_to_string(0, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1087,12 +1366,12 @@ mod tests {
             .with_source(("import foo", "main.rs")) // src_id = 0
             .with_source(("pub fn foo() {}", "foo.rs")) // src_id = 1
             .with_title(Level::Error, "Import error")
-            .with_label((7..10, 0usize))
+            .with_label((7..10, 0))
             .with_message("imported here")
-            .with_label((7..10, 1usize))
+            .with_label((7..10, 1))
             .with_message("defined here");
 
-        let output = report.render_to_string(7, 0);
+        let output = report.render_to_string(7, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1117,12 +1396,12 @@ mod tests {
     fn test_source_new() {
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
-            .with_source(Source::new("test code", "file.rs"))
+            .with_source(("test code", "file.rs"))
             .with_title(Level::Error, "Error")
-            .with_label((0..4, 0usize))
+            .with_label((0..4, 0))
             .with_message("here");
 
-        let output = report.render_to_string(0, 0);
+        let output = report.render_to_string(0, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1149,7 +1428,7 @@ mod tests {
             .with_label((0..4, 1usize))
             .with_message("in b");
 
-        let output = report.render_to_string(0, 0);
+        let output = report.render_to_string(0, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1192,7 +1471,7 @@ mod tests {
             .with_label(0..5usize)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0);
+        let output = report.render_to_string(0, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1227,7 +1506,7 @@ mod tests {
             .with_label(0..6usize)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0);
+        let output = report.render_to_string(0, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1262,7 +1541,7 @@ mod tests {
             .with_color(&CustomColor)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0);
+        let output = report.render_to_string(0, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -1282,13 +1561,87 @@ mod tests {
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
             .with_source(
-                Source::new("some code here", "file.rs").with_line_offset(99), // Line numbers start at 100
+                ("some code here", "file.rs", 99), // Line numbers start at 100
             )
             .with_title(Level::Error, "Error")
             .with_label(0..4usize)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0);
+        let output = report.render_to_string(0, 0).unwrap();
+        assert_snapshot!(
+            remove_trailing_whitespace(&output),
+            @r##"
+            Error: Error
+                 ╭─[ file.rs:100:1 ]
+                 │
+             100 │ some code here
+                 │ ──┬─
+                 │   ╰─── here
+            ─────╯
+            "##
+        );
+    }
+
+    #[test]
+    fn custom_source() {
+        struct MySource;
+
+        impl Source for MySource {
+            fn init(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+
+            fn get_line(&self, _line_no: usize) -> Option<&[u8]> {
+                Some(b"some code here")
+            }
+
+            fn get_line_info(&self, line_no: usize) -> Option<Line> {
+                Some(Line {
+                    offset: 15 * line_no,
+                    byte_offset: 15 * line_no,
+                    len: 14,
+                    byte_len: 14,
+                    newline: 1,
+                })
+            }
+
+            fn line_for_bytes(&self, byte_pos: usize) -> Option<(usize, Line)> {
+                let line_no = byte_pos / 15;
+                Some((
+                    line_no,
+                    Line {
+                        offset: 15 * line_no,
+                        byte_offset: 15 * line_no,
+                        len: 14,
+                        byte_len: 14,
+                        newline: 1,
+                    },
+                ))
+            }
+
+            fn line_for_chars(&self, char_pos: usize) -> Option<(usize, Line)> {
+                let line_no = char_pos / 15;
+                Some((
+                    line_no,
+                    Line {
+                        offset: 15 * line_no,
+                        byte_offset: 15 * line_no,
+                        len: 14,
+                        byte_len: 14,
+                        newline: 1,
+                    },
+                ))
+            }
+        }
+
+        let mut report = Report::new()
+            .with_config(Config::new().with_color_disabled())
+            .with_source((MySource, "file.rs"))
+            .with_title(Level::Error, "Error")
+            .with_label(1485..1489usize)
+            .with_message("here");
+
+        let output = report.render_to_string(1485, 0).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"

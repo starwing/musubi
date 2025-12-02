@@ -19,7 +19,7 @@ fn main() {
             .with_label(24..30)
             .with_message("missing closing quote");
 
-        println!("{}", report.render_to_string(20, 0));
+        println!("{}", report.render_to_string(20, 0).unwrap());
     }
 
     // Example 2: Multiple labels
@@ -36,7 +36,7 @@ fn main() {
             .with_label(13..20)
             .with_message("found `&str`");
 
-        println!("{}", report.render_to_string(7, 0));
+        println!("{}", report.render_to_string(7, 0).unwrap());
     }
 
     // Example 3: Custom configuration with builder pattern
@@ -60,7 +60,7 @@ fn main() {
             .with_message("no implementation for `i32 + f64`")
             .with_help("Consider using `x as f64` or `1.0 as i32`");
 
-        println!("{}", report.render_to_string(17, 0));
+        println!("{}", report.render_to_string(17, 0).unwrap());
     }
 
     // Example 4: Multiline spans
@@ -81,6 +81,6 @@ fn main() {
             .with_message("this block is not properly closed")
             .with_note("Each opening brace `{` must have a matching closing brace `}`");
 
-        println!("{}", report.render_to_string(19, 0));
+        println!("{}", report.render_to_string(19, 0).unwrap());
     }
 }

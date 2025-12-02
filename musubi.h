@@ -131,9 +131,13 @@ typedef struct mu_Slice {
     const char *p, *e;
 } mu_Slice;
 
-#define muD_literal(lit) mu_lslice("" lit, sizeof(lit) - 1)
-MU_API mu_Slice mu_slice(const char *p);
-MU_API mu_Slice mu_lslice(const char *p, size_t len);
+#define mu_literal(lit) mu_lslice("" lit, sizeof(lit) - 1)
+#define mu_slice(s)     mu_lslice((s), strlen(s))
+
+/* clang-format off */
+MU_STATIC mu_Slice mu_lslice(const char *p, size_t len)
+{ mu_Slice s; s.p = p, s.e = p + len; return s; }
+/* clang-format on */
 
 /* report construction and configuration */
 
@@ -209,6 +213,11 @@ typedef const struct mu_Line *mu_CL;
 #define mu_source_offset(src, offset) ((src)->line_no_offset = (offset))
 
 MU_API mu_Source *mu_newsource(mu_Report *R, size_t size, mu_Slice name);
+MU_API void       mu_updatelines(mu_Source *src, mu_Slice data);
+MU_API void       mu_freesource(mu_Source *src);
+MU_API mu_CL      mu_getline(mu_Source *src, unsigned line_no);
+MU_API unsigned   mu_lineforchars(mu_Source *src, size_t char_pos, mu_CL *out);
+MU_API unsigned   mu_lineforbytes(mu_Source *src, size_t byte_pos, mu_CL *out);
 
 MU_API mu_Source *mu_memory_source(mu_Report *R, mu_Slice data, mu_Slice name);
 
@@ -216,36 +225,22 @@ MU_API mu_Source *mu_memory_source(mu_Report *R, mu_Slice data, mu_Slice name);
 MU_API mu_Source *mu_file_source(mu_Report *R, FILE *fp, mu_Slice name);
 #endif /* !MU_NO_STDIO */
 
-#if !MU_NO_BARE_VTABLE /* clang-format off */
-/* all routines below requires `src` is `mu_BareSource` */
-MU_API void mu_updatelines(mu_Source *src, mu_Slice data);
-MU_API void mu_freesource(mu_Source *src);
-MU_API mu_CL mu_getline(mu_Source *src, unsigned line_no);
-MU_API unsigned mu_lineforchars(mu_Source *src, size_t char_pos, mu_CL *out);
-MU_API unsigned mu_lineforbytes(mu_Source *src, size_t byte_pos, mu_CL *out);
-#endif /* !MU_NO_BARE_VTABLE *//* clang-format on */
-
 struct mu_Source {
-    void    *ud;             /* user data for this source */
-    mu_Slice name;           /* source name slice */
-    int      line_no_offset; /* line number offset for this source */
-    mu_Id    id;   /* source id, written by `mu_source()`, start from 0 */
-    int      gidx; /* group index, -1 for "should call free", -2 for no use */
+    size_t     size;  /* size of this source object */
+    mu_Report *R;     /* report associated with this source */
+    mu_Slice   name;  /* source name slice */
+    mu_Line   *lines; /* line cache */
+
+    int   line_no_offset; /* line number offset for this source */
+    mu_Id id;   /* source id, written by `mu_source()`, start from 0 */
+    int   gidx; /* group index, -1 for "should call free", -2 for no use */
 
     int (*init)(mu_Source *src);
     void (*free)(mu_Source *src);
-
     mu_Slice (*get_line)(mu_Source *src, unsigned line_no);
     mu_CL (*get_line_info)(mu_Source *src, unsigned line_no);
     unsigned (*line_for_chars)(mu_Source *src, size_t char_pos, mu_CL *out);
     unsigned (*line_for_bytes)(mu_Source *src, size_t byte_pos, mu_CL *out);
-};
-
-struct mu_BareSource {
-    mu_Source  src;   /* base source */
-    size_t     size;  /* size of bare source object */
-    mu_Report *R;     /* report associated with this source */
-    mu_Line   *lines; /* line cache */
 };
 
 struct mu_Line {
@@ -435,14 +430,6 @@ static void muA_reserve_(mu_Report *R, void **A, size_t esize, unsigned n) {
 
 #define muD_bytelen(s)   ((size_t)((s).e - (s).p))
 #define muD_tablesize(t) (sizeof(t) / sizeof((t)[0]))
-
-/* clang-format off */
-MU_API mu_Slice mu_slice(const char *p)
-{ return mu_lslice(p, strlen(p)); }
-
-MU_API mu_Slice mu_lslice(const char *p, size_t len)
-{ mu_Slice s; s.p = p, s.e = p + len; return s; }
-/* clang-format on */
 
 static mu_Slice muD_snprintf(char *buf, size_t bufsize, const char *fmt, ...) {
     va_list args;
@@ -661,8 +648,8 @@ static size_t muM_bytes2chars(mu_Source *src, size_t pos, mu_CL *line) {
 
 static void muM_level(mu_Level l, mu_ColorKind *k, mu_Slice *s) {
     switch (l) {
-    case MU_ERROR:   *k = MU_COLOR_ERROR, *s = muD_literal("Error"); break;
-    case MU_WARNING: *k = MU_COLOR_WARNING, *s = muD_literal("Warning"); break;
+    case MU_ERROR:   *k = MU_COLOR_ERROR, *s = mu_literal("Error"); break;
+    case MU_WARNING: *k = MU_COLOR_WARNING, *s = mu_literal("Warning"); break;
     default:         *k = MU_COLOR_KIND; break;
     }
 }
@@ -968,7 +955,7 @@ static mu_Slice muG_calc_location(mu_LocCtx *ctx, mu_Source *src, size_t pos) {
         line_no = src->line_for_chars(src, (size_t)pos, &line);
     }
     if ((size_t)pos < line->offset || (size_t)pos > muM_lineend(line))
-        return muD_literal("?:?");
+        return mu_literal("?:?");
     col = (unsigned)(pos - line->offset + 1);
     line_no += src->line_no_offset + 1;
     return muD_snprintf(ctx->buff, sizeof(ctx->buff), "%u:%u", line_no, col);
@@ -1482,7 +1469,7 @@ static int muR_lines(mu_Report *R) {
 }
 
 static int muR_help_or_note(mu_Report *R, int is_help, const mu_Slice *msgs) {
-    const mu_Slice st = is_help ? muD_literal("Help") : muD_literal("Note");
+    const mu_Slice st = is_help ? mu_literal("Help") : mu_literal("Note");
 
     char     buf[32];
     unsigned i, size;
@@ -1546,12 +1533,9 @@ static int muR_report(mu_Report *R, size_t pos, mu_Id src_id) {
 /* source */
 
 MU_API void mu_updatelines(mu_Source *src, mu_Slice data) {
-    mu_BareSource *bsrc = (mu_BareSource *)src;
-
-    mu_Report *R = bsrc->R;
-    mu_Line   *next, *current = muA_last(bsrc->lines);
+    mu_Line *next, *current = muA_last(src->lines);
     if (current == NULL) {
-        current = muA_push(R, bsrc->lines);
+        current = muA_push(src->R, src->lines);
         memset(current, 0, sizeof(mu_Line));
     }
     while (data.p < data.e) {
@@ -1562,7 +1546,7 @@ MU_API void mu_updatelines(mu_Source *src, mu_Slice data) {
             size_t offset = muM_lineend(current) + 1;
             size_t byte_offset = current->byte_offset + current->byte_len + 1;
             current->newline = 1;
-            next = muA_push(R, bsrc->lines);
+            next = muA_push(src->R, src->lines);
             memset(next, 0, sizeof(mu_Line));
             next->offset = offset, next->byte_offset = byte_offset;
             current = next;
@@ -1574,42 +1558,36 @@ MU_API void mu_updatelines(mu_Source *src, mu_Slice data) {
 }
 
 MU_API mu_Source *mu_newsource(mu_Report *R, size_t size, mu_Slice name) {
-    mu_BareSource *bsrc = (mu_BareSource *)R->allocf(R->ud, NULL, size, 0);
-    if (!bsrc) return NULL;
-    memset(bsrc, 0, size);
-    bsrc->R = R;
-    bsrc->size = size;
-    name = name.p ? name : muD_literal("<unknown>");
-    bsrc->src.name = name;
-    bsrc->src.free = (void (*)(mu_Source *))mu_freesource;
-    bsrc->src.get_line_info = mu_getline;
-    bsrc->src.line_for_chars = mu_lineforchars;
-    bsrc->src.line_for_bytes = mu_lineforbytes;
-    return (mu_Source *)bsrc;
+    mu_Source *src = (mu_Source *)R->allocf(R->ud, NULL, size, 0);
+    if (!src) return NULL;
+    memset(src, 0, size);
+    src->size = size;
+    src->R = R;
+    name = name.p ? name : mu_literal("<unknown>");
+    src->name = name;
+    src->free = NULL;
+    src->get_line_info = mu_getline;
+    src->line_for_chars = mu_lineforchars;
+    src->line_for_bytes = mu_lineforbytes;
+    return (mu_Source *)src;
 }
 
 MU_API void mu_freesource(mu_Source *src) {
-    mu_BareSource *bsrc = (mu_BareSource *)src;
-
-    mu_Report *R = bsrc->R;
-    muA_delete(R, bsrc->lines);
-    R->allocf(R->ud, bsrc, 0, bsrc->size);
+    mu_Report *R = src->R;
+    muA_delete(R, src->lines);
+    R->allocf(R->ud, src, 0, src->size);
 }
 
 MU_API mu_CL mu_getline(mu_Source *src, unsigned line_no) {
-    mu_BareSource *bsrc = (mu_BareSource *)src;
-
-    size_t size = muA_size(bsrc->lines);
-    return &bsrc->lines[line_no < size ? line_no : size - 1];
+    size_t size = muA_size(src->lines);
+    return &src->lines[line_no < size ? line_no : size - 1];
 }
 
 MU_API unsigned mu_lineforchars(mu_Source *src, size_t char_pos, mu_CL *out) {
-    mu_BareSource *bsrc = (mu_BareSource *)src;
-
-    unsigned l = 0, u = muA_size(bsrc->lines);
+    unsigned l = 0, u = muA_size(src->lines);
     while (l < u) {
         unsigned m = l + ((u - l) >> 1);
-        if (bsrc->lines[m].offset <= char_pos) l = m + 1;
+        if (src->lines[m].offset <= char_pos) l = m + 1;
         else u = m;
     }
     if (out) *out = mu_getline(src, l ? l - 1 : 0);
@@ -1617,12 +1595,10 @@ MU_API unsigned mu_lineforchars(mu_Source *src, size_t char_pos, mu_CL *out) {
 }
 
 MU_API unsigned mu_lineforbytes(mu_Source *src, size_t byte_pos, mu_CL *out) {
-    mu_BareSource *bsrc = (mu_BareSource *)src;
-
-    unsigned l = 0, u = muA_size(bsrc->lines);
+    unsigned l = 0, u = muA_size(src->lines);
     while (l < u) {
         unsigned m = l + ((u - l) >> 1);
-        if (bsrc->lines[m].byte_offset < byte_pos) l = m + 1;
+        if (src->lines[m].byte_offset < byte_pos) l = m + 1;
         else u = m;
     }
     if (out) *out = mu_getline(src, l ? l - 1 : 0);
@@ -1630,8 +1606,8 @@ MU_API unsigned mu_lineforbytes(mu_Source *src, size_t byte_pos, mu_CL *out) {
 }
 
 typedef struct mu_MemorySource {
-    mu_BareSource base;
-    mu_Slice      data;
+    mu_Source base;
+    mu_Slice  data;
 } mu_MemorySource;
 
 static int muS_memory_init(mu_Source *src) {
@@ -1653,19 +1629,18 @@ MU_API mu_Source *mu_memory_source(mu_Report *R, mu_Slice data, mu_Slice name) {
     msrc = (mu_MemorySource *)mu_newsource(R, sizeof(mu_MemorySource), name);
     if (!msrc) return NULL;
     msrc->data = data;
-    msrc->base.src.init = muS_memory_init;
-    msrc->base.src.get_line = muS_memory_get_line;
-    return &msrc->base.src;
+    msrc->base.init = muS_memory_init;
+    msrc->base.get_line = muS_memory_get_line;
+    return &msrc->base;
 }
 
 #if !MU_NO_STDIO
 
 typedef struct mu_FileSource {
-    mu_BareSource base;
-
-    FILE *fp;
-    char  own_fp;
-    char *buff;
+    mu_Source base;   /* base source */
+    FILE     *fp;     /* file pointer */
+    char      own_fp; /* whether close the file pointer in src->free() */
+    char     *buff;   /* buffer for reading lines */
 } mu_FileSource;
 
 static int muS_fseek(mu_FileSource *fsrc, size_t byte_offset) {
@@ -1692,9 +1667,9 @@ static size_t muS_ftell(mu_FileSource *fsrc) {
 static int muS_file_init(mu_Source *src) {
     mu_FileSource *fsrc = (mu_FileSource *)src;
 
+    mu_Line *line = muA_push(fsrc->base.R, fsrc->base.lines);
     char     buff[BUFSIZ];
     size_t   trim = 0;
-    mu_Line *line = muA_push(fsrc->base.R, fsrc->base.lines);
     if (fsrc->fp == NULL) {
         fsrc->fp = fopen(src->name.p, "r");
         if (fsrc->fp == NULL) return MU_ERRFILE;
@@ -1721,14 +1696,13 @@ static int muS_file_init(mu_Source *src) {
 static void muS_file_free(mu_Source *src) {
     mu_FileSource *fsrc = (mu_FileSource *)src;
     if (fsrc->own_fp && fsrc->fp) fclose(fsrc->fp);
-    mu_freesource(src);
+    muA_delete(fsrc->base.R, fsrc->buff);
 }
 
 static mu_Slice muS_file_get_line(mu_Source *src, unsigned line_no) {
     mu_FileSource *fsrc = (mu_FileSource *)src;
-
-    mu_Report *R = fsrc->base.R;
-    mu_CL      line = mu_getline(src, line_no);
+    mu_Report     *R = fsrc->base.R;
+    mu_CL          line = mu_getline(src, line_no);
 
     char  *p = muA_reserve(R, fsrc->buff, line->byte_len);
     int    seek = muS_fseek(fsrc, line->byte_offset);
@@ -1738,17 +1712,16 @@ static mu_Slice muS_file_get_line(mu_Source *src, unsigned line_no) {
 
 MU_API mu_Source *mu_file_source(mu_Report *R, FILE *fp, mu_Slice name) {
     mu_FileSource *fsrc;
-
-    int own_fp = 0;
+    int            own_fp = 0;
     if (!R) return NULL;
     fsrc = (mu_FileSource *)mu_newsource(R, sizeof(mu_FileSource), name);
     if (!fsrc) return (void)(own_fp && fclose(fp)), (mu_Source *)NULL;
     fsrc->fp = fp;
     fsrc->own_fp = own_fp;
-    fsrc->base.src.init = muS_file_init;
-    fsrc->base.src.free = muS_file_free;
-    fsrc->base.src.get_line = muS_file_get_line;
-    return &fsrc->base.src;
+    fsrc->base.init = muS_file_init;
+    fsrc->base.free = muS_file_free;
+    fsrc->base.get_line = muS_file_get_line;
+    return &fsrc->base;
 }
 
 #endif /* !MU_NO_STDIO */
@@ -1892,8 +1865,11 @@ MU_API void mu_reset(mu_Report *R) {
     unsigned i, size;
     if (!R) return;
     muR_cleanup(R);
-    for (i = 0, size = muA_size(R->sources); i < size; i++)
-        if (R->sources[i]->free) R->sources[i]->free(R->sources[i]);
+    for (i = 0, size = muA_size(R->sources); i < size; i++) {
+        mu_Source *src = R->sources[i];
+        if (src->gidx != MU_SRC_UNUSED && src->free) src->free(src);
+        mu_freesource(src);
+    }
     muA_reset(R, R->sources);
     muA_reset(R, R->labels);
     muA_reset(R, R->helps);
