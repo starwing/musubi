@@ -5,11 +5,11 @@
 **A beautiful diagnostics renderer for compiler errors and warnings**
 
 ![Language](https://img.shields.io/badge/language-Lua%20%7C%20C%20%7C%20Rust-blue)
-![Crates.io](https://img.shields.io/crates/v/musubi-rs)
-![docs.rs](https://img.shields.io/docsrs/musubi-rs)
+[![Crates.io](https://img.shields.io/crates/v/musubi-rs)](https://crates.io/crates/musubi-rs)
+[![docs.rs](https://img.shields.io/docsrs/musubi-rs)](https://docs.rs/musubi-rs)
 ![Version](https://img.shields.io/badge/version-0.1.0-green)
-![License](https://img.shields.io/badge/license-MIT-orange)
-![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+[![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
+[![Coverage](https://coveralls.io/repos/github/starwing/musubi/badge.svg?branch=master)](https://coveralls.io/github/starwing/musubi?branch=master)
 
 [Key Features](#key-features) • [Installation](#installation) • [Quick Start](#quick-start) • [API Reference](#api-reference) • [Testing](#testing)
 
