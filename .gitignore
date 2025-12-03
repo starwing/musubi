@@ -19,6 +19,7 @@ lcov.info
 /lua_modules
 /.luarocks
 /luarocks
+*.src.rock
 
 /src/.lib.rs.pending-snap
 /target

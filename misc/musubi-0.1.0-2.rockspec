@@ -1,7 +1,8 @@
 package = "musubi"
-version = "dev-1"
+version = "0.1.0-2"
 source = {
-   url = "git+https://github.com/starwing/musubi"
+   url = "https://github.com/starwing/musubi/archive/refs/tags/v0.1.0.tar.gz",
+   dir = "musubi-0.1.0"
 }
 description = {
    summary = "A beautiful diagnostics renderer for compiler errors and warnings",
