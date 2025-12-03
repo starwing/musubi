@@ -1,0 +1,61 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the action will run.
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  test_ubuntu:
+    if: "! contains(toJSON(github.event.commits.*.message), '[skip ci]')"
+    runs-on: ${{ matrix.os }}
+    env:
+      ROCKSPEC: misc/musubi-dev-1.rockspec
+    strategy:
+      matrix:
+        luaVersion: ["5.1", "5.2", "5.3", "5.4", "luajit-openresty"]
+        os: ["ubuntu-latest"]
+    steps:
+      - uses: actions/checkout@master
+      - name: Setup LCOV
+        uses: hrishikesh-kadam/setup-lcov@v1
+      - name: Install Lua ${{ matrix.luaVersion }}
+        uses: leafo/gh-actions-lua@master
+        with:
+          luaVersion: ${{ matrix.luaVersion }}
+      - name: Install Luarocks
+        uses: leafo/gh-actions-luarocks@master
+      - name: Build
+        run: |
+          luarocks make $ROCKSPEC CFLAGS="-O3 -fPIC -Wall -Wextra --coverage" LIBFLAG="-shared --coverage"
+      - name: Run Tests
+        run: |
+          lua tests/test.lua
+      - name: Run LCov
+        run: |
+          mkdir -p coverage
+          lcov -c -d . --exclude musubi.c -o coverage/lcov.info
+      - name: Coveralls
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          flag-name: run-${{ matrix.luaVersion }}
+          parallel: true
+  finish:
+    needs: test_ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Coveralls Finished
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.github_token }}
+          parallel-finished: true
