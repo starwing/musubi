@@ -1207,17 +1207,17 @@ Error: test default colors
         :note("note with default colors")
         :source(src):render()
     -- Expected: "Error:" in red, skipped margin ":" in dim gray
-    msg = ("%q"):format(msg)
+    msg = ("%q"):format(msg:gsub(string.char(27), "ESC"))
     lu.assertEquals(msg, [[
-"\27[31mError:\27[0m test default colors\
-   \27[38;5;246m,-[\27[0m <unknown>:1:1 \27[38;5;246m]\27[0m\
-   \27[38;5;246m|\27[0m\
- \27[38;5;246m1 |\27[0m \27[39mapple\27[0m\
-   \27[38;5;240m|\27[0m \27[39m^^^|^^\27[0m  \
-   \27[38;5;240m|\27[0m    \27[39m`----\27[0m spans multiple lines\
-   \27[38;5;240m|\27[0m \
-   \27[38;5;240m|\27[0m \27[38;5;115mNote: note with default colors\27[0m\
-\27[38;5;246m---'\27[0m\
+"ESC[31mError:ESC[0m test default colors\
+   ESC[38;5;246m,-[ESC[0m <unknown>:1:1 ESC[38;5;246m]ESC[0m\
+   ESC[38;5;246m|ESC[0m\
+ ESC[38;5;246m1 |ESC[0m ESC[39mappleESC[0m\
+   ESC[38;5;240m|ESC[0m ESC[39m^^^|^^ESC[0m  \
+   ESC[38;5;240m|ESC[0m    ESC[39m`----ESC[0m spans multiple lines\
+   ESC[38;5;240m|ESC[0m \
+   ESC[38;5;240m|ESC[0m ESC[38;5;115mNote: note with default colorsESC[0m\
+ESC[38;5;246m---'ESC[0m\
 "]])
 
     msg = ("%q"):format(remove_trailing(
@@ -1225,9 +1225,9 @@ Error: test default colors
       :config(cfg)
       :title("Advice", "test default colors")
       :source(src):render()
-    ))
+    ):gsub(string.char(27), "ESC"))
     lu.assertEquals(msg, [[
-"\27[38;5;147mAdvice:\27[0m test default colors\
+"ESC[38;5;147mAdvice:ESC[0m test default colors\
 "]])
 
     msg = ("%q"):format(remove_trailing(
@@ -1235,9 +1235,9 @@ Error: test default colors
       :config(cfg)
       :title("Warning", "test default colors")
       :source(src):render()
-    ))
+    ):gsub(string.char(27), "ESC"))
     lu.assertEquals(msg, [[
-"\27[33mWarning:\27[0m test default colors\
+"ESC[33mWarning:ESC[0m test default colors\
 "]])
   end -- Test 2: Compact mode with multiline arrows (line 1413)
 
@@ -1516,8 +1516,8 @@ Error: emoji test
       :label(11, 15):message("color is here")
       :source(text):render()
     )
-    msg = ("%q"):format(msg)
-    lu.assertNotNil(msg:find("\\27%[38;5;249m"))
+    msg = ("%q"):format(msg:gsub(string.char(27), "ESC"))
+    lu.assertNotNil(msg:find("ESC%[38;5;249m"))
   end
 end
 
@@ -2449,7 +2449,9 @@ if not use_ref then
   if package.config:sub(1, 1) ~= "\\" then
     _G.TestFile = TestFile
   end
-  _G.TestUnicode = TestUnicode
+  if _VERSION >= "Lua 5.3" then
+    _G.TestUnicode = TestUnicode
+  end
 end
 
 os.exit(lu.LuaUnit.run())

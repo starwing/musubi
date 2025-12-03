@@ -43,7 +43,7 @@ jobs:
       - name: Run LCov
         run: |
           mkdir -p coverage
-          lcov -c -d . --exclude musubi.c -o coverage/lcov.info
+          lcov -c -d . --exclude musubi.c --exclude usr -o coverage/lcov.info
       - name: Coveralls
         uses: coverallsapp/github-action@master
         with:

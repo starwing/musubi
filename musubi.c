@@ -10,6 +10,23 @@
 #define MU_STATIC_API
 #include "musubi.h"
 
+#if LUA_VERSION_NUM < 502
+#define LUAMOD_API               LUALIB_API
+#define lua_setuservalue(L, idx) lua_setfenv(L, idx)
+#define lua_getuservalue(L, idx) lua_getfenv(L, idx)
+#define luaL_setfuncs(L, l, n)   (assert(n == 0), luaL_register(L, NULL, l))
+#define luaL_setmetatable(L, name) \
+    (luaL_getmetatable((L), (name)), lua_setmetatable(L, -2))
+#endif /* LUA_VERSION_NUM < 502 */
+
+#if LUA_VERSION_NUM >= 503
+#define lua53_gettable lua_gettable
+#else  /* not Lua 5.3 */
+static int lua53_gettable(lua_State *L, int idx) {
+    return lua_gettable(L, idx), lua_type(L, -1);
+}
+#endif /* LUA_VERSION_NUM >= 503 */
+
 #ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
 #define strcasecmp _stricmp
@@ -82,7 +99,7 @@ static int Lmu_config_new(lua_State *L) {
         while (lua_next(L, 1)) { /* o mt k v */
             lua_pushvalue(L, -4);
             lua_pushvalue(L, -3);
-            if (lua_gettable(L, -5) == LUA_TNIL)
+            if (lua53_gettable(L, -5) == LUA_TNIL)
                 luaL_error(L, "invalid config field '%s'", lua_tostring(L, -4));
             lua_insert(L, -2); /* o mt k v f o */
             lua_pushvalue(L, -3);
