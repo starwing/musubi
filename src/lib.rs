@@ -580,6 +580,19 @@ impl CharSet {
 /// Config::new().with_color(&MyColors);
 /// ```
 pub trait Color {
+    /// Generate ANSI color code for the given color kind.
+    ///
+    /// This method is called during rendering to produce color escape sequences.
+    /// Write the ANSI escape sequence (e.g., `\x1b[31m` for red) to `w`.
+    ///
+    /// # Arguments
+    ///
+    /// * `w` - Output writer for the color code
+    /// * `kind` - The type of color needed (Error, Warning, etc.)
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, or an I/O error if writing fails.
     fn color(&self, w: &mut dyn Write, kind: ColorKind) -> std::io::Result<()>;
 }
 
@@ -985,6 +998,7 @@ pub struct Line {
 }
 
 impl Line {
+    /// Create a new empty Line with all fields set to zero.
     pub fn new() -> Self {
         Self::default()
     }
@@ -1017,7 +1031,27 @@ impl From<Line> for ffi::mu_Line {
     }
 }
 
+/// Trait for types that can be converted into source files for diagnostics.
+///
+/// This trait is implemented for common source types like `&str`, tuples of
+/// `(&str, &str)` for (content, name), and tuples with line offsets.
+///
+/// You typically don't need to implement this trait manually - use the provided
+/// implementations via [`Report::with_source`].
+///
+/// # Examples
+///
+/// ```
+/// # use musubi::Report;
+/// let mut report = Report::new()
+///     .with_source("code content")              // &str
+///     .with_source(("code", "file.rs"))        // (&str, &str)
+///     .with_source(("code", "file.rs", 10));   // (&str, &str, i32) with line offset
+/// ```
 pub trait IntoSource {
+    /// Convert this value into a C source pointer.
+    ///
+    /// This method is called internally by [`Report::with_source`].
     fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source;
 }
 
