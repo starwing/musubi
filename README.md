@@ -1,17 +1,25 @@
-# Musubi
-
 <div align="center">
+
+<h1>Musubi</h1>
 
 **A beautiful diagnostics renderer for compiler errors and warnings**
 
-![Language](https://img.shields.io/badge/language-Lua%20%7C%20C-blue)
+![Language](https://img.shields.io/badge/language-Lua%20%7C%20C%20%7C%20Rust-blue)
+![Crates.io](https://img.shields.io/crates/v/musubi-rs)
+![docs.rs](https://img.shields.io/docsrs/musubi-rs)
 ![Version](https://img.shields.io/badge/version-0.1.0-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 
-[Features](#features) • [Installation](#installation) • [Quick Start](#quick-start) • [Documentation](#documentation) • [Testing](#testing)
+[Key Features](#key-features) • [Installation](#installation) • [Quick Start](#quick-start) • [API Reference](#api-reference) • [Testing](#testing)
 
 </div>
+
+---
+
+> **📦 For Rust Users**: This README covers the complete Musubi project (Lua/C/Rust implementations).  
+> **Looking for Rust API documentation?** → See the comprehensive [Rust API docs](https://docs.rs/musubi-rs) with examples and usage guides.  
+> **Rust crate**: [`musubi-rs`](https://crates.io/crates/musubi-rs)
 
 ---
 
@@ -19,11 +27,12 @@
 
 **Musubi** (結び, "connection" in Japanese) is a high-performance diagnostics renderer inspired by Rust's [Ariadne](https://github.com/zesterer/ariadne) library. It produces beautiful, color-coded diagnostic messages with precise source location highlighting, multi-line spans, and intelligent label clustering.
 
-Originally ported from Rust to Lua for rapid prototyping, Musubi has evolved into a production-ready dual implementation:
+Originally ported from Rust to Lua for rapid prototyping, Musubi has evolved into a production-ready **multi-language** implementation:
 - **Pure Lua**: Feature-complete reference implementation with 100% test coverage
 - **C Library**: High-performance port with Lua bindings (`musubi.h`, `musubi.c`)
+- **Rust Crate**: Safe FFI wrapper with ergonomic builder API
 
-Both implementations produce **pixel-perfect identical output** and share the same test suite (95 tests, 2400+ lines).
+All implementations produce **pixel-perfect identical output** and share the same test suite (95 tests, 2400+ lines).
 
 ### Key Features
 

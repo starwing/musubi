@@ -1,0 +1,6 @@
+# Clippy configuration for musubi project
+# This file configures Clippy lints to enforce safety documentation
+
+# Require SAFETY comments for all unsafe blocks
+# This lint is part of the `undocumented_unsafe_blocks` lint
+# It will warn if any unsafe block doesn't have a preceding SAFETY comment

@@ -1,13 +1,29 @@
 [package]
-name = "musubi"
+name = "musubi-rs"
 version = "0.1.0"
 edition = "2024"
 authors = ["Xavier Wang <xavierxwang@gmail.com>"]
 description = "Rust bindings for musubi diagnostic renderer"
 license = "MIT"
 repository = "https://github.com/starwing/musubi"
+homepage = "https://github.com/starwing/musubi"
+documentation = "https://docs.rs/musubi-rs"
 keywords = ["diagnostics", "error-reporting", "terminal"]
 categories = ["development-tools", "command-line-interface"]
+exclude = [
+    ".github/",
+    ".vscode/",
+    "examples/demo.lua", # Lua example not relevant for Rust crate
+    "examples/demo.c",   # C example not relevant for Rust crate
+    "misc/",
+    "tests/*.lua",
+    "musubi.c",
+    "ariadne.lua",
+    ".luarc.json",
+    ".clang-format",
+    "justfile",
+    "clippy.toml",       # Development tool config
+]
 
 [lib]
 name = "musubi"
@@ -24,3 +40,7 @@ cc = "1.0"
 
 [dev-dependencies]
 insta = "1.44.3"
+
+[lints.clippy]
+# Enforce SAFETY comments on all unsafe blocks
+undocumented_unsafe_blocks = "deny"

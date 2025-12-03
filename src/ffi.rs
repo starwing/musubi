@@ -2,6 +2,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(dead_code)]
+#![allow(clippy::undocumented_unsafe_blocks)]
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::os::raw::c_float;
@@ -166,6 +167,32 @@ impl From<mu_Slice> for &[u8] {
     }
 }
 
+impl From<&[u8]> for mu_Slice {
+    fn from(bytes: &[u8]) -> Self {
+        Self {
+            p: bytes.as_ptr() as *const c_char,
+            e: unsafe { bytes.as_ptr().add(bytes.len()) as *const c_char },
+        }
+    }
+}
+
+impl From<mu_Slice> for Result<&str, std::str::Utf8Error> {
+    fn from(slice: mu_Slice) -> Self {
+        let len = unsafe { slice.e.offset_from(slice.p) as usize };
+        let bytes = unsafe { std::slice::from_raw_parts(slice.p as *const u8, len) };
+        std::str::from_utf8(bytes)
+    }
+}
+
+impl From<&str> for mu_Slice {
+    fn from(s: &str) -> Self {
+        Self {
+            p: s.as_ptr() as *const c_char,
+            e: unsafe { s.as_ptr().add(s.len()) as *const c_char },
+        }
+    }
+}
+
 impl std::fmt::Debug for mu_Slice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let len = unsafe { self.e.offset_from(self.p) as usize };
@@ -180,15 +207,6 @@ impl Default for mu_Slice {
         Self {
             p: std::ptr::null(),
             e: std::ptr::null(),
-        }
-    }
-}
-
-impl From<&str> for mu_Slice {
-    fn from(s: &str) -> Self {
-        Self {
-            p: s.as_ptr() as *const c_char,
-            e: unsafe { s.as_ptr().add(s.len()) as *const c_char },
         }
     }
 }
