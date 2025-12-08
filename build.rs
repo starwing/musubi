@@ -1,3 +1,6 @@
+//! Build script for compiling the C implementation of musubi.
+#![allow(missing_docs, clippy::missing_docs_in_private_items)]
+
 use std::env;
 use std::path::PathBuf;
 
