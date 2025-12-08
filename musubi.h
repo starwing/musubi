@@ -1101,7 +1101,7 @@ static int muG_make_groups(mu_Report *R) {
         mu_Label    *label = &R->labels[i];
         mu_LabelInfo li, **labels;
         mu_Group    *g;
-        if (label->src_id >= muA_size(R->sources)) return MU_ERRSRC;
+        assert(label->src_id < muA_size(R->sources));
         muX(muG_init(R, label->src_id, &g));
         muG_init_info(R, label, &li);
         if (g) g->first_char = li.start_char, g->last_char = muM_lastchar(&li);
@@ -1912,9 +1912,15 @@ MU_API int mu_writer(mu_Report *R, mu_Writer *writer, void *ud) {
 }
 
 MU_API int mu_render(mu_Report *R, size_t pos, mu_Id src_id) {
+    unsigned i, size, src_count;
     if (!R) return MU_ERRPARAM;
     if (src_id >= muA_size(R->sources)) return MU_ERRSRC;
     if (R->writer == NULL) return MU_OK;
+    src_count = muA_size(R->sources);
+    for (i = 0, size = muA_size(R->labels); i < size; i++) {
+        mu_Label *label = &R->labels[i];
+        if (label->src_id >= src_count) return MU_ERRSRC;
+    }
     return muR_cleanup(R), muR_report(R, pos, src_id);
 }
 
@@ -2021,7 +2027,7 @@ MU_API int mu_message(mu_Report *R, mu_Slice msg, int width) {
 
 MU_API int mu_color(mu_Report *R, mu_Color *color, void *ud) {
     mu_Label *label = muM_checklabel(R);
-    if (!label) return MU_ERRPARAM;
+    if (!label || !color) return MU_ERRPARAM;
     return label->color = color, label->ud = ud, MU_OK;
 }
 
