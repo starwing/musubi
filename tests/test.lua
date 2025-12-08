@@ -2520,7 +2520,7 @@ Error: test_unicode_break
 ]])
   end
 
-  function _G.test_ambiwidth()
+  function TestUnicode.test_ambiwidth()
     local code = "ambi code:" .. utf8.char(0xA1) .. "end"
     local msg = remove_trailing(
       ariadne.report(1)
