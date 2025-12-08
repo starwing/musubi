@@ -7,7 +7,7 @@
 ![Language](https://img.shields.io/badge/language-Lua%20%7C%20C%20%7C%20Rust-blue)
 [![Crates.io](https://img.shields.io/crates/v/musubi-rs)](https://crates.io/crates/musubi-rs)
 [![docs.rs](https://img.shields.io/docsrs/musubi-rs)](https://docs.rs/musubi-rs)
-![Version](https://img.shields.io/badge/version-0.1.0-green)
+![Version](https://img.shields.io/badge/version-0.3.0-green)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 [![Coverage Status](https://coveralls.io/repos/github/starwing/musubi/badge.svg?branch=master)](https://coveralls.io/github/starwing/musubi?branch=master)
 
@@ -27,12 +27,11 @@
 
 **Musubi** (結び, "connection" in Japanese) is a high-performance diagnostics renderer inspired by Rust's [Ariadne](https://github.com/zesterer/ariadne) library. It produces beautiful, color-coded diagnostic messages with precise source location highlighting, multi-line spans, and intelligent label clustering.
 
-Originally ported from Rust to Lua for rapid prototyping, Musubi has evolved into a production-ready **multi-language** implementation:
-- **Pure Lua**: Feature-complete reference implementation with 100% test coverage
-- **C Library**: High-performance port with Lua bindings (`musubi.h`, `musubi.c`)
-- **Rust Crate**: Safe FFI wrapper with ergonomic builder API
+Originally ported from Rust's Ariadne library, Musubi has evolved into a production-ready **multi-language** implementation:
+- **C Library**: High-performance core with Lua bindings (`musubi.h`, `musubi.c`)
+- **Rust Crate**: Safe FFI wrapper with ergonomic builder API (`musubi-rs`)
 
-All implementations produce **pixel-perfect identical output** and share the same test suite (95 tests, 2400+ lines).
+Both implementations produce **identical output** and are thoroughly tested (26 Rust unit tests + 30 doc tests, 100 Lua tests).
 
 ### Key Features
 
@@ -101,25 +100,20 @@ def six =
 
 ### Requirements
 
-**Lua Implementation:**
-- Lua 5.1+ or LuaJIT
-- [`lua-utf8`](https://github.com/starwing/luautf8) library (requires `utf8.widthindex` for line width limiting)
-- Optional: `luaunit` for running tests, `luacov` for coverage analysis
+**Rust Crate:**
+- Rust 1.56+ (edition 2024)
+- No external dependencies (self-contained C implementation)
 
-**C Implementation:**
+**C Library with Lua Bindings:**
 - C89-compatible compiler (GCC, Clang, MSVC)
 - Lua 5.1+ headers for Lua bindings
 - Optional: `lcov` for coverage reports
 
 ### Building
 
-**Lua (No build required):**
+**Rust:**
 ```bash
-# Install dependencies
-luarocks install luautf8
-
-# Copy ariadne.lua to your project
-cp ariadne.lua /path/to/your/project/
+cargo add musubi-rs
 ```
 
 **C Library with Lua Bindings:**
@@ -171,7 +165,9 @@ local cfg = mu.config()
     :limit_width(80)          -- Truncate long lines to 80 columns
     :char_set "unicode"       -- Use Unicode box-drawing characters
     :index_type "char"        -- Use character offsets (vs "byte")
-    :ambiwidth(1)             -- Ambiguous character width (1 or 2)
+    :ambi_width(1)            -- Ambiguous character width (1 or 2)
+    :column_order(false)      -- Use natural label ordering (default)
+    :align_messages(true)     -- Align label messages (default)
 
 mu.report(0)
     :config(cfg)
@@ -231,13 +227,15 @@ mu.report(0)
 
 | Option             | Type    | Default     | Description                                             |
 | ------------------ | ------- | ----------- | ------------------------------------------------------- |
-| `compact`          | boolean | `false`     | Hide empty lines between labels                         |
+| `compact`          | boolean | `false`     | Compact mode (works with underlines)                    |
 | `cross_gap`        | boolean | `true`      | Draw arrows across skipped lines                        |
 | `underlines`       | boolean | `true`      | Draw underlines for single-line labels                  |
+| `column_order`     | boolean | `false`     | Simple column order (true) vs natural ordering (false)  |
+| `align_messages`   | boolean | `true`      | Align label messages to same column                     |
 | `multiline_arrows` | boolean | `true`      | Use arrows for multi-line spans                         |
 | `tab_width`        | integer | `4`         | Number of spaces per tab                                |
 | `limit_width`      | integer | `0`         | Max line width (0 = unlimited)                          |
-| `ambiwidth`        | integer | `1`         | Width of ambiguous Unicode characters                   |
+| `ambi_width`       | integer | `1`         | Width of ambiguous Unicode characters                   |
 | `label_attach`     | string  | `"middle"`  | Label attachment point (`"start"`, `"middle"`, `"end"`) |
 | `index_type`       | string  | `"char"`    | Position indexing (`"char"` or `"byte"`)                |
 | `char_set`         | string  | `"unicode"` | Glyph set (`"unicode"` or `"ascii"`)                    |
@@ -303,15 +301,6 @@ Report:render()
 
 ### Running Tests
 
-**Lua Implementation:**
-```bash
-lua test.lua                # Run all 83 tests
-REF=1 lua test.lua          # Use reference Lua implementation
-lua -lluacov test.lua       # Collect coverage data
-luacov ariadne.lua          # Generate coverage report
-```
-
-**C Implementation:**
 ```bash
 # Compile with coverage
 gcc -ggdb -shared --coverage -o musubi.so musubi.c
@@ -327,7 +316,7 @@ genhtml lcov.info -o coverage/
 ### Test Coverage
 
 Both implementations maintain **100% test coverage**:
-- 95 test cases covering all rendering paths
+- 100 test cases covering all rendering paths
 - Edge cases: zero-width spans, CJK characters, tab expansion, window truncation
 - Regression tests for all fixed bugs
 - Pixel-perfect output verification (2400+ lines of expected output)
@@ -357,7 +346,7 @@ Both implementations maintain **100% test coverage**:
 - Only supports `\n` newlines (not Unicode line separators)
 - Not full [UAX#29](https://www.unicode.org/reports/tr29/) grapheme cluster breaking (only support ZWJ & RI now)
 
-### C Port Details
+### C Implementation Details
 
 See [`.github/c_port.md`](.github/c_port.md) for detailed implementation notes:
 - API constraints and call ordering requirements
