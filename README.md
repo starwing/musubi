@@ -9,7 +9,7 @@
 [![docs.rs](https://img.shields.io/docsrs/musubi-rs)](https://docs.rs/musubi-rs)
 ![Version](https://img.shields.io/badge/version-0.1.0-green)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
-[![Coverage](https://coveralls.io/repos/github/starwing/musubi/badge.svg?branch=master)](https://coveralls.io/github/starwing/musubi?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/starwing/musubi/badge.svg?branch=master)](https://coveralls.io/github/starwing/musubi?branch=master)
 
 [Key Features](#key-features) • [Installation](#installation) • [Quick Start](#quick-start) • [API Reference](#api-reference) • [Testing](#testing)
 
