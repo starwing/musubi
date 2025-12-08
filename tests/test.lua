@@ -1,8 +1,6 @@
 package.path = "tests/?.lua;" .. package.path
 local lu = require "luaunit"
-local use_ref = os.getenv("REF") == "1"
---- @module 'ariadne'
-local ariadne = require(use_ref and "ariadne" or "musubi")
+local ariadne = require "musubi"
 
 -- print a demo
 if #arg == 0 then
@@ -37,7 +35,7 @@ local function remove_trailing(text)
   return (text:gsub("%s+\n", "\n"):gsub("%s+\n$", "\n"))
 end
 
----@return ConfigAPI
+---@return Config
 local function no_color_ascii()
   return ariadne.config()
       :color(false)
@@ -154,7 +152,7 @@ Error: can't compare apples with oranges
     local text = "apple == orange;"
     local msg = remove_trailing(
       ariadne.report(1)
-      :config(no_color_ascii():compact(true))
+      :config(no_color_ascii():compact(true):underlines(false))
       :title("Error", "can't compare apples with oranges")
       :label(1, 5):message("This is an apple")
       :label(10, 15):message("This is an orange")
@@ -165,8 +163,8 @@ Error: can't compare apples with oranges
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
  1 |apple == orange;
+   |  |         `--- This is an orange
    |  `------------- This is an apple
-   |            `--- This is an orange
 ]=]))
   end
 
@@ -187,9 +185,9 @@ Error: can't compare äpplës with örängës
    |
  1 | äpplë == örängë;
    | ^^|^^    ^^^|^^
+   |   |         `---- This is an örängë
+   |   |
    |   `-------------- This is an äpplë
-   |             |
-   |             `---- This is an örängë
 ---'
 ]=]))
   end
@@ -211,9 +209,9 @@ Error: can't compare äpplës with örängës
    |
  1 | äpplë == örängë;
    | ^^|^^    ^^^|^^
+   |   |         `---- This is an örängë
+   |   |
    |   `-------------- This is an äpplë
-   |             |
-   |             `---- This is an örängë
 ---'
 ]=]))
   end
@@ -235,9 +233,9 @@ Error: can't compare äpplës with örängës
    |
  1 | äpplë == örängë;
    | ^^|^^    ^^^|^^
+   |   |         `---- This is an örängë
+   |   |
    |   `-------------- This is an äpplë
-   |             |
-   |             `---- This is an örängë
 ---'
 ]=]))
   end
@@ -258,9 +256,9 @@ Error: tab width test
    |
  1 | a    bcd  e
    | ^|^^^^    |
+   |  |        `-- This skips two tab
+   |  |
    |  `----------- This spans a tab
-   |           |
-   |           `-- This skips two tab
 ---'
 ]=])
   end
@@ -460,9 +458,9 @@ Error:
    |
  1 | https://example.com/
    | ^^|^^^^^^^|^^^^^^^^^
+   |   |       `----------- URL
+   |   |
    |   `------------------- scheme
-   |           |
-   |           `----------- URL
 ---'
 ]=]))
   end
@@ -488,17 +486,17 @@ Error: can't compare apples with oranges
    |
  1 | apple == orange;
    | ^^|^^    ^^^|^^
+   |   |         `---- This is an orange
+   |   |         |
+   |   |         `---- Have I mentioned that this is an orange?
+   |   |         |
+   |   |         `---- No really, have I mentioned that?
+   |   |
    |   `-------------- This is an apple
-   |   |         |
+   |   |
    |   `-------------- Have I mentioned that this is an apple?
-   |   |         |
+   |   |
    |   `-------------- No really, have I mentioned that?
-   |             |
-   |             `---- This is an orange
-   |             |
-   |             `---- Have I mentioned that this is an orange?
-   |             |
-   |             `---- No really, have I mentioned that?
 ---'
 ]=]))
   end
@@ -521,9 +519,9 @@ Error: can't compare apples with oranges
    |
  1 | apple == orange;
    | ^^|^^    ^^^|^^
+   |   |         `---- This is an orange
+   |   |
    |   `-------------- This is an apple
-   |             |
-   |             `---- This is an orange
    |
    | Note: stop trying ... this is a fruitless endeavor
 ---'
@@ -546,8 +544,9 @@ Error: can't compare apples with oranges
 Error: can't compare apples with oranges
    ,-[ <unknown>:1:1 ]
  1 |apple == orange;
+   |^^|^^    ^^^|^^
+   |  |         `--- This is an orange
    |  `------------- This is an apple
-   |            `--- This is an orange
    |Note: stop trying ... this is a fruitless endeavor
 ]=]))
   end
@@ -570,9 +569,9 @@ Error: can't compare apples with oranges
    |
  1 | apple == orange;
    | ^^|^^    ^^^|^^
+   |   |         `---- This is an orange
+   |   |
    |   `-------------- This is an apple
-   |             |
-   |             `---- This is an orange
    |
    | Help: have you tried peeling the orange?
 ---'
@@ -598,9 +597,9 @@ Error: can't compare apples with oranges
    |
  1 | apple == orange;
    | ^^|^^    ^^^|^^
+   |   |         `---- This is an orange
+   |   |
    |   `-------------- This is an apple
-   |             |
-   |             `---- This is an orange
    |
    | Help: have you tried peeling the orange?
    |
@@ -829,9 +828,9 @@ Error: overlap priorities
    |
  1 | k[lmno]p
    | ^[^]|[|^]
-   |   `[-]--- weak
-   |    [|]
-   |    [`---] strong
+   |   |[`---] strong
+   |   |
+   |   `---- weak
 ---'
 ]=]))
   end
@@ -853,9 +852,9 @@ Error: stacked arrows
    |
  1 | qrstuvwx
    | ^|^ ^^|^
+   |  |    `--- right
+   |  |
    |  `-------- left
-   |       |
-   |       `--- right
 ---'
 ]=]))
   end
@@ -948,6 +947,95 @@ Error: oob location with label
    | |
    | `-- label
 ---'
+]=]))
+  end
+
+  function TestWrite.test_multi_label_orders()
+    local text = "apple, orange, banana;"
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii())
+      :title("Error", "multiple label orders")
+      :label(1, 5):message("first")
+      :label(8, 13):message("second")
+      :label(16, 21):message("third")
+      :source(text):render()
+    )
+    lu.assertEquals(msg, ([=[
+Error: multiple label orders
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | apple, orange, banana;
+   | ^^|^^  ^^^|^^  ^^^|^^
+   |   |       |       `---- third
+   |   |       |
+   |   |       `------------ second
+   |   |
+   |   `-------------------- first
+---'
+]=]))
+  end
+
+  function TestWrite.test_multi_label_no_align()
+    local text = "apple, orange, banana;"
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii():align_messages(false))
+      :title("Error", "multiple label orders")
+      :label(1, 5):message("first")
+      :label(8, 13):message("second")
+      :label(16, 21):message("third")
+      :source(text):render()
+    )
+    lu.assertEquals(msg, ([=[
+Error: multiple label orders
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | apple, orange, banana;
+   | ^^|^^  ^^^|^^  ^^^|^^
+   |   |       |       `-- third
+   |   |       |
+   |   |       `-- second
+   |   |
+   |   `-- first
+---'
+]=]))
+  end
+
+  function TestWrite.test_natural_order()
+    local code = "first line\nsecond line\nthird line\n"
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii():compact(true))
+      :title("Error", "natural label order")
+      :label(1, 22):message("last outer")
+      :label(21, 21):message("last inline")
+      :label(20, 24):message("first next")
+      :label(19, 19):message("middle inline")
+      :label(1, 18):message("first outer")
+      :label(17, 17):message("first inline")
+      :label(16, 25):message("second next")
+      :label(1, 15):message("margin")
+      :source(code):render())
+    lu.assertEquals(msg, ([=[
+Error: natural label order
+   ,-[ <unknown>:1:1 ]
+ 1 |  ,-->first line
+   |,-----'
+   ||,----'
+ 2 ||||-->second line
+   ||||       ^|^|^|^
+   ||||       |||||`--- last inline
+   ||||       |||`----- middle inline
+   ||||       |`------- first inline
+   |||`---------------- margin
+   ||`----------^------ first outer
+   |`---------------^-- last outer
+   |   ,------'   |
+   |   |,---------'
+ 3 |   ||>third line
+   |   |`------------- first next
+   |   `---^---------- second next
 ]=]))
   end
 
@@ -1072,9 +1160,9 @@ Error: pointer and connectors
  1 | ,-> abcde
  2 | |-> fghij
    | |     ^|
+   | |      `---- inline
+   | |
    | `----------- multi
-   |        |
-   |        `---- inline
 ---'
 ]=]))
   end
@@ -1241,7 +1329,6 @@ ESC[38;5;246m---'ESC[0m\
 "]])
   end -- Test 2: Compact mode with multiline arrows (line 1413)
 
-  -- Test 3: cross_gap disabled (line 1409)
   function TestWrite.test_cross_gap_disabled()
     local src = "apple\norange\nbanana\ngrape"
     local msg = remove_trailing(ariadne.report(1)
@@ -1267,7 +1354,6 @@ Error: test cross_gap
 ]])
   end
 
-  -- Test 5: underlines disabled (line 1204)
   function TestWrite.test_underlines_disabled()
     local src = "apple orange"
     local msg = remove_trailing(ariadne.report(1)
@@ -1287,7 +1373,6 @@ Error: no underlines
 ]])
   end
 
-  -- Test 6: overlapping underlines with shorter label (line 1216)
   function TestWrite.test_underline_shorter_label_priority()
     local src = "apple orange banana"
     local msg = remove_trailing(ariadne.report(1)
@@ -1305,16 +1390,15 @@ Error: overlapping same priority
    |
  1 | apple orange banana
    | ^^^^||^^^^
+   |     |`------ shortest
+   |     ||
+   |     |`------ long
+   |     |
    |     `------- short
-   |      |
-   |      `------ shortest
-   |      |
-   |      `------ long
 ---'
 ]])
   end
 
-  -- Test 8: compact multiline with uarrow (line 1349)
   function TestWrite.test_compact_multiline_uarrow()
     local cfg = no_color_ascii()
     local src = "apple\norange\nbanana"
@@ -1334,16 +1418,15 @@ Error: compact uarrow
 ]])
   end
 
-  -- Test 9: cross_gap disabled (based on test_pointer_and_connectors)
   function TestWrite.test_cross_gap_vbar_hbar()
     -- Based on test_pointer_and_connectors but with cross_gap disabled
-    local text = "abcde\nfghij\n"
+    local text = "abcdef\n"
     local msg = remove_trailing(
       ariadne.report(1)
-      :config(no_color_ascii():cross_gap(false))
+      :config(no_color_ascii():cross_gap(false):column_order(true))
       :title("Error", "xbar test")
-      :label(2, 8):message("multi")
-      :label(9, 10):message("inline")
+      :label(1, 3):message("label1")
+      :label(4, 6):message("label2")
       :source(text):render()
     )
     -- With cross_gap=false, we should see '+' in the message connector line
@@ -1351,17 +1434,15 @@ Error: compact uarrow
 Error: xbar test
    ,-[ <unknown>:1:1 ]
    |
- 1 | ,-> abcde
- 2 | |-> fghij
-   | |     ^|
-   | `------+---- multi
-   |        |
-   |        `---- inline
+ 1 | abcdef
+   | ^|^^|^
+   |  `--+--- label1
+   |     |
+   |     `--- label2
 ---'
 ]])
   end
 
-  -- Test 10: compact mode with two multiline labels triggering uarrow
   function TestWrite.test_compact_two_multiline_uarrow()
     -- Two multiline labels: one starts earlier, one starts later on line 1
     -- This should trigger the uarrow condition at line 1343
@@ -1404,7 +1485,6 @@ Error: two multiline labels
 ]])
   end
 
-  -- Test 11: compact mode with two multiline labels ending at same col (line 1340)
   function TestWrite.test_compact_multiline_same_end_col()
     -- Two multiline labels both ending at the same column
     -- This triggers the uarrow at line 1340
@@ -1498,11 +1578,11 @@ Error: emoji test
    |
  1 | apple 🍎 orange 🍊 banana 🍌
    |       |^        |^        |^
+   |       |         |         `--- third emoji
+   |       |         |
+   |       |         `------------- second emoji
+   |       |
    |       `----------------------- first emoji
-   |                 |         |
-   |                 `------------- second emoji
-   |                           |
-   |                           `--- third emoji
 ---'
 ]])
   end
@@ -2117,11 +2197,11 @@ Error: test_margin_per_cluster
    | | | ,----------------------'
  2 | |-----> bbbbb
    | | | |      ^^
+   | | | `-------^-- labelC
+   | | |        |
+   | | `--------^--- labelB
+   | |
    | `-------------- labelA
-   |   | |      ||
-   |   `--------^--- labelB
-   |     |       |
-   |     `-------^-- labelC
 ---'
 ]])
   end
@@ -2439,19 +2519,71 @@ Error: test_unicode_break
 ---'
 ]])
   end
+
+  function _G.test_ambiwidth()
+    local code = "ambi code:" .. utf8.char(0xA1) .. "end"
+    local msg = remove_trailing(
+      ariadne.report(1)
+      :config(no_color_ascii():ambi_width(5))
+      :title("Error", "test_ambiwidth")
+      :label(11, 12):message("here")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_ambiwidth
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | ambi code:¡end
+   |           ^^^^^|
+   |                `-- here
+---'
+]])
+  end
+end
+
+function _G.test_writer()
+  local code = "line one\nline two with error\nline three\n"
+  local report = ariadne.report(12)
+  local msg = remove_trailing(
+    report
+    :config(no_color_ascii())
+    :title("Error", "test_writer")
+    :label(24, 28):message("found here")
+    :source(code):render()
+  )
+  lu.assertEquals(msg, [[
+Error: test_writer
+   ,-[ <unknown>:2:3 ]
+   |
+ 2 | line two with error
+   |               ^^|^^
+   |                 `---- found here
+---'
+]])
+  local t = {}
+  report
+      :render(function(chunk)
+        t[#t + 1] = chunk
+      end)
+  local msg2 = remove_trailing(table.concat(t))
+  lu.assertEquals(msg, msg2)
+  lu.assertErrorMsgContains("musubi: source out of range",
+    function() report:reset():render() end)
+  local msg3 = remove_trailing(report:reset():source(code):render())
+  lu.assertEquals(msg3, [[
+Error: test_writer
+]])
 end
 
 _G.TestColor = TestColor
 _G.TestWrite = TestWrite
 _G.TestLocLimit = TestLocLimit
 _G.TestLineLimit = TestLineLimit
-if not use_ref then
-  if package.config:sub(1, 1) ~= "\\" then
-    _G.TestFile = TestFile
-  end
-  if _VERSION >= "Lua 5.3" then
-    _G.TestUnicode = TestUnicode
-  end
+if package.config:sub(1, 1) ~= "\\" then
+  _G.TestFile = TestFile
+end
+if _VERSION >= "Lua 5.3" then
+  _G.TestUnicode = TestUnicode
 end
 
-os.exit(lu.LuaUnit.run())
+os.exit(lu.LuaUnit.run(), true)

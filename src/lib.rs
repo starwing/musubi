@@ -762,10 +762,12 @@ impl Debug for Config<'_> {
             .field("cross_gap", &self.inner.cross_gap)
             .field("compact", &self.inner.compact)
             .field("underlines", &self.inner.underlines)
+            .field("column_order", &self.inner.column_order)
+            .field("align_messages", &self.inner.align_messages)
             .field("multiline_arrows", &self.inner.multiline_arrows)
             .field("tab_width", &self.inner.tab_width)
             .field("limit_width", &self.inner.limit_width)
-            .field("ambiwidth", &self.inner.ambiwidth)
+            .field("ambi_width", &self.inner.ambi_width)
             .field("label_attach", &self.inner.label_attach)
             .field("index_type", &self.inner.index_type)
             .finish()
@@ -819,8 +821,11 @@ impl<'a> Config<'a> {
 
     /// Enable or disable compact mode.
     ///
-    /// In compact mode, the diagnostic header (file path and line number)
-    /// is omitted, producing more concise output.
+    /// In compact mode, the diagnostic output is more condensed:
+    /// - Underlines and arrows may be merged onto the same line
+    /// - Only meaningful label arrows are shown
+    ///
+    /// Works with underlines enabled or disabled.
     ///
     /// Default: `false`
     pub fn with_compact(mut self, enabled: bool) -> Self {
@@ -833,9 +838,51 @@ impl<'a> Config<'a> {
     /// When enabled, spans are underlined with characters like `^^^`.
     /// When disabled, only label arrows are shown.
     ///
+    /// Works with both compact and non-compact modes.
+    ///
     /// Default: `true`
     pub fn with_underlines(mut self, enabled: bool) -> Self {
         self.inner.underlines = enabled as c_int;
+        self
+    }
+
+    /// Enable or disable natural label ordering.
+    ///
+    /// When disabled (default), labels are sorted to minimize line crossings:
+    /// - Inline labels appear first, ordered by reverse column position
+    /// - Multi-line labels follow, with tails before heads
+    ///
+    /// When enabled, labels are simply sorted by column position.
+    ///
+    /// Default: `false` (natural ordering enabled)
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::Config;
+    /// let config = Config::new().with_column_order(true);  // Simple column order
+    /// ```
+    pub fn with_column_order(mut self, enabled: bool) -> Self {
+        self.inner.column_order = enabled as c_int;
+        self
+    }
+
+    /// Enable or disable aligned label messages.
+    ///
+    /// When enabled (default), label messages are aligned to the same column,
+    /// producing a more structured appearance with longer arrows.
+    ///
+    /// When disabled, messages are placed immediately after their arrows,
+    /// creating more compact output.
+    ///
+    /// Default: `true` (aligned)
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::Config;
+    /// let config = Config::new().with_align_messages(false);  // Compact arrows
+    /// ```
+    pub fn with_align_messages(mut self, enabled: bool) -> Self {
+        self.inner.align_messages = enabled as c_int;
         self
     }
 
@@ -895,10 +942,10 @@ impl<'a> Config<'a> {
     /// # Example
     /// ```rust
     /// # use musubi::Config;
-    /// let config = Config::new().with_ambiwidth(2);  // East Asian width
+    /// let config = Config::new().with_ambi_width(2);  // East Asian width
     /// ```
-    pub fn with_ambiwidth(mut self, width: i32) -> Self {
-        self.inner.ambiwidth = width;
+    pub fn with_ambi_width(mut self, width: i32) -> Self {
+        self.inner.ambi_width = width;
         self
     }
 
@@ -2020,6 +2067,7 @@ mod tests {
             Warning: Test warning
                ,-[ test.rs:1:1 ]
              1 |hello
+               |^^|^^
                |  `--- test
             "##
         );
@@ -2384,7 +2432,7 @@ mod tests {
             .with_multiline_arrows(true)
             .with_tab_width(2)
             .with_limit_width(40)
-            .with_ambiwidth(2)
+            .with_ambi_width(2)
             .with_label_attach(LabelAttach::Start)
             .with_index_type(IndexType::Char)
             .with_char_set_ascii()

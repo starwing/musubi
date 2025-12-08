@@ -8,6 +8,11 @@ lua:
     /I C:\Devel\Lua54\include C:\Devel\Lua54\lib\lua54.lib \
     /LD musubi.c /Felua-utf8.dll
 
+t *args:
+    gcc -shared -fPIC -ggdb -Wall -undefined dynamic_lookup \
+        -o musubi.so musubi.c
+    lua tests/test.lua {{args}}
+
 test: lua
     lua tests/test.lua
 
@@ -16,7 +21,9 @@ coverage:
     CFLAGS="--coverage -ggdb" LDFLAGS=--coverage \
         luarocks make misc/musubi-dev-1.rockspec
     lua tests/test.lua
+    lcov --capture --directory . --exclude musubi.c --output-file lcov.info
     lcov --capture --directory . --output-file lcov.info
+    genhtml --output-directory coverages lcov.info
 
 svg:
     lua examples/demo.lua | \

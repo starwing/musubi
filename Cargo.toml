@@ -1,6 +1,6 @@
 [package]
 name = "musubi-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Xavier Wang <xavierxwang@gmail.com>"]
 description = "Rust bindings for musubi diagnostic renderer"
@@ -18,7 +18,7 @@ exclude = [
     "misc/",
     "tests/*.lua",
     "musubi.c",
-    "ariadne.lua",
+    "musubi.def.lua",
     ".luarc.json",
     ".clang-format",
     "justfile",

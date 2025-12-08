@@ -33,6 +33,5 @@ build = {
    type = "builtin",
    modules = {
       musubi =  "musubi.c",
-      ariadne = "ariadne.lua",
    },
 }

@@ -134,6 +134,18 @@ static int Lmu_config_underlines(lua_State *L) {
     return lua_settop(L, 1), 1;
 }
 
+static int Lmu_config_column_order(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->column_order = lua_toboolean(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_config_align_messages(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->align_messages = lua_toboolean(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
 static int Lmu_config_multiline_arrows(lua_State *L) {
     mu_Config *config = lmu_checkconfig(L, 1);
     config->multiline_arrows = lua_toboolean(L, 2);
@@ -152,7 +164,7 @@ static int Lmu_config_limit_width(lua_State *L) {
     return lua_settop(L, 1), 1;
 }
 
-static int Lmu_config_ambiwidth(lua_State *L) {
+static int Lmu_config_ambi_width(lua_State *L) {
     mu_Config *config = lmu_checkconfig(L, 1);
     config->ambiwidth = (int)luaL_checkinteger(L, 2);
     return lua_settop(L, 1), 1;
@@ -196,10 +208,12 @@ static void lmu_openconfig(lua_State *L) {
         ENTRY(cross_gap),
         ENTRY(compact),
         ENTRY(underlines),
+        ENTRY(column_order),
+        ENTRY(align_messages),
         ENTRY(multiline_arrows),
         ENTRY(tab_width),
         ENTRY(limit_width),
-        ENTRY(ambiwidth),
+        ENTRY(ambi_width),
         ENTRY(label_attach),
         ENTRY(index_type),
         ENTRY(color),
