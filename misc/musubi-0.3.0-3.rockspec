@@ -1,8 +1,8 @@
 package = "musubi"
-version = "0.1.0-2"
+version = "0.3.0-3"
 source = {
-   url = "https://github.com/starwing/musubi/archive/refs/tags/v0.1.0.tar.gz",
-   dir = "musubi-0.1.0"
+   url = "https://github.com/starwing/musubi/archive/refs/tags/v0.3.0.tar.gz",
+   dir = "musubi-0.3.0"
 }
 description = {
    summary = "A beautiful diagnostics renderer for compiler errors and warnings",
@@ -33,6 +33,6 @@ dependencies = {
 build = {
    type = "builtin",
    modules = {
-      musubi =  "musubi.c",
-   },
+      musubi = "musubi.c"
+   }
 }
