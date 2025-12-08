@@ -41,6 +41,10 @@ cc = "1.0"
 [dev-dependencies]
 insta = "1.44.3"
 
+[lints.rust]
+# Enforce documentation for all public APIs
+missing_docs = "warn"
+
 [lints.clippy]
 # Enforce SAFETY comments on all unsafe blocks
 undocumented_unsafe_blocks = "deny"

@@ -569,9 +569,9 @@ impl CharSet {
 ///     .with_source(("let x = 1;", "test.rs"))
 ///     .with_title(Level::Error, "Multiple labels")
 ///     .with_label(0..3)
-///     .with_color(&cg.next())  // First color
+///     .with_color(&cg.next_color())  // First color
 ///     .with_label(4..5)
-///     .with_color(&cg.next()); // Second color (different)
+///     .with_color(&cg.next_color()); // Second color (different)
 /// ```
 pub struct ColorGenerator {
     base: ffi::mu_ColorGen,
@@ -579,7 +579,7 @@ pub struct ColorGenerator {
 
 /// Trait for types that can be used as raw color codes.
 ///
-/// This trait is implemented for [`GenColor`] returned by [`ColorGenerator::next`].
+/// This trait is implemented for [`GenColor`] returned by [`ColorGenerator::next_color`].
 /// It allows efficiently passing pre-generated color codes to labels without
 /// the overhead of trait objects.
 pub trait IntoColor {
@@ -602,6 +602,8 @@ pub struct GenColor(ffi::mu_ColorCode);
 
 impl IntoColor for &GenColor {
     fn into_color(self, report: &mut Report) {
+        // SAFETY: mu_fromcolorcode is a valid C callback that reads from the color code array.
+        // The pointer to self.0 is valid for the duration of the mu_color call.
         unsafe {
             ffi::mu_color(
                 report.ptr,
@@ -609,6 +611,12 @@ impl IntoColor for &GenColor {
                 self.0.as_ptr() as *mut c_void,
             );
         }
+    }
+}
+
+impl Default for ColorGenerator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -640,13 +648,14 @@ impl ColorGenerator {
     /// use musubi::ColorGenerator;
     ///
     /// let mut cg = ColorGenerator::new();
-    /// let color1 = cg.next();
-    /// let color2 = cg.next();  // Different from color1
-    /// let color3 = cg.next();  // Different from color1 and color2
+    /// let color1 = cg.next_color();
+    /// let color2 = cg.next_color();  // Different from color1
+    /// let color3 = cg.next_color();  // Different from color1 and color2
     /// ```
-    pub fn next(&mut self) -> GenColor {
+    pub fn next_color(&mut self) -> GenColor {
         let mut rc = GenColor([0; ffi::MU_COLOR_CODE_SIZE]);
-        // SAFETY: &mut self ensures exclusive access to base
+        // SAFETY: &mut self ensures exclusive access to base.
+        // mu_gencolor always succeeds and fills the color code array.
         unsafe { ffi::mu_gencolor(&mut self.base, &mut rc.0) };
         rc
     }
@@ -1664,7 +1673,7 @@ impl<'a> Report<'a> {
     /// let mut report = Report::new()
     ///     .with_source(("code", "test.rs"))
     ///     .with_label(0..4)
-    ///     .with_color(&cg.next());
+    ///     .with_color(&cg.next_color());
     /// ```
     #[must_use]
     pub fn with_color<C: IntoColor>(mut self, color: C) -> Self {
@@ -2262,7 +2271,7 @@ mod tests {
     #[test]
     fn test_color_gen() {
         let mut cg = ColorGenerator::new();
-        let label1 = cg.next();
+        let label1 = cg.next_color();
 
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii())
