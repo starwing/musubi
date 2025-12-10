@@ -7,7 +7,7 @@
 ![Language](https://img.shields.io/badge/language-Lua%20%7C%20C%20%7C%20Rust-blue)
 [![Crates.io](https://img.shields.io/crates/v/musubi-rs)](https://crates.io/crates/musubi-rs)
 [![docs.rs](https://img.shields.io/docsrs/musubi-rs)](https://docs.rs/musubi-rs)
-![Version](https://img.shields.io/badge/version-0.3.0-green)
+![Version](https://img.shields.io/badge/version-0.4.0-green)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 [![Coverage Status](https://coveralls.io/repos/github/starwing/musubi/badge.svg?branch=master)](https://coveralls.io/github/starwing/musubi?branch=master)
 
