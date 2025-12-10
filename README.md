@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 [![Coverage Status](https://coveralls.io/repos/github/starwing/musubi/badge.svg?branch=master)](https://coveralls.io/github/starwing/musubi?branch=master)
 
-[Key Features](#key-features) • [Installation](#installation) • [Quick Start](#quick-start) • [API Reference](#api-reference) • [Testing](#testing)
+[Overview](#overview) • [Key Features](#key-features) • [Installation](#installation) • [Quick Start](#quick-start) • [C API](#c-api-usage) • [Lua API](#lua-api-reference) • [Testing](#testing)
 
 </div>
 
@@ -204,7 +204,269 @@ mu.report(0)
 
 ---
 
-## API Reference
+## C API Usage
+
+**musubi is an [stb-style] single-header library**. You only need `musubi.h` - no separate compilation or linking required. Also see [sokol] for more examples of stb-style libraries.
+
+[stb-style]: https://github.com/nothings/stb
+[sokol]: https://github.com/floooh/sokol
+
+### Setup
+
+**In ONE C/C++ file** (typically your main file), define `MU_IMPLEMENTATION` before including:
+
+```c
+#define MU_IMPLEMENTATION
+#include "musubi.h"
+```
+
+**In all other files**, just include the header normally:
+
+```c
+#include "musubi.h"  // Only declarations, no implementation
+```
+
+**For single-file projects**, use `MU_STATIC_API` to make all functions static:
+
+```c
+#define MU_STATIC_API  // Automatically defines MU_IMPLEMENTATION
+#include "musubi.h"
+```
+
+### Basic Example
+
+```c
+#define MU_IMPLEMENTATION
+#include <stdio.h>
+#include <string.h>
+
+#include "musubi.h"
+
+static int stdout_writer(void *ud, const char *data, size_t len) {
+    fwrite(data, 1, len, stdout);
+    return 0; /* Success */
+}
+
+int main(void) {
+    mu_Report   *R;
+    mu_Cache    *C = NULL;
+    mu_ColorGen  cg;
+    mu_ColorCode color1;
+
+    /* Initialize color generator */
+    mu_initcolorgen(&cg, 0.5f);
+    mu_gencolor(&cg, &color1);
+
+    /* Create Cache and add a source */
+    mu_addmemory(&C, mu_literal("local x = 10 + 'hello'"),
+                 mu_literal("example.lua"));
+
+    /* Create Report and configure */
+    R = mu_new(NULL, NULL); /* NULL, NULL = use default malloc */
+    mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Type mismatch"));
+    mu_code(R, mu_literal("E001"));
+
+    /* Add a label with message and color */
+    mu_label(R, 15, 22, 0);
+    mu_message(R, mu_literal("expected number, got string"), 0);
+    mu_color(R, mu_fromcolorcode, &color1);
+
+    /* Render to stdout */
+    mu_writer(R, stdout_writer, NULL);
+    mu_render(R, 14, C);
+
+    /* Cleanup */
+    mu_delete(R);
+    mu_delcache(C);
+    return 0;
+}
+```
+
+### Source/Cache Lifecycle
+
+**Key Concept**: `mu_Source` IS-A `mu_Cache`. A single Source can be used wherever Cache is expected:
+
+```c
+mu_Cache  *C = NULL;                             /* Start with NULL Cache */
+mu_Source *S = mu_addmemory(&C, content, name);  /* Auto-upgrades C if needed */
+mu_render(R, pos, (mu_Cache*)S);                 /* Source can be used as Cache */
+
+mu_render(R, pos, C); /* Or use C directly, as it have been updated with same source */
+```
+
+**Auto-Upgrade Mechanism**:
+- First source: `mu_addmemory(&C, ...)` where `C == NULL` creates a single Source
+- Second source: `mu_addmemory(&C, ...)` automatically upgrades to multi-Source Cache
+- Transparent to user: always use `mu_addsource(&C, ...)` with double pointer
+
+**Lifecycle Management**:
+1. Create Cache: `C = mu_newcache(allocf, ud)` with allocator or start with `C = NULL`
+2. Add sources: `mu_addmemory(&C, ...)` or `mu_addfile(&C, ...)`
+3. Render: `mu_render(R, pos, C)` uses Cache to fetch source lines, pos is always pointed to the first source (id 0) in cache.
+4. Cleanup: `mu_delcache(C)` frees Cache and all Sources
+
+**Ownership Rules**:
+- Cache owns all Sources added via `mu_addmemory` / `mu_addfile`
+- Report does NOT own Cache - you must call `mu_delcache(C)` manually
+- All string slices (`mu_Slice`) must outlive `mu_render()` call
+
+### Multi-Source Example
+
+```c
+mu_Cache *C = NULL;  /* Start with NULL */
+mu_Source *S1 = mu_addmemory(&C, mu_lslice("fn foo() { }", 12), 
+                             mu_lslice("foo.c", 5));
+mu_Source *S2 = mu_addmemory(&C, mu_lslice("fn bar() { foo(); }", 19), 
+                             mu_lslice("bar.c", 5));
+
+/* Cross-file diagnostic */
+mu_Report *R = mu_new(NULL, NULL);
+mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Undefined reference"));
+mu_label(R, 11, 14, 1);  /* bar.c: source id 1 */
+mu_message(R, mu_literal("called here"), 0);
+mu_label(R, 3, 6, 0);    /* foo.c: source id 0 */
+mu_message(R, mu_literal("defined here"), 0);
+mu_writer(R, stdout_writer, NULL);  /* See Basic Example for stdout_writer */
+mu_render(R, 11, C); /* Position in foo.c (source id 0) */
+mu_delete(R);
+mu_delcache(C);  /* Frees both S1 and S2 */
+```
+
+### File Streaming
+
+For large files, use `mu_addfile` to stream content on-demand:
+
+```c
+mu_Cache *C = NULL;
+FILE *fp = fopen("large_file.c", "r");
+mu_Source *S = mu_addfile(&C, fp, mu_lslice("large_file.c", 12));
+/* musubi reads lines only when needed for rendering */
+mu_render(R, pos, C);
+fclose(fp);  /* Close after rendering */
+mu_delcache(C);
+```
+
+**Important**: 
+- File must remain open during `mu_render()` call
+- `mu_addfile(&C, NULL, path)` opens file internally - musubi will close it on `mu_delcache()`
+- When passing your own `FILE*`, you must close it yourself after rendering
+
+### Error Handling
+
+All API functions return `int` error codes:
+
+```c
+int err;
+
+err = mu_label(R, 10, 20, 0);
+if (err != MU_OK) {
+    switch (err) {
+        case MU_ERRPARAM: fprintf(stderr, "Invalid parameter\n"); break;
+        case MU_ERRSRC:   fprintf(stderr, "Source not found\n"); break;
+        case MU_ERRFILE:  fprintf(stderr, "File I/O error\n"); break;
+    }
+    mu_delete(R);
+    return 1;
+}
+
+err = mu_render(R, pos, C);
+if (err != MU_OK) {
+    /* Handle error */
+}
+```
+
+### Custom Allocators
+
+Provide custom allocator for memory control:
+
+```c
+void* my_alloc(void *ud, void *ptr, size_t nsize, size_t osize) {
+    void *newptr;
+    if (nsize == 0) {
+        free(ptr);
+        return NULL;
+    }
+    newptr = realloc(ptr, nsize);
+    if (newptr == NULL) {
+        /* handle out-of-memory yourself, or musubi may abort */
+    }
+    return newptr;
+}
+
+void *my_userdata = /* your context */;
+mu_Cache *C = mu_newcache(my_alloc, my_userdata);
+mu_Report *R = mu_new(my_alloc, my_userdata);
+```
+
+If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp), or musubi may abort due to out-of-memory.
+
+**Allocator signature**: `void* (*mu_Allocf)(void *ud, void *ptr, size_t nsize, size_t osize)`
+- `ptr == NULL`: Allocate `nsize` bytes
+- `nsize == 0`: Free `ptr` (allocated with `osize` bytes)
+- Otherwise: Reallocate `ptr` from `osize` to `nsize` bytes
+
+### C API Reference
+
+**Types**:
+- `mu_Report` - Diagnostic report builder
+- `mu_Cache` - Multi-source container
+- `mu_Source` - Single source (can be used as Cache)
+- `mu_Slice` - String slice `{const char *p, *e}`
+- `mu_ColorGen` - Color generator state
+- `mu_ColorCode` - Pre-generated color code buffer `char[32]`
+- `mu_Allocf` - Allocator function type
+- `mu_Writer` - Output writer function type `int (*)(void *ud, const char *data, size_t len)`
+- `mu_Color` - Color generator function type `mu_Chunk (*)(void *ud, mu_ColorKind kind)`
+
+**Cache Management**:
+- `mu_Cache* mu_newcache(mu_Allocf *allocf, void *ud)` - Create empty Cache
+- `void mu_delcache(mu_Cache *C)` - Free Cache and all Sources
+- `mu_Source* mu_addmemory(mu_Cache **pC, mu_Slice content, mu_Slice name)` - Add in-memory source
+- `mu_Source* mu_addfile(mu_Cache **pC, FILE *fp, mu_Slice path)` - Add file source
+- `unsigned mu_sourcecount(const mu_Cache *C)` - Get number of sources
+
+**Report Building**:
+- `mu_Report* mu_new(mu_Allocf *allocf, void *ud)` - Create new Report
+- `void mu_delete(mu_Report *R)` - Free Report
+- `void mu_reset(mu_Report *R)` - Reset Report for reuse
+- `int mu_title(mu_Report *R, mu_Level level, mu_Slice custom, mu_Slice msg)` - Set kind and title
+- `int mu_code(mu_Report *R, mu_Slice code)` - Set error code
+- `int mu_label(mu_Report *R, size_t start, size_t end, mu_Id src_id)` - Add label span
+- `int mu_message(mu_Report *R, mu_Slice msg, int width)` - Set message for last label
+- `int mu_color(mu_Report *R, mu_Color *color, void *ud)` - Set color function for last label
+- `int mu_order(mu_Report *R, int order)` - Set order for last label
+- `int mu_priority(mu_Report *R, int priority)` - Set priority for last label
+- `int mu_note(mu_Report *R, mu_Slice note)` - Add footer note
+- `int mu_help(mu_Report *R, mu_Slice help)` - Add help text
+
+**Rendering**:
+- `int mu_writer(mu_Report *R, mu_Writer *fn, void *ud)` - Set output writer function
+- `int mu_render(mu_Report *R, size_t pos, const mu_Cache *C)` - Render diagnostic
+
+**Configuration**:
+- `void mu_initconfig(mu_Config *cfg)` - Initialize config with defaults
+- `int mu_config(mu_Report *R, const mu_Config *cfg)` - Apply configuration
+
+**Color Generation**:
+- `void mu_initcolorgen(mu_ColorGen *cg, float min_brightness)` - Initialize color generator
+- `void mu_gencolor(mu_ColorGen *cg, mu_ColorCode *out)` - Generate next color code
+- `mu_Chunk mu_fromcolorcode(void *ud, mu_ColorKind kind)` - Color function for pre-generated codes
+- `mu_Chunk mu_default_color(void *ud, mu_ColorKind kind)` - Default color scheme
+
+**Utilities**:
+- `mu_Slice mu_lslice(const char *s, size_t len)` - Create slice with explicit length
+- `mu_literal("text")` - Macro: create slice from string literal (compile-time length)
+- `mu_slice(str)` - Macro: create slice from C string (uses `strlen`)
+
+**Constants**:
+- Error codes: `MU_OK` (0), `MU_ERRPARAM` (-1), `MU_ERRSRC` (-2), `MU_ERRFILE` (-3)
+- Levels: `MU_ERROR`, `MU_WARNING`, `MU_CUSTOM_LEVEL`
+
+**For complete API documentation**, see `musubi.h` header file and [`.github/c_port.md`](.github/c_port.md).
+
+---
+
+## Lua API Reference
 
 ### Report Builder
 
@@ -240,6 +502,24 @@ mu.report(0)
 | `index_type`       | string  | `"char"`    | Position indexing (`"char"` or `"byte"`)                |
 | `char_set`         | string  | `"unicode"` | Glyph set (`"unicode"` or `"ascii"`)                    |
 | `color`            | boolean | `true`      | Enable ANSI color codes                                 |
+
+### Cache API
+
+**Multi-source diagnostics**: Use `mu.cache()` to manage multiple source files:
+
+```lua
+local cache = mu.cache()
+    :source("local x = 1 + '2'", "main.lua")
+    :file("lib.lua")  -- Loads from file system
+
+local report = mu.report(15, 0)  -- Position in source 0 (main.lua)
+    :label(15, 18):message("error here")
+cache:render(report)
+```
+
+**Length operator**: `#cache` returns the number of sources.
+
+**For detailed Lua API documentation with examples**, see [`musubi.def.lua`](musubi.def.lua).
 
 ### Color Generator
 

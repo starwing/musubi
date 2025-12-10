@@ -21,7 +21,6 @@ coverage:
     CFLAGS="--coverage -ggdb" LDFLAGS=--coverage \
         luarocks make misc/musubi-dev-1.rockspec
     lua tests/test.lua
-    lcov --capture --directory . --exclude musubi.c --output-file lcov.info
     lcov --capture --directory . --output-file lcov.info
     genhtml --output-directory coverages lcov.info
 

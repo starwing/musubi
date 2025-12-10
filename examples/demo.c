@@ -28,24 +28,27 @@ int main(void) {
     mu_gencolor(&cg, &label4);
     mu_gencolor(&cg, &label5);
 
-    mu_code(R, "3");
-    mu_title(R, MU_ERROR, NULL, "Incompatible types");
+    mu_code(R, mu_literal("3"));
+    mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Incompatible types"));
     mu_label(R, 32, 33, 0);
-    mu_message(R, "This is of type Nat", 0);
+    mu_message(R, mu_literal("This is of type Nat"), 0);
     mu_color(R, mu_fromcolorcode, &label1);
     mu_label(R, 42, 45, 0);
-    mu_message(R, "This is of type Str", 0);
+    mu_message(R, mu_literal("This is of type Str"), 0);
     mu_color(R, mu_fromcolorcode, &label2);
     mu_label(R, 11, 48, 0);
-    mu_message(R, "This values are outputs of this match expression", 0);
+    mu_message(
+        R, mu_literal("This values are outputs of this match expression"), 0);
     mu_color(R, mu_fromcolorcode, &label3);
     mu_label(R, 0, 48, 0);
-    mu_message(R, "The definition has a problem", 0);
+    mu_message(R, mu_literal("The definition has a problem"), 0);
     mu_color(R, mu_fromcolorcode, &label4);
     mu_label(R, 50, 76, 0);
-    mu_message(R, "Usage of definition here", 0);
+    mu_message(R, mu_literal("Usage of definition here"), 0);
     mu_color(R, mu_fromcolorcode, &label5);
-    mu_note(R, "Outputs of match expressions must coerce to the same type");
+    mu_note(R,
+            mu_literal(
+                "Outputs of match expressions must coerce to the same type"));
 
     code =
         "def five = match () in {\n"
@@ -56,10 +59,11 @@ int main(void) {
         "def six =\n"
         "    five\n"
         "    + 1\n";
-    mu_source(R, mu_memory_source(R, code, strlen(code), "sample.tao"));
     b.n = 0;
     mu_writer(R, writer, &b);
-    mu_render(R, 11, 0);
+    mu_render(
+        R, 11,
+        &mu_addmemory(NULL, mu_slice(code), mu_literal("sample.tao"))->cache);
     mu_delete(R);
     b.s[b.n] = '\0';
     printf("length: %zu\n", b.n);

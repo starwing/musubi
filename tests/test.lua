@@ -87,6 +87,29 @@ Error:
 ]=])
   end
 
+  function TestWrite.test_config()
+    lu.assertErrorMsgContains(
+      "invalid config field 'invalid'",
+      function()
+        --- @diagnostic disable-next-line
+        ariadne.config { invalid = "invalid" }
+      end
+    )
+  end
+
+  function TestWrite.test_error()
+    local report = ariadne.report(0)
+    lu.assertErrorMsgContains("at least one source must be added before render",
+      function() report:render() end)
+    lu.assertErrorMsgContains("invalid parameter",
+      function() report:order(1) end)
+    lu.assertErrorMsgContains("source out of range",
+      function() report:label(1, 1, 2):source(""):render() end)
+    report:delete()
+    lu.assertErrorMsgContains("invalid Report",
+      function() report:title("Error", "An error occurred") end)
+  end
+
   function TestWrite.test_one_message()
     local msg = remove_trailing(
       ariadne.report(0)
@@ -1223,7 +1246,6 @@ def six =
 ]=])
   end
 
-  -- Test 1: Multi-source groups (line 1529)
   function TestWrite.test_multi_source_groups()
     local msg = remove_trailing(
       ariadne.report(1, 1)
@@ -1250,7 +1272,36 @@ Error: cross-file error
 ]])
   end
 
-  -- Test 2: Compact mode with multiline arrows (line 1413)
+  function TestWrite.test_multi_source_with_cache()
+    local cache = ariadne.cache()
+        :source("apple", "file1.lua")
+        :source("orange", "file2.lua")
+    lu.assertEquals(#cache, 2)
+    local report = ariadne.report(1, 1)
+        :config(no_color_ascii())
+        :title("Error", "cross-file error")
+        :label(1, 5, 1)
+        :label(1, 6, 2)
+    local msg = remove_trailing(cache:render(report))
+    lu.assertEquals(msg, [[
+Error: cross-file error
+   ,-[ file1.lua:1:1 ]
+   |
+ 1 | apple
+   | ^^^^^
+   |
+   |-[ file2.lua:1:1 ]
+   |
+ 1 | orange
+   | ^^^^^^
+---'
+]])
+    local t = {}
+    cache:render(report, function(s) t[#t + 1] = s end)
+    local msg2 = remove_trailing(table.concat(t))
+    lu.assertEquals(msg2, msg)
+  end
+
   function TestWrite.test_compact_multiline_arrows()
     local src = "apple\norange\nbanana"
     local msg = ariadne.report(1)
@@ -1327,7 +1378,7 @@ ESC[38;5;246m---'ESC[0m\
     lu.assertEquals(msg, [[
 "ESC[33mWarning:ESC[0m test default colors\
 "]])
-  end -- Test 2: Compact mode with multiline arrows (line 1413)
+  end
 
   function TestWrite.test_cross_gap_disabled()
     local src = "apple\norange\nbanana\ngrape"
@@ -2405,6 +2456,43 @@ Error: test_file_name
 ---'
 ]])
   end
+
+  function TestFile.test_file_with_cache()
+    local file1 = write_temp_file("apple")
+    local file2 = write_temp_file("orange")
+
+    local fh1 = assert(io.open(file1, "r"))
+    local cache = ariadne.cache()
+        :source(fh1, file1)
+        :file(file2)
+    local msg = remove_trailing(
+      cache:render(
+        ariadne.report(1)
+        :config(no_color_ascii())
+        :title("Error", "test_file_with_cache")
+        :label(1, 5, 1):message("label1")
+        :label(1, 6, 2):message("label2")
+      )
+    )
+    fh1:close()
+    os.remove(file1)
+    os.remove(file2)
+    lu.assertEquals(msg, [[
+Error: test_file_with_cache
+   ,-[ ]] .. file1 .. [[:1:1 ]
+   |
+ 1 | apple
+   | ^^|^^
+   |   `---- label1
+   |
+   |-[ ]] .. file2 .. [[:1:1 ]
+   |
+ 1 | orange
+   | ^^^|^^
+   |    `---- label2
+---'
+]])
+  end
 end
 
 local TestUnicode = {}
@@ -2567,12 +2655,7 @@ Error: test_writer
       end)
   local msg2 = remove_trailing(table.concat(t))
   lu.assertEquals(msg, msg2)
-  lu.assertErrorMsgContains("musubi: source out of range",
-    function() report:reset():render() end)
-  local msg3 = remove_trailing(report:reset():source(code):render())
-  lu.assertEquals(msg3, [[
-Error: test_writer
-]])
+  lu.assertEquals("Error:\n", report:reset():render())
 end
 
 _G.TestColor = TestColor

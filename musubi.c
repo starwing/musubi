@@ -32,10 +32,10 @@ static int lua53_gettable(lua_State *L, int idx) {
 #define strcasecmp _stricmp
 #endif
 
-#define LMU_REPORT_TYPE    "musubi.Report"
-#define LMU_CONFIG_TYPE    "musubi.Config"
-#define LMU_COLORGEN_TYPE  "musubi.ColorGenerator"
-#define LMU_COLORCODE_TYPE "musubi.ColorCode"
+#define LMU_REPORT_TYPE   "musubi.Report"
+#define LMU_CONFIG_TYPE   "musubi.Config"
+#define LMU_COLORGEN_TYPE "musubi.ColorGenerator"
+#define LMU_CACHE_TYPE    "musubi.Cache"
 
 /* color generator */
 
@@ -57,8 +57,7 @@ static int Lmu_colorgen_next(lua_State *L) {
     mu_ColorCode *code =
         (mu_ColorCode *)lua_newuserdata(L, sizeof(mu_ColorCode));
     mu_gencolor(cg, code);
-    luaL_setmetatable(L, LMU_COLORCODE_TYPE);
-    return 1;
+    return lua_pushlstring(L, *code, (size_t)(*code)[0] + 1), 1;
 }
 
 static void lmu_opencolorgen(lua_State *L) {
@@ -67,8 +66,6 @@ static void lmu_opencolorgen(lua_State *L) {
         {"next", Lmu_colorgen_next},
         {NULL, NULL},
     };
-    luaL_newmetatable(L, LMU_COLORCODE_TYPE);
-    lua_pop(L, 1);
     if (luaL_newmetatable(L, LMU_COLORGEN_TYPE)) {
         luaL_setfuncs(L, libs, 0);
         lua_pushvalue(L, -1);
@@ -236,6 +233,7 @@ static void lmu_openconfig(lua_State *L) {
 
 typedef struct lmu_Report {
     mu_Report *R;
+    mu_Cache  *C;
     lua_State *L;
 
     size_t pos;
@@ -280,13 +278,13 @@ static int Lmu_report_libcall(lua_State *L) {
 static int Lmu_report_delete(lua_State *L) {
     lmu_Report *lr = (lmu_Report *)luaL_checkudata(L, 1, LMU_REPORT_TYPE);
     if (lr && lr->R) mu_delete(lr->R), lr->R = NULL;
+    if (lr && lr->C) mu_delcache(lr->C), lr->C = NULL;
     return 0;
 }
 
 static lmu_Report *lmu_checkreport(lua_State *L, int idx) {
     lmu_Report *lr = (lmu_Report *)luaL_checkudata(L, idx, LMU_REPORT_TYPE);
-    if (!lr || !lr->R)
-        return luaL_error(L, "invalid Report"), (lmu_Report *)NULL;
+    luaL_argcheck(L, lr->R != NULL, idx, "invalid Report");
     return lr;
 }
 
@@ -296,8 +294,10 @@ static void lmu_checkerror(lua_State *L, int err) {
     case MU_ERRPARAM: luaL_error(L, "musubi: invalid parameter"); break;
     case MU_ERRSRC:   luaL_error(L, "musubi: source out of range"); break;
     case MU_ERRFILE:  luaL_error(L, "musubi: file operation failed"); break;
-    default:          luaL_error(L, "musubi: unknown error(%d)", err); break;
-    }
+
+    /* LCOV_EXCL_START */
+    default: luaL_error(L, "musubi: unknown error(%d)", err); break;
+    } /* LCOV_EXCL_STOP */
 }
 
 static int Lmu_report_reset(lua_State *L) {
@@ -375,7 +375,7 @@ static int Lmu_report_message(lua_State *L) {
 }
 
 static void lmu_pushcolorkind(lua_State *L, mu_ColorKind kind) {
-    switch (kind) {
+    switch (kind) { /* LCOV_EXCL_START */
     case MU_COLOR_RESET:          lua_pushliteral(L, "reset"); break;
     case MU_COLOR_ERROR:          lua_pushliteral(L, "error"); break;
     case MU_COLOR_WARNING:        lua_pushliteral(L, "warning"); break;
@@ -386,7 +386,7 @@ static void lmu_pushcolorkind(lua_State *L, mu_ColorKind kind) {
     case MU_COLOR_NOTE:           lua_pushliteral(L, "note"); break;
     case MU_COLOR_LABEL:          lua_pushliteral(L, "label"); break;
     default:                      lua_pushliteral(L, "unknown"); break;
-    }
+    } /* LCOV_EXCL_STOP */
 }
 
 typedef struct lmu_ColorFunc {
@@ -415,10 +415,11 @@ static int Lmu_report_color(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
     int         ty = lua_type(L, 2);
     lua_getuservalue(L, 1);
-    if (ty == LUA_TUSERDATA) {
-        mu_ColorCode *code =
-            (mu_ColorCode *)luaL_checkudata(L, 2, LMU_COLORCODE_TYPE);
-        lmu_checkerror(L, mu_color(lr->R, mu_fromcolorcode, code));
+    if (ty == LUA_TSTRING) {
+        size_t      len;
+        const char *s = luaL_checklstring(L, 2, &len);
+        luaL_argcheck(L, (size_t)*s == len - 1, 2, "invalid color code string");
+        lmu_checkerror(L, mu_color(lr->R, mu_fromcolorcode, (void *)s));
     } else {
         lmu_ColorFunc *cf;
         luaL_checktype(L, 2, LUA_TFUNCTION);
@@ -480,15 +481,14 @@ static int Lmu_report_source(lua_State *L) {
                   "string/file* expected");
     if (ty == LUA_TUSERDATA) {
         FILE **fp = (FILE **)luaL_checkudata(L, 2, "FILE*");
-        src = mu_file_source(lr->R, *fp, mu_lslice(name, namelen));
+        src = mu_addfile(&lr->C, *fp, mu_lslice(name, namelen));
     } else {
         size_t      len;
         const char *s = luaL_checklstring(L, 2, &len);
-        src = mu_memory_source(lr->R, mu_lslice(s, len),
-                               mu_lslice(name, namelen));
+        src = mu_addmemory(&lr->C, mu_lslice(s, len), mu_lslice(name, namelen));
     }
-    src->line_no_offset = offset;
-    lmu_checkerror(L, mu_source(lr->R, src));
+    luaL_argcheck(L, src != NULL, 2, "source creation failed");
+    mu_sourceoffset(src, offset);
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     luaL_ref(L, -2); /* store the source string/file */
@@ -502,10 +502,9 @@ static int Lmu_report_file(lua_State *L) {
     size_t      namelen;
     const char *name = luaL_optlstring(L, 2, "<unknown>", &namelen);
     int         offset = (int)luaL_optinteger(L, 3, 0);
-    mu_Source  *src = mu_file_source(lr->R, NULL, mu_lslice(name, namelen));
+    mu_Source  *src = mu_addfile(&lr->C, NULL, mu_lslice(name, namelen));
     luaL_argcheck(L, src != NULL, 2, "file source creation failed");
-    src->line_no_offset = offset;
-    lmu_checkerror(L, mu_source(lr->R, src));
+    mu_sourceoffset(src, offset);
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 3);
     luaL_ref(L, -2); /* store the source name */
@@ -537,17 +536,19 @@ static int Lmu_report_render(lua_State *L) {
     lr->L = L;
     luaL_argcheck(L, ty == LUA_TFUNCTION || ty == LUA_TNONE, 2,
                   "optional function 'writer' expected");
+    luaL_argcheck(L, lr->C != NULL, 1,
+                  "at least one source must be added before render");
     lua_settop(L, 2);
     lua_getuservalue(L, 1);
     if (ty == LUA_TFUNCTION) {
         lmu_checkerror(L, mu_writer(lr->R, lmu_func_writer, lr));
-        lmu_checkerror(L, mu_render(lr->R, lr->pos, lr->src_id));
+        lmu_checkerror(L, mu_render(lr->R, lr->pos, lr->C));
         return lua_settop(L, 1), 1;
     } else {
         luaL_Buffer B;
         luaL_buffinit(L, &B);
         lmu_checkerror(L, mu_writer(lr->R, lmu_string_writer, &B));
-        lmu_checkerror(L, mu_render(lr->R, lr->pos, lr->src_id));
+        lmu_checkerror(L, mu_render(lr->R, lr->pos, lr->C));
         return luaL_pushresult(&B), 1;
     }
 }
@@ -588,6 +589,126 @@ static void lmu_openreport(lua_State *L) {
     }
 }
 
+/* cache */
+
+static int Lmu_cache_new(lua_State *L) {
+    mu_Cache **cache = (mu_Cache **)lua_newuserdata(L, sizeof(mu_Cache *));
+    *cache = NULL;
+    luaL_setmetatable(L, LMU_CACHE_TYPE);
+#if defined(LUA_RIDX_LAST)
+    lua_createtable(L, LUA_RIDX_LAST + 1, 0);
+#else
+    lua_createtable(L, 4, 0);
+#endif
+    lua_setuservalue(L, -2);
+    return 1;
+}
+
+static int Lmu_cache_libcall(lua_State *L) {
+    lua_remove(L, 1);
+    return Lmu_cache_new(L);
+}
+
+static int Lmu_cache_delete(lua_State *L) {
+    mu_Cache **cache = (mu_Cache **)luaL_checkudata(L, 1, LMU_CACHE_TYPE);
+    if (cache && *cache) mu_delcache(*cache), *cache = NULL;
+    return 0;
+}
+
+static int Lmu_cache_len(lua_State *L) {
+    mu_Cache **cache = (mu_Cache **)luaL_checkudata(L, 1, LMU_CACHE_TYPE);
+    return lua_pushinteger(L, (lua_Integer)mu_sourcecount(*cache)), 1;
+}
+
+static int Lmu_cache_source(lua_State *L) {
+    mu_Cache  **cache = (mu_Cache **)luaL_checkudata(L, 1, LMU_CACHE_TYPE);
+    int         ty = lua_type(L, 2);
+    size_t      namelen;
+    const char *name = luaL_optlstring(L, 3, "<unknown>", &namelen);
+    int         offset = (int)luaL_optinteger(L, 4, 0);
+    mu_Source  *src;
+    lua_settop(L, 3);
+    if (ty == LUA_TUSERDATA) {
+        FILE **fp = (FILE **)luaL_checkudata(L, 2, "FILE*");
+        src = mu_addfile(cache, *fp, mu_lslice(name, namelen));
+    } else {
+        size_t      len;
+        const char *s = luaL_checklstring(L, 2, &len);
+        src = mu_addmemory(cache, mu_lslice(s, len), mu_lslice(name, namelen));
+    }
+    luaL_argcheck(L, src != NULL, 2, "source creation failed");
+    mu_sourceoffset(src, offset);
+    lua_getuservalue(L, 1);
+    lua_pushvalue(L, 2);
+    luaL_ref(L, -2); /* store the source string or file */
+    lua_pushvalue(L, 3);
+    luaL_ref(L, -2); /* store the source name */
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_cache_file(lua_State *L) {
+    mu_Cache  **cache = (mu_Cache **)luaL_checkudata(L, 1, LMU_CACHE_TYPE);
+    size_t      namelen;
+    const char *name = luaL_checklstring(L, 2, &namelen);
+    int         offset = (int)luaL_optinteger(L, 3, 0);
+    mu_Source  *src;
+    lua_settop(L, 2);
+    src = mu_addfile(cache, NULL, mu_lslice(name, namelen));
+    luaL_argcheck(L, src != NULL, 2, "file source creation failed");
+    mu_sourceoffset(src, offset);
+    lua_getuservalue(L, 1);
+    lua_pushvalue(L, 2);
+    luaL_ref(L, -2); /* store the source name */
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_cache_render(lua_State *L) {
+    mu_Cache  **cache = (mu_Cache **)luaL_checkudata(L, 1, LMU_CACHE_TYPE);
+    lmu_Report *lr = lmu_checkreport(L, 2);
+    int         ty = lua_type(L, 3);
+    lr->L = L;
+    luaL_argcheck(L, ty == LUA_TFUNCTION || ty == LUA_TNONE, 3,
+                  "optional function 'writer' expected");
+    lua_settop(L, 3);
+    lua_pushvalue(L, 1), lua_remove(L, 1);
+    lua_getuservalue(L, 1);
+    if (ty == LUA_TNONE) {
+        luaL_Buffer B;
+        luaL_buffinit(L, &B);
+        lmu_checkerror(L, mu_writer(lr->R, lmu_string_writer, &B));
+        lmu_checkerror(L, mu_render(lr->R, lr->pos, *cache));
+        return luaL_pushresult(&B), 1;
+    }
+    lmu_checkerror(L, mu_writer(lr->R, lmu_func_writer, lr));
+    lmu_checkerror(L, mu_render(lr->R, lr->pos, *cache));
+    return 1;
+}
+
+static void lmu_opencache(lua_State *L) {
+    luaL_Reg libs[] = {
+        {"__index", NULL},
+        {"__gc", Lmu_cache_delete},
+        {"__len", Lmu_cache_len},
+#define ENTRY(name) {#name, Lmu_cache_##name}
+        ENTRY(new),
+        ENTRY(delete),
+        ENTRY(source),
+        ENTRY(file),
+        ENTRY(render),
+#undef ENTRY
+        {NULL, NULL},
+    };
+    if (luaL_newmetatable(L, LMU_CACHE_TYPE)) {
+        luaL_setfuncs(L, libs, 0);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -2, "__index");
+        lua_createtable(L, 0, 1);
+        lua_pushcfunction(L, Lmu_cache_libcall);
+        lua_setfield(L, -2, "__call");
+        lua_setmetatable(L, -2);
+    }
+}
+
 LUAMOD_API int luaopen_musubi(lua_State *L) {
     lua_createtable(L, 0, 5);
     lmu_opencolorgen(L);
@@ -596,6 +717,8 @@ LUAMOD_API int luaopen_musubi(lua_State *L) {
     lua_setfield(L, -2, "config");
     lmu_openreport(L);
     lua_setfield(L, -2, "report");
+    lmu_opencache(L);
+    lua_setfield(L, -2, "cache");
     lua_pushliteral(L, MU_VERSION);
     lua_setfield(L, -2, "version");
     return 1;
