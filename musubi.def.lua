@@ -146,6 +146,7 @@ local Config = {}
 --- @field config fun(self: Report, config: Config): Report  # Set rendering config (optional, uses default if not called)
 --- @field code fun(self: Report, code: string): Report  # Set diagnostic code (e.g., "E0001")
 --- @field title fun(self: Report, kind: LevelKind, message: string): Report  # Set kind and main message
+--- @field location fun(self: Report, pos: integer, src_id?: integer): Report  # Set primary location of diagnostic
 --- @field label fun(self: Report, start: integer, end?: integer, src_id?: integer): Report  # Add label span (subsequent calls modify this label)
 --- @field message fun(self: Report, message: string, width?: integer): Report  # Set message for current label
 --- @field color fun(self: Report, color: Color|string|function): Report  # Set color for current label (Color object, code string, or function)

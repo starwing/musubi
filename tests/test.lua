@@ -2655,7 +2655,27 @@ Error: test_writer
       end)
   local msg2 = remove_trailing(table.concat(t))
   lu.assertEquals(msg, msg2)
-  lu.assertEquals("Error:\n", report:reset():render())
+  lu.assertErrorMsgContains("at least one source must be added before render",
+    function() report:reset():render() end)
+  lu.assertEquals("Error:\n", report:reset():source "":render())
+  local msg3 = remove_trailing(
+    report:reset():location(6, 2)
+    :source("apple", "file1.lua"):label(1, 5, 1)
+    :source("orange", "file2.lua"):label(1, 6, 2):render()
+  )
+  lu.assertEquals(msg3, [[
+Error:
+   ,-[ file2.lua:1:6 ]
+   |
+ 1 | orange
+   | ^^^^^^
+   |
+   |-[ file1.lua:1:1 ]
+   |
+ 1 | apple
+   | ^^^^^
+---'
+]])
 end
 
 _G.TestColor = TestColor

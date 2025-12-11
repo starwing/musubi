@@ -236,13 +236,11 @@ typedef struct lmu_Report {
     mu_Cache  *C;
     lua_State *L;
 
-    size_t pos;
-    mu_Id  src_id;
-    int    config_ref;
-    int    custom_level_ref;
-    int    msg_ref;
-    int    code_ref;
-    int    color_ref;
+    int config_ref;
+    int custom_level_ref;
+    int msg_ref;
+    int code_ref;
+    int color_ref;
 
     mu_ColorCode chunk_buf;
 } lmu_Report;
@@ -256,6 +254,7 @@ static void lmu_initrefs(lmu_Report *lr) {
 }
 
 static int Lmu_report_new(lua_State *L) {
+    int         ty = lua_type(L, 1);
     size_t      pos = (size_t)luaL_optinteger(L, 1, 1);
     mu_Id       src_id = (mu_Id)luaL_optinteger(L, 2, 1);
     lmu_Report *lr = (lmu_Report *)lua_newuserdata(L, sizeof(lmu_Report));
@@ -263,8 +262,7 @@ static int Lmu_report_new(lua_State *L) {
     lua_createtable(L, 8, 0);
     lua_setuservalue(L, -2);
     lr->R = mu_new(NULL, NULL);
-    lr->pos = pos - 1;
-    lr->src_id = src_id - 1;
+    if (ty != LUA_TNONE) mu_location(lr->R, pos - 1, src_id - 1);
     lmu_initrefs(lr);
     luaL_setmetatable(L, LMU_REPORT_TYPE);
     return 1;
@@ -306,6 +304,7 @@ static int Lmu_report_reset(lua_State *L) {
     lua_setuservalue(L, 1);
     lmu_initrefs(lr);
     mu_reset(lr->R);
+    mu_delcache(lr->C), lr->C = NULL;
     return lua_settop(L, 1), 1;
 }
 
@@ -350,6 +349,14 @@ static int Lmu_report_code(lua_State *L) {
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     lmu_register(L, &lr->code_ref);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_report_location(lua_State *L) {
+    mu_Report *R = lmu_checkreport(L, 1)->R;
+    size_t     pos = (size_t)luaL_checkinteger(L, 2);
+    mu_Id      src_id = (mu_Id)luaL_optinteger(L, 3, 1);
+    lmu_checkerror(L, mu_location(R, pos - 1, src_id - 1));
     return lua_settop(L, 1), 1;
 }
 
@@ -542,13 +549,13 @@ static int Lmu_report_render(lua_State *L) {
     lua_getuservalue(L, 1);
     if (ty == LUA_TFUNCTION) {
         lmu_checkerror(L, mu_writer(lr->R, lmu_func_writer, lr));
-        lmu_checkerror(L, mu_render(lr->R, lr->pos, lr->C));
+        lmu_checkerror(L, mu_render(lr->R, lr->C));
         return lua_settop(L, 1), 1;
     } else {
         luaL_Buffer B;
         luaL_buffinit(L, &B);
         lmu_checkerror(L, mu_writer(lr->R, lmu_string_writer, &B));
-        lmu_checkerror(L, mu_render(lr->R, lr->pos, lr->C));
+        lmu_checkerror(L, mu_render(lr->R, lr->C));
         return luaL_pushresult(&B), 1;
     }
 }
@@ -565,6 +572,7 @@ static void lmu_openreport(lua_State *L) {
         ENTRY(config),
         ENTRY(title),
         ENTRY(code),
+        ENTRY(location),
         ENTRY(label),
         ENTRY(message),
         ENTRY(color),
@@ -676,11 +684,11 @@ static int Lmu_cache_render(lua_State *L) {
         luaL_Buffer B;
         luaL_buffinit(L, &B);
         lmu_checkerror(L, mu_writer(lr->R, lmu_string_writer, &B));
-        lmu_checkerror(L, mu_render(lr->R, lr->pos, *cache));
+        lmu_checkerror(L, mu_render(lr->R, *cache));
         return luaL_pushresult(&B), 1;
     }
     lmu_checkerror(L, mu_writer(lr->R, lmu_func_writer, lr));
-    lmu_checkerror(L, mu_render(lr->R, lr->pos, *cache));
+    lmu_checkerror(L, mu_render(lr->R, *cache));
     return 1;
 }
 
