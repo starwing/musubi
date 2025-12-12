@@ -30,6 +30,7 @@ int main(void) {
 
     mu_code(R, mu_literal("3"));
     mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Incompatible types"));
+    mu_location(R, 11, 0);
     mu_label(R, 32, 33, 0);
     mu_message(R, mu_literal("This is of type Nat"), 0);
     mu_color(R, mu_fromcolorcode, &label1);
@@ -62,7 +63,7 @@ int main(void) {
     b.n = 0;
     mu_writer(R, writer, &b);
     mu_render(
-        R, 11,
+        R,
         &mu_addmemory(NULL, mu_slice(code), mu_literal("sample.tao"))->cache);
     mu_delete(R);
     b.s[b.n] = '\0';

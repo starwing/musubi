@@ -134,7 +134,7 @@ gcc -O3 -Wall -shared -undefined dynamic_lookup -o musubi.so musubi.c
 
 ## Quick Start
 
-### Basic Usage (C Bindings)
+### Basic Usage (Lua Bindings)
 
 ```lua
 local mu = require "musubi"
@@ -142,11 +142,12 @@ local mu = require "musubi"
 -- Create a color generator for automatic color cycling
 local cg = mu.colorgen()
 
--- Build a report
-local report = mu.report(14)  -- Primary error position
+-- Build a report with inline source
+local report = mu.report()
     :title("Error", "Something went wrong")
     :code("E001")
-    :label(14, 14):message("This is the problem"):color(cg:next())
+    :location(14)  -- Set header location
+    :label(14, 20):message("This is the problem"):color(cg:next())
     :note("Try fixing this by...")
     :source("local x = 10 + 'hello'", "example.js")
     :render()
@@ -179,9 +180,26 @@ mu.report(0)
 ```lua
 local mu = require "musubi"
 
-mu.report(0)
-    :label(10, 20, 1):message("Defined here")  -- src_id=1, first source
-    :label(50, 60, 2):message("Used here")     -- src_id=2, second source
+-- Method 1: Using Cache (recommended for multiple sources)
+local cache = mu.cache()
+    :source("fn foo() { ... }", "foo.rs")   -- Source ID 0
+    :source("fn bar() { foo(); }", "bar.rs") -- Source ID 1
+
+local report = mu.report()
+    :title("Error", "Undefined reference")
+    :location(50, 1)  -- Header shows bar.rs:50
+    :label(10, 20, 0):message("Defined here")
+    :label(50, 60, 1):message("Used here")
+
+cache:render(report)
+print(report)
+
+-- Method 2: Inline sources (also works, auto-creates cache)
+mu.report()
+    :title("Error", "Cross-file error")
+    :location(10, 0)
+    :label(10, 20, 0):message("Defined here")
+    :label(50, 60, 1):message("Used here")
     :source("fn foo() { ... }", "foo.rs")
     :source("fn bar() { foo(); }", "bar.rs")
     :render()
@@ -265,6 +283,7 @@ int main(void) {
     R = mu_new(NULL, NULL); /* NULL, NULL = use default malloc */
     mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Type mismatch"));
     mu_code(R, mu_literal("E001"));
+    mu_location(R, 14, 0); /* Position 14 in source 0 for header display */
 
     /* Add a label with message and color */
     mu_label(R, 15, 22, 0);
@@ -273,7 +292,7 @@ int main(void) {
 
     /* Render to stdout */
     mu_writer(R, stdout_writer, NULL);
-    mu_render(R, 14, C);
+    mu_render(R, C);
 
     /* Cleanup */
     mu_delete(R);
@@ -289,9 +308,9 @@ int main(void) {
 ```c
 mu_Cache  *C = NULL;                             /* Start with NULL Cache */
 mu_Source *S = mu_addmemory(&C, content, name);  /* Auto-upgrades C if needed */
-mu_render(R, pos, (mu_Cache*)S);                 /* Source can be used as Cache */
+mu_render(R, (mu_Cache*)S);                      /* Source can be used as Cache */
 
-mu_render(R, pos, C); /* Or use C directly, as it have been updated with same source */
+mu_render(R, C); /* Or use C directly, as it have been updated with same source */
 ```
 
 **Auto-Upgrade Mechanism**:
@@ -302,7 +321,7 @@ mu_render(R, pos, C); /* Or use C directly, as it have been updated with same so
 **Lifecycle Management**:
 1. Create Cache: `C = mu_newcache(allocf, ud)` with allocator or start with `C = NULL`
 2. Add sources: `mu_addmemory(&C, ...)` or `mu_addfile(&C, ...)`
-3. Render: `mu_render(R, pos, C)` uses Cache to fetch source lines, pos is always pointed to the first source (id 0) in cache.
+3. Render: `mu_render(R, C)` uses Cache to fetch source lines
 4. Cleanup: `mu_delcache(C)` frees Cache and all Sources
 
 **Ownership Rules**:
@@ -322,12 +341,13 @@ mu_Source *S2 = mu_addmemory(&C, mu_lslice("fn bar() { foo(); }", 19),
 /* Cross-file diagnostic */
 mu_Report *R = mu_new(NULL, NULL);
 mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Undefined reference"));
+mu_location(R, 11, 1);   /* Header shows bar.c:11 (source id 1) */
 mu_label(R, 11, 14, 1);  /* bar.c: source id 1 */
 mu_message(R, mu_literal("called here"), 0);
 mu_label(R, 3, 6, 0);    /* foo.c: source id 0 */
 mu_message(R, mu_literal("defined here"), 0);
 mu_writer(R, stdout_writer, NULL);  /* See Basic Example for stdout_writer */
-mu_render(R, 11, C); /* Position in foo.c (source id 0) */
+mu_render(R, C); /* Render with cache */
 mu_delete(R);
 mu_delcache(C);  /* Frees both S1 and S2 */
 ```
@@ -341,7 +361,8 @@ mu_Cache *C = NULL;
 FILE *fp = fopen("large_file.c", "r");
 mu_Source *S = mu_addfile(&C, fp, mu_lslice("large_file.c", 12));
 /* musubi reads lines only when needed for rendering */
-mu_render(R, pos, C);
+mu_location(R, pos, 0);  /* Optional: set header location */
+mu_render(R, C);
 fclose(fp);  /* Close after rendering */
 mu_delcache(C);
 ```
@@ -369,7 +390,7 @@ if (err != MU_OK) {
     return 1;
 }
 
-err = mu_render(R, pos, C);
+err = mu_render(R, C);
 if (err != MU_OK) {
     /* Handle error */
 }
@@ -431,6 +452,7 @@ If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp
 - `void mu_reset(mu_Report *R)` - Reset Report for reuse
 - `int mu_title(mu_Report *R, mu_Level level, mu_Slice custom, mu_Slice msg)` - Set kind and title
 - `int mu_code(mu_Report *R, mu_Slice code)` - Set error code
+- `int mu_location(mu_Report *R, size_t pos, mu_Id src_id)` - Set primary location for header display
 - `int mu_label(mu_Report *R, size_t start, size_t end, mu_Id src_id)` - Add label span
 - `int mu_message(mu_Report *R, mu_Slice msg, int width)` - Set message for last label
 - `int mu_color(mu_Report *R, mu_Color *color, void *ud)` - Set color function for last label
@@ -441,7 +463,7 @@ If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp
 
 **Rendering**:
 - `int mu_writer(mu_Report *R, mu_Writer *fn, void *ud)` - Set output writer function
-- `int mu_render(mu_Report *R, size_t pos, const mu_Cache *C)` - Render diagnostic
+- `int mu_render(mu_Report *R, const mu_Cache *C)` - Render diagnostic
 
 **Configuration**:
 - `void mu_initconfig(mu_Config *cfg)` - Initialize config with defaults
@@ -459,7 +481,7 @@ If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp
 - `mu_slice(str)` - Macro: create slice from C string (uses `strlen`)
 
 **Constants**:
-- Error codes: `MU_OK` (0), `MU_ERRPARAM` (-1), `MU_ERRSRC` (-2), `MU_ERRFILE` (-3)
+- Error codes: `MU_OK` (0), `MU_ERRPARAM` (-1), `MU_ERRSRC` (-2), `MU_ERRLINE` (-3), `MU_ERRFILE` (-4)
 - Levels: `MU_ERROR`, `MU_WARNING`, `MU_CUSTOM_LEVEL`
 
 **For complete API documentation**, see `musubi.h` header file and [`.github/c_port.md`](.github/c_port.md).
@@ -472,9 +494,10 @@ If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp
 
 | Method                             | Description                                                        |
 | ---------------------------------- | ------------------------------------------------------------------ |
-| `mu.report(pos, src_id?)`          | Create a new report at position `pos`                              |
+| `mu.report(pos?, src_id?)`         | Create a new report at optional position `pos`                     |
 | `:title(level, message)`           | Set report level (`"Error"`, `"Warning"`) and title                |
 | `:code(code)`                      | Set optional error code (e.g., `"E0308"`)                          |
+| `:location(pos, src_id?)`          | Set primary location for header display                            |
 | `:label(start, end?, src_id?)`     | Add a label span (half-open interval `[start, end)`)               |
 | `:message(text, width?)`           | Attach message to the last added label                             |
 | `:color(color)`                    | Set color for the last added label                                 |
@@ -505,19 +528,88 @@ If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp
 
 ### Cache API
 
-**Multi-source diagnostics**: Use `mu.cache()` to manage multiple source files:
+`mu.cache()` manages multiple source files for cross-file diagnostics. Each source is assigned an ID based on registration order (1, 2, ...).
+
+#### Creating a Cache
+
+```lua
+local cache = mu.cache()  -- Create empty cache
+```
+
+#### Adding Sources
+
+| Method                             | Description                                             |
+| ---------------------------------- | ------------------------------------------------------- |
+| `:source(content, name?, offset?)` | Add in-memory source (string) with optional line offset |
+| `:file(path, offset?)`             | Load source from file system with optional line offset  |
 
 ```lua
 local cache = mu.cache()
-    :source("local x = 1 + '2'", "main.lua")
-    :file("lib.lua")  -- Loads from file system
-
-local report = mu.report(15, 0)  -- Position in source 0 (main.lua)
-    :label(15, 18):message("error here")
-cache:render(report)
+    :source("local x = 1 + '2'", "main.lua")     -- Source ID 1
+    :source("fn bar() { foo(); }", "bar.rs")     -- Source ID 2
+    :file("lib.lua")                             -- Source ID 3 (loads from filesystem)
 ```
 
-**Length operator**: `#cache` returns the number of sources.
+#### Rendering with Cache
+
+**Method 1: Cache renders report** (recommended for multi-source diagnostics):
+
+```lua
+local cache = mu.cache()
+    :source("import foo", "main.py")
+    :source("def foo(): pass", "lib.py")
+
+local report = mu.report()
+    :title("Error", "Import error")
+    :location(7, 0)                    -- Header shows main.py:7
+    :label(7, 10, 0):message("imported here")
+    :label(4, 7, 1):message("defined here")
+
+cache:render(report)  -- Cache provides sources to report
+print(report)         -- Get rendered output
+```
+
+**Method 2: Report with inline sources** (convenience for single source):
+
+```lua
+local report = mu.report()
+    :title("Error", "Syntax error")
+    :label(0, 3):message("unexpected token")
+    :source("let x = 42;", "main.rs")  -- Inline source registration
+    :render()                          -- Returns rendered string
+
+print(report)
+```
+
+#### Cache Properties
+
+- **Length operator**: `#cache` returns the number of sources
+- **Source IDs**: Assigned sequentially starting from 0
+- **Lifetime**: Sources remain valid until cache is garbage collected
+
+#### Multi-Source Example
+
+```lua
+local mu = require "musubi"
+local cg = mu.colorgen()
+
+-- Create cache with multiple files
+local cache = mu.cache()
+    :source("local function foo(x)\n  return x + 1\nend", "foo.lua")
+    :source("local foo = require 'foo'\nprint(foo('hello'))", "main.lua")
+
+-- Create report spanning both files
+local report = mu.report()
+    :title("Error", "Type mismatch")
+    :location(25, 1)  -- Header shows main.lua:25
+    :label(6, 9, 1):message("called with string"):color(cg:next())
+    :label(19, 20, 0):message("expects number"):color(cg:next())
+    :note("Function parameter type must match argument type")
+
+-- Render using cache
+cache:render(report)
+print(report)
+```
 
 **For detailed Lua API documentation with examples**, see [`musubi.def.lua`](musubi.def.lua).
 

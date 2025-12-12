@@ -14,7 +14,6 @@ static int stdout_writer(void *ud, const char *data, size_t len) {
 int main(void) {
     mu_Report   *R;
     mu_Cache    *C = NULL;
-    mu_Source   *S;
     mu_ColorGen  cg;
     mu_ColorCode color1;
 
@@ -30,6 +29,7 @@ int main(void) {
     R = mu_new(NULL, NULL); /* NULL, NULL = use default malloc */
     mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Type mismatch"));
     mu_code(R, mu_literal("E001"));
+    mu_location(R, 14, 0); /* Position 14 in source 0 for header display */
 
     /* Add a label with message and color */
     mu_label(R, 15, 22, 0);
@@ -38,7 +38,7 @@ int main(void) {
 
     /* Render to stdout */
     mu_writer(R, stdout_writer, NULL);
-    mu_render(R, 14, C);
+    mu_render(R, C);
 
     /* Cleanup */
     mu_delete(R);

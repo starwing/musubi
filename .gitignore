@@ -1,4 +1,6 @@
 /coverages
+/examples/demo
+/examples/example
 /misc/UCD
 ariadne
 test.*

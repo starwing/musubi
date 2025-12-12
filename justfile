@@ -13,6 +13,10 @@ t *args:
         -o musubi.so musubi.c
     lua tests/test.lua {{args}}
 
+demo:
+    gcc -o examples/demo -I. -Wall -ggdb examples/demo.c && ./examples/demo
+    gcc -o examples/example -I. -Wall -ggdb examples/example.c && ./examples/example
+
 test: lua
     lua tests/test.lua
 
