@@ -13,13 +13,12 @@ fn main() {
 }"#;
 
         let mut report = Report::new()
-            .with_source((code, "main.rs"))
             .with_title(Level::Error, "Unterminated string literal")
             .with_code("E0001")
             .with_label(24..30)
             .with_message("missing closing quote");
 
-        println!("{}", report.render_to_string(20, 0).unwrap());
+        println!("{}", report.render_to_string((code, "main.rs")).unwrap());
     }
 
     // Example 2: Multiple labels
@@ -28,7 +27,6 @@ fn main() {
         let code = "let x: i32 = \"hello\";";
 
         let mut report = Report::new()
-            .with_source((code, "types.rs"))
             .with_title(Level::Error, "Type mismatch")
             .with_code("E0308")
             .with_label(7..10)
@@ -36,7 +34,7 @@ fn main() {
             .with_label(13..20)
             .with_message("found `&str`");
 
-        println!("{}", report.render_to_string(7, 0).unwrap());
+        println!("{}", report.render_to_string((code, "types.rs")).unwrap());
     }
 
     // Example 3: Custom configuration with builder pattern
@@ -53,14 +51,13 @@ fn main() {
 
         let mut report = Report::new()
             .with_config(config)
-            .with_source((code, "math.rs"))
             .with_title(Level::Error, "Cannot add `i32` and `f64`")
             .with_code("E0277")
             .with_label(17..24)
             .with_message("no implementation for `i32 + f64`")
             .with_help("Consider using `x as f64` or `1.0 as i32`");
 
-        println!("{}", report.render_to_string(17, 0).unwrap());
+        println!("{}", report.render_to_string((code, "math.rs")).unwrap());
     }
 
     // Example 4: Multiline spans
@@ -74,13 +71,12 @@ fn main() {
 "#;
 
         let mut report = Report::new()
-            .with_source((code, "braces.rs"))
             .with_title(Level::Error, "Mismatched braces")
             .with_code("E0065")
             .with_label(19..73)
             .with_message("this block is not properly closed")
             .with_note("Each opening brace `{` must have a matching closing brace `}`");
 
-        println!("{}", report.render_to_string(19, 0).unwrap());
+        println!("{}", report.render_to_string((code, "braces.rs")).unwrap());
     }
 }

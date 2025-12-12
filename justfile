@@ -28,3 +28,16 @@ svg:
     lua examples/demo.lua | \
         ansisvg --grid --colorscheme "iTerm2 Solarized Dark" \
         --fontfile ~/Library/Fonts/MapleMono-NF-Regular.ttf > misc/demo.svg
+
+bindgen:
+    bindgen ./musubi.h \
+        --allowlist-type "mu_.*" \
+        --allowlist-function "mu_.*" \
+        --allowlist-var "MU_.*" \
+        --blocklist-type "mu_Id" \
+        --blocklist-var "MU_OK" \
+        --default-enum-style rust \
+        --no-layout-tests \
+        --merge-extern-blocks \
+        -o src/ffi_generated.rs \
+        -- -D MU_NO_STDIO

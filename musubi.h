@@ -58,7 +58,8 @@
 #define MU_OK       (0)  /* No error */
 #define MU_ERRPARAM (-1) /* invalid parameter */
 #define MU_ERRSRC   (-2) /* source ID out of range */
-#define MU_ERRFILE  (-3) /* errors in file source */
+#define MU_ERRLINE  (-3) /* fetch line error */
+#define MU_ERRFILE  (-4) /* errors in file source */
 
 MU_NS_BEGIN
 
@@ -227,6 +228,8 @@ MU_API mu_Source *mu_addfile(mu_Cache **pC, FILE *fp, mu_Slice name);
 typedef struct mu_Line mu_Line;
 typedef const mu_Line *mu_CL;
 
+MU_API mu_Source *mu_source(mu_Report *R);
+
 MU_API void     mu_updatelines(mu_Source *src, mu_Slice data);
 MU_API mu_CL    mu_getline(mu_Source *src, unsigned line_no);
 MU_API unsigned mu_lineforchars(mu_Source *src, size_t char_pos, mu_CL *out);
@@ -386,6 +389,7 @@ struct mu_Report {
     const mu_Group   *cur_group;   /* current group being rendered */
     const mu_Cluster *cur_cluster; /* current cluster being rendered */
     mu_CL             cur_line;    /* current line being rendered */
+    mu_Source        *cur_src;     /* current source in callback */
 
     /* report details */
     size_t    pos;          /* position in source for location */
@@ -662,7 +666,7 @@ static mu_Width muM_marginwidth(mu_Report *R) {
 static size_t muM_bytes2chars(mu_Source *src, size_t pos, mu_CL *line) {
     unsigned line_no = src->line_for_bytes(src, pos, line);
     mu_Slice s = src->get_line(src, line_no);
-    size_t   r = (*line)->byte_offset;
+    size_t   r = (assert(*line != NULL), (*line)->byte_offset);
     while (s.p < s.e && pos > 0) {
         const char *p = s.p;
         r += 1, muD_advance(&s), pos -= mu_min(pos, (size_t)(s.p - p));
@@ -689,7 +693,7 @@ static int muM_line_in_labels(mu_CL line, mu_CLI li) {
 static void muM_calc_linenowidth(mu_Report *R) {
     unsigned i, size, max, line_no;
     mu_Width w, max_width = 0;
-    mu_CL    line;
+    mu_CL    line = NULL;
     for (i = 0, size = muA_size(R->groups); i < size; ++i) {
         mu_Group *g = &R->groups[i];
         line_no = g->src->line_for_chars(g->src, g->last_char, &line)
@@ -1031,12 +1035,13 @@ static mu_Slice muG_calc_location(mu_LocCtx *ctx, mu_Source *loc_src) {
 
     unsigned line_no = 0, col = 0;
     size_t   pos = ctx->R->pos;
-    mu_CL    line;
+    mu_CL    line = NULL;
     if (loc_src == g->src && ctx->R->config->index_type == MU_INDEX_BYTE)
         pos = muM_bytes2chars(loc_src, pos, &line);
     else {
         if (loc_src != g->src) pos = g->first_char;
         line_no = g->src->line_for_chars(g->src, pos, &line);
+        assert(line != NULL);
     }
     if (pos < line->offset || pos > muM_lineend(line)) return mu_literal("?:?");
     col = (unsigned)(pos - line->offset + 1);
@@ -1072,12 +1077,14 @@ static mu_LabelInfo muG_init_info(mu_Report *R, const mu_Label *label) {
         else info.end_char = muM_bytes2chars(src, label->end_pos, &last_line);
     } else {
         src->line_for_chars(src, label->start_pos, &first_line);
+        assert(first_line != NULL);
         info.start_char = label->start_pos;
         if (label->start_pos >= label->end_pos)
             last_line = first_line, info.end_char = label->start_pos;
         else {
             info.end_char = label->end_pos;
             src->line_for_chars(src, label->end_pos - 1, &last_line);
+            assert(last_line != NULL);
         }
     }
     info.label = label;
@@ -1100,7 +1107,9 @@ static int muG_init(mu_Report *R, const mu_Cache *C, const mu_Label *label) {
         g->last_char = mu_max(g->last_char, muM_lastchar(&li));
     } else {
         unsigned size = muA_size(R->groups);
-        if (src->gidx != MU_SRC_INITED && src->init) muX(src->init(src));
+        if (src->gidx != MU_SRC_INITED && src->init)
+            muX((R->cur_src = src)->init(src));
+        R->cur_src = NULL;
         src->gidx = (assert(size < INT_MAX), (int)size);
         g = muA_push(R, R->groups);
         memset(g, 0, sizeof(mu_Group));
@@ -1518,7 +1527,7 @@ static int muR_cluster(mu_Report *R, unsigned line_no, mu_Slice data) {
 
 static int muR_lines(mu_Report *R) {
     const mu_Group *g = R->cur_group;
-    mu_CL           line;
+    mu_CL           line = NULL;
     unsigned line_start = g->src->line_for_chars(g->src, g->first_char, &line);
     unsigned line_end = g->src->line_for_chars(g->src, g->last_char, &line);
     unsigned line_no;
@@ -1631,6 +1640,9 @@ static void muM_free(mu_Allocator *alloc, void *p, size_t size)
 
 MU_API unsigned mu_sourcecount(const mu_Cache *C)
 { return C ? muS_issrc(C) ? 1 : muA_size(C->sources) : 0; }
+
+MU_API mu_Source *mu_source(mu_Report *R)
+{ return R && R->cur_src ? R->cur_src : NULL; }
 /* clang-format on */
 
 static void *muM_default_allocf(void *ud, void *p, size_t nsize, size_t osize) {
@@ -1725,7 +1737,7 @@ MU_API void mu_updatelines(mu_Source *src, mu_Slice data) {
 
 MU_API mu_CL mu_getline(mu_Source *src, unsigned line_no) {
     size_t size = muA_size(src->lines);
-    return &src->lines[line_no < size ? line_no : size - 1];
+    return size ? &src->lines[line_no < size ? line_no : size - 1] : NULL;
 }
 
 MU_API unsigned mu_lineforchars(mu_Source *src, size_t char_pos, mu_CL *out) {

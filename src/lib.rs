@@ -8,25 +8,95 @@
 //! ```rust
 //! use musubi::{Report, Level};
 //!
-//! let mut report = Report::new()
-//!     .with_source(("let x = 42;", "example.rs"))
+//! let report = Report::new()
 //!     .with_title(Level::Error, "Invalid syntax")
 //!     .with_code("E001")
-//!     .with_label(0..3)
-//!     .with_message("expected identifier");
+//!     .with_label(8..10)
+//!     .with_message("Answer to the Ultimate Question here")
+//!     .render_to_string(("let x = 42;", "example.rs"))?;
 //!
-//! println!("{}", report.render_to_string(0, 0).unwrap());
+//! println!("{}", report);
+//! # Ok::<(), std::io::Error>(())
 //! ```
 //!
 //! # Core Concepts
 //!
-//! ## Sources
+//! ## Sources and Cache
 //!
-//! A [`Source`] provides the text content for diagnostics. Sources can be:
-//! - In-memory strings: `report.with_source(("code", "file.rs"))`
-//! - Custom implementations of the [`Source`] trait for lazy loading or special formatting
+//! A [`Source`] provides the text content for diagnostics. Sources are managed through
+//! a [`Cache`], which can store multiple sources and be reused across multiple reports:
+//!
+//! ```rust
+//! # use musubi::{Cache, Report, Level};
+//! let cache = Cache::new()
+//!     .with_source(("let x = 42;", "main.rs"));
+//!
+//! let mut report = Report::new()
+//!     .with_title(Level::Error, "Syntax error")
+//!     .with_label(0..3);
+//! report.render_to_stdout(&cache)?;
+//! # Ok::<(), std::io::Error>(())
+//! ```
 //!
 //! Sources are registered in order and assigned IDs: first source is ID 0, second is ID 1, etc.
+//!
+//! For simple single-source diagnostics, you can pass content directly to rendering methods
+//! without creating an explicit [`Cache`]:
+//!
+//! ```rust
+//! # use musubi::{Report, Level};
+//! Report::new()
+//!     .with_title(Level::Error, "Simple error")
+//!     .with_label(0..3)
+//!     .render_to_string(("let x", "main.rs"))?;
+//! # Ok::<(), std::io::Error>(())
+//! ```
+//!
+//! ### Lifetime Management
+//!
+//! By default, source content must outlive the [`Report`] (borrowed sources like `&str`).
+//! The [`Cache`] can also take ownership and manage the lifetime:
+//!
+//! - **Borrowed**: `cache.with_source("code")` - content must remain valid until rendering
+//! - **Owned**: `cache.with_source("code".to_string())` - `String` has built-in ownership
+//! - **Custom buffers**: Use [`OwnedSource`] for `Vec<u8>`, `Box<[u8]>`, etc.
+//!
+//! ```rust
+//! # use musubi::{Cache, OwnedSource};
+//! let cache = Cache::new()
+//!     .with_source("static str")                            // Borrowed
+//!     .with_source(("owned".to_string(), "file.rs"))        // Owned by cache
+//!     .with_source((OwnedSource::new(vec![b'x']), "buf")); // Custom buffer
+//! // Cache manages owned content lifetime until dropped
+//! ```
+//!
+//! ### Multiple Sources
+//!
+//! Display diagnostics that span multiple files:
+//!
+//! ```rust
+//! # use musubi::{Report, Level, Cache};
+//! let cache = Cache::new()
+//!     .with_source(("import foo", "main.rs"))      // Source ID 0
+//!     .with_source(("pub fn foo() {}", "lib.rs")); // Source ID 1
+//!
+//! let report = Report::new()
+//!     .with_title(Level::Error, "Import error")
+//!     .with_label((7..10, 0))  // Label in main.rs
+//!     .with_message("imported here")
+//!     .with_label((7..10, 1))  // Label in lib.rs
+//!     .with_message("defined here")
+//!     .render_to_string(&cache)?;
+//! println!("{}", report);
+//! # Ok::<(), std::io::Error>(())
+//! ```
+//!
+//! ### Rendering Methods
+//!
+//! Three rendering methods are available:
+//! - [`Report::render_to_string()`] - Capture output as a String
+//! - [`Report::render_to_stdout()`] - Write directly to stdout (most efficient)
+//! - [`Report::render_to_writer()`] - Write to any `std::io::Write` implementation
 //!
 //! ## Labels
 //!
@@ -37,14 +107,15 @@
 //! - Display order and priority
 //!
 //! ```rust
-//! # use musubi::{Report, Level};
-//! let mut report = Report::new()
-//!     .with_source(("let x = 42;", "test.rs"))
-//!     .with_title(Level::Error, "Type mismatch")
+//! # use musubi::Report;
+//! let report = Report::new()
+//!     // ...
 //!     .with_label(0..3)     // First label
 //!     .with_message("expected type here")
 //!     .with_label(4..5)     // Second label
-//!     .with_message("found here");
+//!     .with_message("found here")
+//!     // ...
+//!     # ;
 //! ```
 //!
 //! ## Configuration
@@ -61,26 +132,14 @@
 //!     .with_char_set_unicode()     // Use box-drawing characters
 //!     .with_color_default()        // Enable ANSI colors
 //!     .with_compact(true)          // Compact output
-//!     .with_tab_width(4);          // 4-space tabs
+//!     .with_tab_width(4)           // 4-space tabs
+//!     // ...
+//!     ;
 //!
-//! let mut report = Report::new()
-//!     .with_config(config);
-//! ```
-//!
-//! ## Multiple Sources
-//!
-//! Display diagnostics that span multiple files:
-//!
-//! ```rust
-//! # use musubi::{Report, Level};
-//! let mut report = Report::new()
-//!     .with_source(("import foo", "main.rs"))      // Source ID 0
-//!     .with_source(("pub fn foo() {}", "lib.rs")) // Source ID 1
-//!     .with_title(Level::Error, "Import error")
-//!     .with_label((7..10, 0))  // Label in main.rs
-//!     .with_message("imported here")
-//!     .with_label((7..10, 1))  // Label in lib.rs
-//!     .with_message("defined here");
+//! Report::new()
+//!     .with_config(config)
+//!     // ...
+//! # ;
 //! ```
 //!
 //! ## Custom Colors
@@ -145,31 +204,17 @@
 //! }
 //! ```
 //!
-//! # Lifetime Management
-//!
-//! All string references passed to the report must outlive the report itself.
-//! This enables zero-copy operation:
-//!
-//! ```rust
-//! # use musubi::{Report, Level};
-//! let code = String::from("let x = 42;");
-//! let mut report = Report::new()
-//!     .with_source((code.as_str(), "test.rs"))
-//!     .with_title(Level::Error, "Error");
-//!
-//! // code must remain valid until report is rendered
-//! let output = report.render_to_string(0, 0).unwrap();
-//! // now code can be dropped
-//! ```
 
 mod ffi;
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::fmt::Debug;
 use std::io::{self, Write};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
-use std::ptr::{self, null_mut};
+use std::ptr;
+
+use crate::ffi::mu_Id;
 
 /// Diagnostic severity level
 ///
@@ -185,6 +230,7 @@ pub enum Level {
 }
 
 impl From<Level> for ffi::mu_Level {
+    #[inline]
     fn from(level: Level) -> Self {
         match level {
             Level::Error => ffi::mu_Level::MU_ERROR,
@@ -230,6 +276,7 @@ pub enum LabelAttach {
 }
 
 impl From<LabelAttach> for ffi::mu_LabelAttach {
+    #[inline]
     fn from(attach: LabelAttach) -> Self {
         match attach {
             LabelAttach::Middle => ffi::mu_LabelAttach::MU_ATTACH_MIDDLE,
@@ -267,6 +314,7 @@ pub enum IndexType {
 }
 
 impl From<IndexType> for ffi::mu_IndexType {
+    #[inline]
     fn from(index_type: IndexType) -> Self {
         match index_type {
             IndexType::Byte => ffi::mu_IndexType::MU_INDEX_BYTE,
@@ -302,6 +350,7 @@ pub enum ColorKind {
 }
 
 impl From<ColorKind> for ffi::mu_ColorKind {
+    #[inline]
     fn from(kind: ColorKind) -> Self {
         match kind {
             ColorKind::Reset => ffi::mu_ColorKind::MU_COLOR_RESET,
@@ -318,6 +367,7 @@ impl From<ColorKind> for ffi::mu_ColorKind {
 }
 
 impl ColorKind {
+    #[inline]
     fn from_ffi(kind: ffi::mu_ColorKind) -> Self {
         match kind {
             ffi::mu_ColorKind::MU_COLOR_RESET => ColorKind::Reset,
@@ -346,6 +396,7 @@ pub struct TitleLevel<'a> {
 
 /// Standard level
 impl From<Level> for TitleLevel<'_> {
+    #[inline]
     fn from(level: Level) -> Self {
         TitleLevel {
             level: level.into(),
@@ -357,6 +408,7 @@ impl From<Level> for TitleLevel<'_> {
 
 /// Custom level: string name
 impl<'a> From<&'a str> for TitleLevel<'a> {
+    #[inline]
     fn from(name: &'a str) -> Self {
         TitleLevel {
             level: ffi::mu_Level::MU_CUSTOM_LEVEL,
@@ -379,8 +431,9 @@ pub struct LabelSpan {
     src_id: ffi::mu_Id,
 }
 
-/// Range
+// Range<usize>
 impl From<std::ops::Range<usize>> for LabelSpan {
+    #[inline]
     fn from(value: std::ops::Range<usize>) -> Self {
         LabelSpan {
             start: value.start,
@@ -390,7 +443,9 @@ impl From<std::ops::Range<usize>> for LabelSpan {
     }
 }
 
+// Range<i32>
 impl From<std::ops::Range<i32>> for LabelSpan {
+    #[inline]
     fn from(value: std::ops::Range<i32>) -> Self {
         LabelSpan {
             start: value.start.max(0) as usize,
@@ -400,8 +455,9 @@ impl From<std::ops::Range<i32>> for LabelSpan {
     }
 }
 
-/// (Range, usize) tuple
+// (Range<usize>, usize) tuple
 impl<SrcId: Into<ffi::mu_Id>> From<(std::ops::Range<usize>, SrcId)> for LabelSpan {
+    #[inline]
     fn from(value: (std::ops::Range<usize>, SrcId)) -> Self {
         LabelSpan {
             start: value.0.start,
@@ -411,8 +467,9 @@ impl<SrcId: Into<ffi::mu_Id>> From<(std::ops::Range<usize>, SrcId)> for LabelSpa
     }
 }
 
-/// (Range, usize) tuple
+// (Range<i32>, usize) tuple
 impl<SrcId: Into<ffi::mu_Id>> From<(std::ops::Range<i32>, SrcId)> for LabelSpan {
+    #[inline]
     fn from(value: (std::ops::Range<i32>, SrcId)) -> Self {
         LabelSpan {
             start: value.0.start.max(0) as usize,
@@ -541,12 +598,14 @@ impl From<*const ffi::mu_Charset> for CharSet {
 
 impl CharSet {
     /// Predefined ASCII character set
+    #[inline]
     pub fn ascii() -> CharSet {
         // SAFETY: mu_ascii() returns a valid static charset pointer
         unsafe { ffi::mu_ascii() }.into()
     }
 
     /// Predefined Unicode character set
+    #[inline]
     pub fn unicode() -> CharSet {
         // SAFETY: mu_unicode() returns a valid static charset pointer
         unsafe { ffi::mu_unicode() }.into()
@@ -565,13 +624,15 @@ impl CharSet {
 /// use musubi::{Report, ColorGenerator, Level};
 ///
 /// let mut cg = ColorGenerator::new();
-/// let mut report = Report::new()
-///     .with_source(("let x = 1;", "test.rs"))
-///     .with_title(Level::Error, "Multiple labels")
+///
+/// Report::new()
+///     // ...
 ///     .with_label(0..3)
 ///     .with_color(&cg.next_color())  // First color
 ///     .with_label(4..5)
-///     .with_color(&cg.next_color()); // Second color (different)
+///     .with_color(&cg.next_color())  // Second color (different)
+///     // ...
+/// #   ;
 /// ```
 pub struct ColorGenerator {
     base: ffi::mu_ColorGen,
@@ -601,6 +662,7 @@ pub trait IntoColor {
 pub struct GenColor(ffi::mu_ColorCode);
 
 impl IntoColor for &GenColor {
+    #[inline]
     fn into_color(self, report: &mut Report) {
         // SAFETY: mu_fromcolorcode is a valid C callback that reads from the color code array.
         // The pointer to self.0 is valid for the duration of the mu_color call.
@@ -615,6 +677,7 @@ impl IntoColor for &GenColor {
 }
 
 impl Default for ColorGenerator {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -622,11 +685,13 @@ impl Default for ColorGenerator {
 
 impl ColorGenerator {
     /// Create a new color generator with default brightness.
+    #[inline]
     pub fn new() -> Self {
         Self::new_with_brightness(0.5)
     }
 
     /// Create a new color generator with the specified brightness.
+    #[inline]
     pub fn new_with_brightness(brightness: f32) -> Self {
         let mut obj = MaybeUninit::uninit();
         // SAFETY: mu_initcolorgen initializes all fields of the color generator
@@ -652,8 +717,9 @@ impl ColorGenerator {
     /// let color2 = cg.next_color();  // Different from color1
     /// let color3 = cg.next_color();  // Different from color1 and color2
     /// ```
+    #[inline]
     pub fn next_color(&mut self) -> GenColor {
-        let mut rc = GenColor([0; ffi::MU_COLOR_CODE_SIZE]);
+        let mut rc = GenColor([0; ffi::sizes::COLOR_CODE]);
         // SAFETY: &mut self ensures exclusive access to base.
         // mu_gencolor always succeeds and fills the color code array.
         unsafe { ffi::mu_gencolor(&mut self.base, &mut rc.0) };
@@ -718,7 +784,7 @@ struct ColorUd {
     /// Pointer to the Color trait object (type-erased for FFI)
     color_obj: *const c_void,
     /// Pointer to the shared buffer for color escape codes
-    color_buf: *mut [u8; ffi::MU_COLOR_CODE_SIZE],
+    color_buf: *mut [u8; ffi::sizes::COLOR_CODE],
 }
 
 impl<C: Color> IntoColor for &C {
@@ -740,7 +806,7 @@ impl<C: Color> IntoColor for &C {
             let mut remain = &mut buf[1..];
             match color.color(&mut remain, ColorKind::from_ffi(kind)) {
                 Ok(_) => {
-                    let used = (ffi::MU_COLOR_CODE_SIZE - remain.len() - 1) as u8;
+                    let used = (ffi::sizes::COLOR_CODE - remain.len() - 1) as u8;
                     buf[0] = used;
                     buf.as_ptr() as *const c_char
                 }
@@ -776,7 +842,7 @@ impl Debug for Config<'_> {
             .field("multiline_arrows", &self.inner.multiline_arrows)
             .field("tab_width", &self.inner.tab_width)
             .field("limit_width", &self.inner.limit_width)
-            .field("ambi_width", &self.inner.ambi_width)
+            .field("ambi_width", &self.inner.ambiwidth)
             .field("label_attach", &self.inner.label_attach)
             .field("index_type", &self.inner.index_type)
             .finish()
@@ -784,6 +850,7 @@ impl Debug for Config<'_> {
 }
 
 impl Clone for Config<'_> {
+    #[inline]
     fn clone(&self) -> Self {
         // SAFETY: mu_Config is a C struct with no Drop semantics, safe to copy
         let new: ffi::mu_Config = unsafe { std::mem::transmute_copy(&self.inner) };
@@ -796,6 +863,7 @@ impl Clone for Config<'_> {
 }
 
 impl Default for Config<'_> {
+    #[inline]
     fn default() -> Self {
         let mut obj = MaybeUninit::uninit();
         // SAFETY: mu_initconfig initializes all fields of the config struct
@@ -813,6 +881,7 @@ impl Default for Config<'_> {
 
 impl<'a> Config<'a> {
     /// Create a new config with default values.
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
@@ -823,6 +892,7 @@ impl<'a> Config<'a> {
     /// for better visual clarity when labels overlap.
     ///
     /// Default: depends on C library default
+    #[inline]
     pub fn with_cross_gap(mut self, enabled: bool) -> Self {
         self.inner.cross_gap = enabled as c_int;
         self
@@ -837,6 +907,7 @@ impl<'a> Config<'a> {
     /// Works with underlines enabled or disabled.
     ///
     /// Default: `false`
+    #[inline]
     pub fn with_compact(mut self, enabled: bool) -> Self {
         self.inner.compact = enabled as c_int;
         self
@@ -850,6 +921,7 @@ impl<'a> Config<'a> {
     /// Works with both compact and non-compact modes.
     ///
     /// Default: `true`
+    #[inline]
     pub fn with_underlines(mut self, enabled: bool) -> Self {
         self.inner.underlines = enabled as c_int;
         self
@@ -870,6 +942,7 @@ impl<'a> Config<'a> {
     /// # use musubi::Config;
     /// let config = Config::new().with_column_order(true);  // Simple column order
     /// ```
+    #[inline]
     pub fn with_column_order(mut self, enabled: bool) -> Self {
         self.inner.column_order = enabled as c_int;
         self
@@ -890,6 +963,7 @@ impl<'a> Config<'a> {
     /// # use musubi::Config;
     /// let config = Config::new().with_align_messages(false);  // Compact arrows
     /// ```
+    #[inline]
     pub fn with_align_messages(mut self, enabled: bool) -> Self {
         self.inner.align_messages = enabled as c_int;
         self
@@ -901,6 +975,7 @@ impl<'a> Config<'a> {
     /// arrows drawn across all covered lines.
     ///
     /// Default: `true`
+    #[inline]
     pub fn with_multiline_arrows(mut self, enabled: bool) -> Self {
         self.inner.multiline_arrows = enabled as c_int;
         self
@@ -917,6 +992,7 @@ impl<'a> Config<'a> {
     /// # use musubi::Config;
     /// let config = Config::new().with_tab_width(8);  // 8-space tabs
     /// ```
+    #[inline]
     pub fn with_tab_width(mut self, width: i32) -> Self {
         self.inner.tab_width = width;
         self
@@ -934,6 +1010,7 @@ impl<'a> Config<'a> {
     /// # use musubi::Config;
     /// let config = Config::new().with_limit_width(80);  // Wrap at 80 columns
     /// ```
+    #[inline]
     pub fn with_limit_width(mut self, width: i32) -> Self {
         self.inner.limit_width = width;
         self
@@ -953,8 +1030,9 @@ impl<'a> Config<'a> {
     /// # use musubi::Config;
     /// let config = Config::new().with_ambi_width(2);  // East Asian width
     /// ```
+    #[inline]
     pub fn with_ambi_width(mut self, width: i32) -> Self {
-        self.inner.ambi_width = width;
+        self.inner.ambiwidth = width;
         self
     }
 
@@ -964,6 +1042,7 @@ impl<'a> Config<'a> {
     /// Individual labels can override this with [`Report::with_order`].
     ///
     /// Default: [`LabelAttach::Middle`]
+    #[inline]
     pub fn with_label_attach(mut self, attach: LabelAttach) -> Self {
         self.inner.label_attach = attach.into();
         self
@@ -975,6 +1054,7 @@ impl<'a> Config<'a> {
     /// See [`IndexType`] for details.
     ///
     /// Default: [`IndexType::Char`]
+    #[inline]
     pub fn with_index_type(mut self, index_type: IndexType) -> Self {
         self.inner.index_type = index_type.into();
         self
@@ -991,11 +1071,11 @@ impl<'a> Config<'a> {
     ///    ,-[ file.rs:1:1 ]
     ///    |
     ///  1 | code here
-    ///    | ^^^^
-    ///    | |
-    ///    | `--- label
+    ///    | ^^|^
+    ///    |   `--- label
     /// ---'
     /// ```
+    #[inline]
     pub fn with_char_set_ascii(mut self) -> Self {
         // SAFETY: mu_ascii() returns a valid static charset pointer
         self.inner.char_set = unsafe { ffi::mu_ascii() };
@@ -1014,11 +1094,11 @@ impl<'a> Config<'a> {
     ///    ╭─[ file.rs:1:1 ]
     ///    │
     ///  1 │ code here
-    ///    │ ────
-    ///    │ │
-    ///    │ ╰─── label
+    ///    │ ──┬─
+    ///    │   ╰─── label
     /// ───╯
     /// ```
+    #[inline]
     pub fn with_char_set_unicode(mut self) -> Self {
         // SAFETY: mu_unicode() returns a valid static charset pointer
         self.inner.char_set = unsafe { ffi::mu_unicode() };
@@ -1041,6 +1121,7 @@ impl<'a> Config<'a> {
     /// };
     /// let config = Config::new().with_char_set(&custom);
     /// ```
+    #[inline]
     pub fn with_char_set(mut self, char_set: &'a CharSet) -> Self {
         self.char_set = Some(char_set);
         self
@@ -1055,6 +1136,7 @@ impl<'a> Config<'a> {
     /// - etc.
     ///
     /// This is appropriate for terminal output.
+    #[inline]
     pub fn with_color_default(mut self) -> Self {
         self.inner.color = Some(ffi::mu_default_color);
         self.color_ud = None;
@@ -1067,6 +1149,7 @@ impl<'a> Config<'a> {
     /// This is appropriate for file output or non-color terminals.
     ///
     /// Default: colors are disabled
+    #[inline]
     pub fn with_color_disabled(mut self) -> Self {
         self.inner.color = None;
         self.color_ud = None;
@@ -1091,7 +1174,7 @@ impl<'a> Config<'a> {
             let mut remain = &mut buf[1..];
             match color.color(&mut remain, ColorKind::from_ffi(kind)) {
                 Ok(_) => {
-                    let used = (ffi::MU_COLOR_CODE_SIZE - remain.len() - 1) as u8;
+                    let used = (ffi::sizes::COLOR_CODE - remain.len() - 1) as u8;
                     buf[0] = used;
                     buf.as_ptr() as *const c_char
                 }
@@ -1101,34 +1184,402 @@ impl<'a> Config<'a> {
 
         self.color_ud = Some(Box::new(ColorUd {
             color_obj: color as *const C as *mut c_void,
-            color_buf: null_mut(),
+            color_buf: ptr::null_mut(),
         }));
         self.inner.color = Some(color_fn::<C>);
         self.inner.color_ud = self
             .color_ud
             .as_ref()
-            .map_or(null_mut(), |ud| &**ud as *const ColorUd as *mut c_void);
+            .map_or(ptr::null_mut(), |ud| &**ud as *const ColorUd as *mut c_void);
         self
     }
 }
 
-// ============================================================================
-// Source types
-// ============================================================================
+/// Trait for types that can be added to a cache.
+///
+/// This trait is automatically implemented for common types:
+/// - `&str` - Borrowed string content
+/// - `String` - Owned string content (stored in cache)
+/// - `OwnedSource<S>` - Any type implementing `AsRef<[u8]>` (`Vec<u8>`, `Box<[u8]>`, etc.)
+/// - Tuples with filename: `(&str, &str)`, `(String, &str)`
+/// - Custom `Source` trait implementations
+///
+/// Users typically don't need to implement this trait directly.
+pub trait AddToCache {
+    /// Add this source to the cache.
+    ///
+    /// # Parameters
+    /// - `cache`: Mutable reference to the C cache pointer
+    ///
+    /// # Returns
+    /// Pointer to the created `mu_Source` in the C library
+    fn add_to_cache(self, cache: &mut *mut ffi::mu_Cache) -> *mut ffi::mu_Source;
+}
+
+/// Wrapper for owned source content.
+///
+/// `OwnedSource` wraps any type that can be viewed as bytes (`AsRef<[u8]>`),
+/// such as `Vec<u8>`, `Box<[u8]>`, or custom buffer types. The content is
+/// stored directly in the cache's internal memory managed by the C library.
+///
+/// # Example
+/// ```rust
+/// # use musubi::{Cache, OwnedSource, Report, Level};
+/// let buffer = vec![b'c', b'o', b'd', b'e'];
+/// let cache = Cache::new()
+///     .with_source((OwnedSource::new(buffer), "data.bin"));
+///
+/// let mut report = Report::new()
+///     .with_title(Level::Error, "Error in binary data")
+///     .with_label(0..4)
+///     .render_to_string(&cache)?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub struct OwnedSource<S>(S);
+
+impl<S: AsRef<[u8]>> From<S> for OwnedSource<S> {
+    #[inline]
+    fn from(value: S) -> Self {
+        Self(value)
+    }
+}
+
+impl<S: AsRef<[u8]>> OwnedSource<S> {
+    /// Create a new owned source from any type implementing `AsRef<[u8]>`.
+    #[inline]
+    pub fn new(owned: S) -> Self {
+        owned.into()
+    }
+}
+
+impl<S: AsRef<[u8]>> AddToCache for OwnedSource<S> {
+    fn add_to_cache(self, cache: &mut *mut ffi::mu_Cache) -> *mut ffi::mu_Source {
+        #[repr(C)]
+        struct OwnedSource<S> {
+            base: ffi::mu_Source,
+            owned: S,
+        }
+        // SAFETY: mu_addmemory initializes the cache and source correctly
+        let src =
+            unsafe { ffi::mu_addsource(cache, size_of::<OwnedSource<S>>(), Default::default()) };
+        // SAFETY: src is allocated by mu_addsource above and valid here
+        let owned_src = unsafe { &mut *(src as *mut OwnedSource<S>) };
+        owned_src.base.init = Some(init_fn::<S>);
+        owned_src.base.free = Some(free_fn::<S>);
+        owned_src.base.get_line = Some(get_line_fn::<S>);
+        owned_src.owned = self.0;
+
+        unsafe extern "C" fn init_fn<S: AsRef<[u8]>>(src: *mut ffi::mu_Source) -> c_int {
+            // SAFETY: src is a valid OwnedSource<S> pointer created in into_source below
+            let src = unsafe { &mut *(src as *mut OwnedSource<S>) };
+            // SAFETY: calling mu_updatelines is safe
+            unsafe { ffi::mu_updatelines(&mut src.base, src.owned.as_ref().into()) };
+            ffi::MU_OK
+        }
+
+        unsafe extern "C" fn free_fn<S: AsRef<[u8]>>(src: *mut ffi::mu_Source) {
+            let ud = src as *mut OwnedSource<S>;
+            // SAFETY: ud was allocated by mu_addsource and is valid here
+            // after this call, src will be freed by C library.
+            unsafe { std::ptr::drop_in_place(ud) };
+        }
+
+        unsafe extern "C" fn get_line_fn<S: AsRef<[u8]>>(
+            src: *mut ffi::mu_Source,
+            line_no: c_uint,
+        ) -> ffi::mu_Slice {
+            // SAFETY: src is a valid OwnedSource<S> pointer
+            let src = unsafe { &mut *(src as *mut OwnedSource<S>) };
+            // SAFETY: calling mu_getline is safe
+            let line = unsafe { *ffi::mu_getline(&mut src.base, line_no) };
+            src.owned.as_ref()[line.byte_offset as usize..][..line.byte_len as usize].into()
+        }
+
+        src
+    }
+}
+
+impl AddToCache for String {
+    #[inline]
+    fn add_to_cache(self, cache: &mut *mut ffi::mu_Cache) -> *mut ffi::mu_Source {
+        OwnedSource::new(self).add_to_cache(cache)
+    }
+}
+
+impl AddToCache for &str {
+    #[inline]
+    fn add_to_cache(self, cache: &mut *mut ffi::mu_Cache) -> *mut ffi::mu_Source {
+        // SAFETY: mu_addmemory initializes the cache and source correctly
+        unsafe { ffi::mu_addmemory(cache, self.into(), Default::default()) }
+    }
+}
+
+impl<S: Source> AddToCache for S {
+    fn add_to_cache(self, cache: &mut *mut ffi::mu_Cache) -> *mut ffi::mu_Source {
+        #[repr(C)]
+        struct BoxedSource<S: Source> {
+            base: ffi::mu_Source,
+            rust_obj: S,
+            line: ffi::mu_Line,
+            err: Option<io::Error>,
+        }
+
+        // SAFETY: mu_addsource initializes the cache and source correctly
+        let src = unsafe {
+            let src = ffi::mu_addsource(cache, size_of::<BoxedSource<S>>(), Default::default());
+            &mut *(src as *mut BoxedSource<S>)
+        };
+        src.rust_obj = self;
+        src.base.init = Some(init_fn::<S>);
+        src.base.free = Some(free_fn::<S>);
+        src.base.get_line = Some(get_line_fn::<S>);
+        src.base.get_line_info = Some(get_line_info_fn::<S>);
+        src.base.line_for_chars = Some(line_for_chars_fn::<S>);
+        src.base.line_for_bytes = Some(line_for_bytes_fn::<S>);
+
+        extern "C" fn init_fn<S: Source>(src: *mut ffi::mu_Source) -> c_int {
+            // SAFETY: src is a valid UdSource<S> pointer created in into_source below
+            let src = unsafe { &mut (*(src as *mut BoxedSource<S>)) };
+            match src.rust_obj.init() {
+                Ok(_) => 0,
+                Err(err) => {
+                    // SAFETY: report pointer is valid for the lifetime of the source
+                    src.err = Some(err);
+                    ffi::MU_ERR_SRCINIT
+                }
+            }
+        }
+
+        unsafe extern "C" fn free_fn<S: Source>(src: *mut ffi::mu_Source) {
+            let ud = src as *mut BoxedSource<S>;
+            // SAFETY: ud was allocated by mu_addsource and is valid here
+            // after this call, src will be freed by C library.
+            unsafe { std::ptr::drop_in_place(ud) };
+        }
+
+        extern "C" fn get_line_fn<S: Source>(
+            src: *mut ffi::mu_Source,
+            line_no: c_uint,
+        ) -> ffi::mu_Slice {
+            // SAFETY: src is a valid UdSource<S> pointer
+            let src = unsafe { &mut *(src as *mut BoxedSource<S>) };
+            src.rust_obj.get_line(line_no as usize).into()
+        }
+
+        extern "C" fn get_line_info_fn<S: Source>(
+            src: *mut ffi::mu_Source,
+            line_no: c_uint,
+        ) -> *const ffi::mu_Line {
+            // SAFETY: src is a valid UdSource<S> pointer
+            let src = unsafe { &mut *(src as *mut BoxedSource<S>) };
+            let line_info = src.rust_obj.get_line_info(line_no as usize);
+            src.line = line_info.into();
+            &src.line
+        }
+
+        extern "C" fn line_for_chars_fn<S: Source>(
+            src: *mut ffi::mu_Source,
+            char_pos: usize,
+            out_line: *mut *const ffi::mu_Line,
+        ) -> c_uint {
+            // SAFETY: src is a valid UdSource<S> pointer
+            let src = unsafe { &mut *(src as *mut BoxedSource<S>) };
+            let (line_no, line_info) = src.rust_obj.line_for_chars(char_pos);
+            if !out_line.is_null() {
+                src.line = line_info.into();
+                // SAFETY: out_line is checked
+                unsafe { *out_line = &src.line };
+            }
+            line_no as c_uint
+        }
+
+        extern "C" fn line_for_bytes_fn<S: Source>(
+            src: *mut ffi::mu_Source,
+            byte_pos: usize,
+            out_line: *mut *const ffi::mu_Line,
+        ) -> c_uint {
+            // SAFETY: src is a valid UdSource<S> pointer
+            let src = unsafe { &mut *(src as *mut BoxedSource<S>) };
+            let (line_no, line_info) = src.rust_obj.line_for_bytes(byte_pos);
+            if !out_line.is_null() {
+                src.line = line_info.into();
+                // SAFETY: out_line is checked
+                unsafe { *out_line = &src.line };
+            }
+            line_no as c_uint
+        }
+
+        &mut src.base
+    }
+}
+
+impl<S: AddToCache> AddToCache for (S, &str) {
+    #[inline]
+    fn add_to_cache(self, cache: &mut *mut ffi::mu_Cache) -> *mut ffi::mu_Source {
+        let src = self.0.add_to_cache(cache);
+        // SAFETY: src is a valid mu_Source pointer
+        unsafe { (*src).name = self.1.into() };
+        src
+    }
+}
+
+impl<S: AddToCache> AddToCache for (S, &str, i32) {
+    #[inline]
+    fn add_to_cache(self, cache: &mut *mut ffi::mu_Cache) -> *mut ffi::mu_Source {
+        let src = self.0.add_to_cache(cache);
+        // SAFETY: src is a valid mu_Source pointer
+        unsafe {
+            (*src).name = self.1.into();
+            (*src).line_no_offset = self.2
+        };
+        src
+    }
+}
+
+/// Internal representation of a cache for rendering.
+///
+/// This enum manages the lifetime of the underlying C cache pointer:
+/// - `Owned`: Cache was created for a single render and will be freed
+/// - `Borrowed`: Cache is owned by user code and should not be freed
+///
+/// Users typically don't interact with this type directly; it's used
+/// internally by the `render_to_*` methods.
+pub enum RawCache {
+    /// Temporary cache that will be freed when dropped
+    Owned(*mut ffi::mu_Cache),
+    /// Borrowed cache that remains owned by the caller
+    Borrowed(*mut ffi::mu_Cache),
+}
+
+impl Drop for RawCache {
+    #[inline]
+    fn drop(&mut self) {
+        match self {
+            RawCache::Owned(ptr) => {
+                if !ptr.is_null() {
+                    // SAFETY: mu_delcache frees the cache allocated by mu_addmemory
+                    unsafe { ffi::mu_delcache(*ptr) };
+                }
+            }
+            RawCache::Borrowed(_) => {
+                // Do nothing for borrowed cache
+            }
+        }
+    }
+}
+
+impl RawCache {
+    #[inline]
+    fn as_ptr(&self) -> *mut ffi::mu_Cache {
+        match self {
+            RawCache::Owned(ptr) => *ptr,
+            RawCache::Borrowed(ptr) => *ptr,
+        }
+    }
+}
+
+impl<S: AddToCache> From<S> for RawCache {
+    #[inline]
+    fn from(value: S) -> RawCache {
+        let mut cache = ptr::null_mut();
+        value.add_to_cache(&mut cache);
+        RawCache::Owned(cache)
+    }
+}
+
+/// A cache of diagnostic sources.
+///
+/// `Cache` manages multiple source files and their associated data,
+/// allowing for efficient multi-source diagnostics. It can be reused
+/// across multiple render operations.
+///
+/// # Source Lifetime Management
+///
+/// The cache automatically handles different source types:
+/// - **Borrowed sources** (`&str`): Content must remain valid until rendering completes
+/// - **Owned sources** (`String`, `Vec<u8>`, etc.): Content is stored in the cache's
+///   internal memory managed by the C library
+///
+/// # Single Source Convenience
+///
+/// For simple single-source diagnostics, you can pass sources directly to
+/// rendering methods without creating an explicit `Cache`. See [`Report::render_to_string()`]
+/// for examples.
+///
+/// # Example
+/// ```rust
+/// use musubi::{Cache, Report, Level};
+///
+/// let cache = Cache::new()
+///     .with_source(("let x = 42;", "main.rs"))        // Source 0
+///     .with_source(("fn foo() {}", "lib.rs"));        // Source 1
+///
+/// let mut report = Report::new()
+///     .with_title(Level::Error, "Multiple files")
+///     .with_label((0..3, 0))   // Label in main.rs
+///     .with_message("here")
+///     .with_label((3..6, 1))   // Label in lib.rs
+///     .with_message("and here");
+///
+/// report.render_to_stdout(&cache)?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Default)]
+pub struct Cache {
+    inner: *mut ffi::mu_Cache,
+}
+
+impl From<&Cache> for RawCache {
+    #[inline]
+    fn from(cache: &Cache) -> RawCache {
+        RawCache::Borrowed(cache.inner)
+    }
+}
+
+impl Cache {
+    /// Create a new empty cache.
+    #[inline]
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Add a source to the cache.
+    ///
+    /// Accepts both borrowed (`&str`) and owned (`String`) content.
+    /// For other byte buffers like `Vec<u8>`, use [`OwnedSource`].
+    /// Borrowed content must remain valid until rendering completes.
+    /// Owned content is stored in the cache's internal memory.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::{Cache, OwnedSource};
+    /// let cache = Cache::new()
+    ///     .with_source("let x = 42;")                    // &str - borrowed
+    ///     .with_source(("fn main() {}".to_string(), "main.rs"))  // String - owned
+    ///     .with_source((OwnedSource::new(vec![b'a', b'b', b'c']), "data.bin"));  // Vec<u8>
+    /// ```
+    #[inline]
+    pub fn with_source<S: AddToCache>(mut self, content: S) -> Self {
+        content.add_to_cache(&mut self.inner);
+        self
+    }
+}
 
 /// A source of diagnostic content.
 ///
 /// Sources can be created from in-memory strings or with custom line providers.
+/// They are typically managed through a [`Cache`], but can also be passed directly
+/// to rendering methods for single-source diagnostics.
 ///
 /// # Example
 /// ```rust
-/// # use musubi::{Source, Line};
+/// # use musubi::{Cache, Source, Line};
 /// # use std::default::Default;
 ///
 /// // implement a custom source
-/// struct MySource {}
+/// struct MySource { /* ... */ }
 ///
-/// # impl MySource { fn new() -> Self { Self{} } }
+/// # impl MySource { fn new() -> Self { Self{ /* ... */ } } }
 ///
 /// impl Source for MySource {
 ///     // ...
@@ -1139,12 +1590,13 @@ impl<'a> Config<'a> {
 /// # fn line_for_bytes(&self, byte_pos: usize) -> (usize, musubi::Line) { (0, Line::new()) }
 /// }
 ///
-/// let mut report = musubi::Report::new()
-///     // use tuple syntax to specific source code in memory with Report
+/// // Use with Cache for multiple sources
+/// let cache = Cache::new()
 ///     .with_source(("let x = 42;", "main.rs"))
-///
-///     // use a custom source implementing the Source trait
 ///     .with_source((MySource::new(), "my_source.rs"));
+///
+/// // Or pass directly to render for single source
+/// // report.render_to_string(("code", "file.rs"))?;
 /// ```
 pub trait Source {
     /// Initialize the source (e.g., read lines).
@@ -1189,6 +1641,7 @@ pub struct Line {
 
 impl Line {
     /// Create a new empty Line with all fields set to zero.
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
@@ -1196,6 +1649,7 @@ impl Line {
 
 impl From<*const ffi::mu_Line> for Line {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    #[inline]
     fn from(line: *const ffi::mu_Line) -> Self {
         // SAFETY: line pointer is provided by C library and assumed valid
         let line = unsafe { &*line };
@@ -1210,6 +1664,7 @@ impl From<*const ffi::mu_Line> for Line {
 }
 
 impl From<Line> for ffi::mu_Line {
+    #[inline]
     fn from(line: Line) -> Self {
         ffi::mu_Line {
             offset: line.offset,
@@ -1221,276 +1676,35 @@ impl From<Line> for ffi::mu_Line {
     }
 }
 
-/// Trait for types that can be converted into source files for diagnostics.
-///
-/// This trait is implemented for common source types like `&str`, tuples of
-/// `(&str, &str)` for (content, name), and tuples with line offsets.
-///
-/// You typically don't need to implement this trait manually - use the provided
-/// implementations via [`Report::with_source`].
-///
-/// # Examples
-///
-/// ```
-/// # use musubi::Report;
-/// let mut report = Report::new()
-///     .with_source("code content")              // &str
-///     .with_source(("code", "file.rs"))        // (&str, &str)
-///     .with_source(("code", "file.rs", 10));   // (&str, &str, i32) with line offset
-/// ```
-pub trait IntoSource {
-    /// Convert this value into a C source pointer.
-    ///
-    /// This method is called internally by [`Report::with_source`].
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source;
-}
-
-struct MemorySource<'a> {
-    content: ffi::mu_Slice,
-    name: ffi::mu_Slice,
-    line_no_offset: c_int,
-    _marker: PhantomData<&'a str>,
-}
-
-impl IntoSource for &str {
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
-        MemorySource {
-            content: self.into(),
-            name: Default::default(),
-            line_no_offset: 0,
-            _marker: PhantomData,
-        }
-        .into_source(report)
-    }
-}
-
-impl<'a> IntoSource for (&'a str, &'a str) {
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
-        MemorySource {
-            content: self.0.into(),
-            name: self.1.into(),
-            line_no_offset: 0,
-            _marker: PhantomData,
-        }
-        .into_source(report)
-    }
-}
-
-impl<'a> IntoSource for (&'a str, &'a str, i32) {
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
-        MemorySource {
-            content: self.0.into(),
-            name: self.1.into(),
-            line_no_offset: self.2,
-            _marker: PhantomData,
-        }
-        .into_source(report)
-    }
-}
-
-impl<'a> IntoSource for MemorySource<'a> {
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
-        // SAFETY: report.ptr is a valid mu_Report pointer, content and name have valid lifetimes
-        unsafe {
-            let src = ffi::mu_memory_source(report.ptr, self.content, self.name);
-            (*src).line_no_offset = self.line_no_offset;
-            src
-        }
-    }
-}
-
-struct TraitSource<'a, S> {
-    src: S,
-    name: ffi::mu_Slice,
-    line_no_offset: c_int,
-    _marker: PhantomData<&'a str>,
-}
-
-impl<S: Source> IntoSource for S {
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
-        TraitSource {
-            src: self,
-            name: Default::default(),
-            line_no_offset: 0,
-            _marker: PhantomData,
-        }
-        .into_source(report)
-    }
-}
-
-impl<S: Source> IntoSource for (S, &str) {
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
-        TraitSource {
-            src: self.0,
-            name: self.1.into(),
-            line_no_offset: 0,
-            _marker: PhantomData,
-        }
-        .into_source(report)
-    }
-}
-
-impl<S: Source> IntoSource for (S, &str, i32) {
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
-        TraitSource {
-            src: self.0,
-            name: self.1.into(),
-            line_no_offset: self.2,
-            _marker: PhantomData,
-        }
-        .into_source(report)
-    }
-}
-
-impl<S: Source> IntoSource for TraitSource<'_, S> {
-    fn into_source(self, report: &mut Report) -> *mut ffi::mu_Source {
-        use std::ffi::c_uint;
-
-        #[repr(C)]
-        struct UdSource<'a, S> {
-            base: ffi::mu_Source,
-            src: Option<Box<S>>,
-            report: *mut Report<'a>,
-            line: ffi::mu_Line,
-        }
-
-        extern "C" fn init_fn<S: Source>(src: *mut ffi::mu_Source) -> c_int {
-            // SAFETY: src is a valid UdSource<S> pointer created in into_source below
-            let ud = unsafe { &mut (*(src as *mut UdSource<S>)) };
-            // SAFETY: Same pointer, different reference for clarity
-            let udsrc = unsafe { &mut *(ud as *mut UdSource<S>) };
-            match udsrc.src.as_mut().unwrap().init() {
-                Ok(_) => 0,
-                Err(err) => {
-                    // SAFETY: report pointer is valid for the lifetime of the source
-                    unsafe { &mut *udsrc.report }.src_err = Some(err);
-                    ffi::MU_ERRFILE
-                }
-            }
-        }
-
-        extern "C" fn free_fn<S: Source>(src: *mut ffi::mu_Source) {
-            // SAFETY: src is a valid UdSource<S> pointer, called only once by C library
-            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
-            let _src = ud.src.take();
-            // Box<S> will be dropped automatically
-        }
-
-        extern "C" fn get_line_fn<S: Source>(
-            src: *mut ffi::mu_Source,
-            line_no: c_uint,
-        ) -> ffi::mu_Slice {
-            // SAFETY: src is a valid UdSource<S> pointer
-            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
-            // SAFETY: Same pointer cast for immutable access
-            let udsrc = unsafe { &*(ud as *mut UdSource<S>) };
-            udsrc
-                .src
-                .as_ref()
-                .unwrap()
-                .get_line(line_no as usize)
-                .into()
-        }
-
-        extern "C" fn get_line_info_fn<S: Source>(
-            src: *mut ffi::mu_Source,
-            line_no: c_uint,
-        ) -> *const ffi::mu_Line {
-            // SAFETY: src is a valid UdSource<S> pointer
-            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
-            // SAFETY: Need mutable access to update ud.line
-            let udsrc = unsafe { &mut *(ud as *mut UdSource<S>) };
-            let line_info = udsrc.src.as_ref().unwrap().get_line_info(line_no as usize);
-            udsrc.line = line_info.into();
-            &udsrc.line
-        }
-
-        extern "C" fn line_for_chars_fn<S: Source>(
-            src: *mut ffi::mu_Source,
-            char_pos: usize,
-            out_line: *mut *const ffi::mu_Line,
-        ) -> c_uint {
-            // SAFETY: src is a valid UdSource<S> pointer
-            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
-            // SAFETY: Need immutable access to call line_for_chars
-            let udsrc = unsafe { &*(ud as *mut UdSource<S>) };
-            let (line_no, line_info) = udsrc.src.as_ref().unwrap().line_for_chars(char_pos);
-            if !out_line.is_null() {
-                ud.line = line_info.into();
-                // SAFETY: out_line is checked
-                unsafe { *out_line = &ud.line };
-            }
-            line_no as c_uint
-        }
-
-        extern "C" fn line_for_bytes_fn<S: Source>(
-            src: *mut ffi::mu_Source,
-            byte_pos: usize,
-            out_line: *mut *const ffi::mu_Line,
-        ) -> c_uint {
-            // SAFETY: src is a valid UdSource<S> pointer
-            let ud = unsafe { &mut *(src as *mut UdSource<S>) };
-            // SAFETY: Need immutable access to call line_for_bytes
-            let udsrc = unsafe { &*(ud as *mut UdSource<S>) };
-            let (line_no, line_info) = udsrc.src.as_ref().unwrap().line_for_bytes(byte_pos);
-            if !out_line.is_null() {
-                ud.line = line_info.into();
-                // SAFETY: out_line is checked
-                unsafe { *out_line = &ud.line };
-            }
-            line_no as c_uint
-        }
-
-        // SAFETY: Creating a custom source with proper C callbacks.
-        // The UdSource<S> layout matches mu_Source expectations,
-        // and all function pointers have matching signatures.
-        unsafe {
-            let size = std::mem::size_of::<UdSource<S>>();
-            let src = ffi::mu_newsource(report.ptr, size, self.name);
-            (*src).line_no_offset = self.line_no_offset;
-            {
-                let udsrc = src as *mut UdSource<S>;
-                (*udsrc).src = Some(Box::new(self.src));
-            }
-            (*src).init = Some(init_fn::<S>);
-            (*src).free = Some(free_fn::<S>);
-            (*src).get_line = Some(get_line_fn::<S>);
-            (*src).get_line_info = Some(get_line_info_fn::<S>);
-            (*src).line_for_chars = Some(line_for_chars_fn::<S>);
-            (*src).line_for_bytes = Some(line_for_bytes_fn::<S>);
-            src
-        }
-    }
-}
-
-// ============================================================================
-// Report
-// ============================================================================
-
 /// A diagnostic report builder.
 ///
 /// The lifetime `'a` indicates that all string references passed to the report
 /// must live at least as long as the report itself. This enables zero-copy
 /// string passing to the underlying C library.
 ///
-/// # Source Registration
+/// # Source Management
 ///
-/// Sources are registered with [`with_source()`](Self::with_source) and assigned IDs
-/// based on registration order: first source is 0, second is 1, etc.
+/// Sources are managed through a [`Cache`] and assigned IDs based on registration
+/// order: first source is 0, second is 1, etc. The cache is then passed to rendering
+/// methods.
 ///
 /// # Example
 /// ```rust
-/// use musubi::{Report, Level};
+/// use musubi::{Report, Cache, Level};
 ///
-/// let mut report = Report::new();
-/// report
+/// let cache = Cache::new()
 ///     .with_source(("let x = 42;", "main.rs"))   // src_id = 0
-///     .with_source(("fn foo() {}", "lib.rs"))    // src_id = 1
+///     .with_source(("fn foo() {}", "lib.rs"));   // src_id = 1
+///
+/// let mut report = Report::new()
 ///     .with_title(Level::Error, "Error")
 ///     .with_label((0..3, 0)) // label in source 0
 ///     .with_message("here")
 ///     .with_label((3..6, 1)) // label in source 1
 ///     .with_message("and here");
+///
+/// report.render_to_stdout(&cache)?;
+/// # Ok::<(), std::io::Error>(())
 /// ```
 ///
 /// # Lifetime Safety
@@ -1512,7 +1726,7 @@ impl<S: Source> IntoSource for TraitSource<'_, S> {
 pub struct Report<'a> {
     ptr: *mut ffi::mu_Report,
     config: Option<Config<'a>>,
-    color_buf: [u8; ffi::MU_COLOR_CODE_SIZE],
+    color_buf: [u8; ffi::sizes::COLOR_CODE],
     /// Box is necessary to ensure pointer stability when Vec grows
     #[allow(clippy::vec_box)]
     color_uds: Vec<Box<ColorUd>>,
@@ -1520,8 +1734,26 @@ pub struct Report<'a> {
     _marker: PhantomData<&'a str>,
 }
 
+impl Default for Report<'_> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for Report<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self.ptr is a valid mu_Report pointer owned by this Report
+        unsafe {
+            ffi::mu_delete(self.ptr);
+        }
+    }
+}
+
 impl<'a> Report<'a> {
     /// Create a new report.
+    #[inline]
     pub fn new() -> Self {
         // SAFETY: mu_new allocates a new report, returns null on failure (checked below)
         let ptr = unsafe { ffi::mu_new(None, ptr::null_mut()) };
@@ -1529,7 +1761,7 @@ impl<'a> Report<'a> {
         Self {
             ptr,
             config: None,
-            color_buf: [0; ffi::MU_COLOR_CODE_SIZE],
+            color_buf: [0; ffi::sizes::COLOR_CODE],
             color_uds: Vec::new(),
             src_err: None,
             _marker: PhantomData,
@@ -1537,43 +1769,35 @@ impl<'a> Report<'a> {
     }
 
     /// Configure the report.
-    #[must_use]
+    #[inline]
     pub fn with_config(mut self, config: Config<'a>) -> Self {
         self.config = Some(config);
         self
     }
 
     /// Reset the report for reuse.
-    pub fn reset(self) -> Self {
-        // SAFETY: self.ptr is a valid mu_Report pointer owned by this Report
-        unsafe { ffi::mu_reset(self.ptr) };
-        self
-    }
-
-    /// Register a source with the report.
     ///
-    /// Sources are assigned IDs based on registration order:
-    /// - First source registered gets ID 0
-    /// - Second source gets ID 1
-    /// - And so on...
-    ///
-    /// The source is consumed and managed by the report.
+    /// Clears all labels, messages, and configuration, allowing the same
+    /// Report instance to be used for rendering a different diagnostic.
     ///
     /// # Example
     /// ```rust
-    /// use musubi::{Report, Source};
+    /// # use musubi::{Report, Level};
+    /// let mut report = Report::new()
+    ///     .with_title(Level::Error, "First error");
+    /// // ... render ...
+    /// report.render_to_string("")?;
     ///
-    /// let mut report = Report::new();
-    /// report
-    ///     .with_source(("code", "file.rs"))  // ID 0
-    ///     .with_source(("x", "other.rs"));   // ID 1
+    /// let mut report = report.reset()
+    ///     .with_title(Level::Warning, "Second warning");
+    /// // ... render again ...
+    /// report.render_to_string("")?;
+    /// # Ok::<(), std::io::Error>(())
     /// ```
-    #[must_use]
-    pub fn with_source<S: IntoSource>(mut self, source: S) -> Self {
-        let src_ptr = source.into_source(&mut self);
-        // SAFETY: self.ptr and src_ptr are both valid pointers
-        let result = unsafe { ffi::mu_source(self.ptr, src_ptr) };
-        assert!(result == ffi::MU_OK, "Failed to register source");
+    #[inline]
+    pub fn reset(self) -> Self {
+        // SAFETY: self.ptr is a valid mu_Report pointer owned by this Report
+        unsafe { ffi::mu_reset(self.ptr) };
         self
     }
 
@@ -1585,14 +1809,15 @@ impl<'a> Report<'a> {
     ///
     /// # Example
     /// ```rust
-    /// use musubi::{Report, Level};
-    ///
-    /// let mut report = Report::new();
-    /// report.with_title(Level::Error, "Something went wrong");
-    /// // Or with custom level:
-    /// // report.with_title("Note", "Something to note");
+    /// # use musubi::{Report, Level};
+    /// Report::new()
+    ///     .with_title(Level::Error, "Something went wrong")
+    ///     // Or with custom level:
+    ///     .with_title("Note", "Something to note")
+    ///     // ...
+    ///     # ;
     /// ```
-    #[must_use]
+    #[inline]
     pub fn with_title<L: Into<TitleLevel<'a>>>(self, level: L, message: &'a str) -> Self {
         let tl = level.into();
         // SAFETY: self.ptr is valid, message lifetime is bound to 'a
@@ -1600,11 +1825,49 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// Set the error code.
-    #[must_use]
+    /// Set the error code for this diagnostic.
+    ///
+    /// The error code is typically displayed in brackets before the title,
+    /// like `[E0001]` or `[W123]`.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::{Report, Level};
+    /// Report::new()
+    ///     .with_title(Level::Error, "Type mismatch")
+    ///     .with_code("E0308")  // Displayed as [E0308]
+    ///     // ...
+    ///     # ;
+    /// ```
+    #[inline]
     pub fn with_code(self, code: &'a str) -> Self {
         // SAFETY: self.ptr is valid, code lifetime is bound to 'a
         unsafe { ffi::mu_code(self.ptr, code.into()) };
+        self
+    }
+
+    /// Set the primary location for this diagnostic.
+    ///
+    /// This location is displayed in the diagnostic header, showing
+    /// where the error occurred.
+    ///
+    /// # Parameters
+    /// - `pos`: Byte or character position in the source (depending on `IndexType`)
+    /// - `src_id`: Source ID (0 for first source, 1 for second, etc.)
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::{Report, Level};
+    /// Report::new()
+    ///     .with_title(Level::Error, "Syntax error")
+    ///     .with_location(42, 0)  // Position 42 in source 0
+    ///     // ...
+    ///     # ;
+    /// ```
+    #[inline]
+    pub fn with_location(self, pos: usize, src_id: impl Into<mu_Id>) -> Self {
+        // SAFETY: self.ptr is valid
+        unsafe { ffi::mu_location(self.ptr, pos, src_id.into()) };
         self
     }
 
@@ -1614,16 +1877,15 @@ impl<'a> Report<'a> {
     ///
     /// # Example
     /// ```rust
-    /// use musubi::{Report, Level};
-    ///
-    /// let mut report = Report::new();
-    /// report
-    ///     .with_source(("let x = 42;", "main.rs"))
+    /// # use musubi::{Report, Level};
+    /// Report::new()
     ///     .with_title(Level::Error, "Error")
     ///     .with_label((0..3, 0))  // label in source 0
-    ///     .with_message("here");
+    ///     .with_message("here")
+    ///     // ...
+    ///     # ;
     /// ```
-    #[must_use]
+    #[inline]
     pub fn with_label<L: Into<LabelSpan>>(self, span: L) -> Self {
         let span = span.into();
         // SAFETY: self.ptr is valid, span values are checked by C library
@@ -1632,7 +1894,22 @@ impl<'a> Report<'a> {
     }
 
     /// Set the message for the last added label.
-    #[must_use]
+    ///
+    /// The message is displayed next to the label's marker/arrow,
+    /// providing explanation or context for the highlighted code.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::{Report, Level};
+    /// Report::new()
+    ///     .with_label(0..3)
+    ///     .with_message("expected identifier here")  // ← message for this label
+    ///     .with_label(10..15)
+    ///     .with_message("found number instead")      // ← message for next label
+    ///     // ...
+    ///     # ;
+    /// ```
+    #[inline]
     pub fn with_message(self, msg: &'a str) -> Self {
         let width = unicode_width(msg);
         // SAFETY: self.ptr is valid, msg lifetime is bound to 'a
@@ -1660,22 +1937,27 @@ impl<'a> Report<'a> {
     /// }
     ///
     /// let color = MyColor;
-    /// let mut report = Report::new()
-    ///     .with_source(("code", "test.rs"))
+    /// Report::new()
+    ///     // ...
     ///     .with_label(0..4)
-    ///     .with_color(&color);
+    ///     .with_color(&color)
+    ///     // ...
+    ///     # ;
     /// ```
     ///
     /// Using a color generator:
     /// ```rust
     /// # use musubi::{Report, Level, ColorGenerator};
     /// let mut cg = ColorGenerator::new();
-    /// let mut report = Report::new()
-    ///     .with_source(("code", "test.rs"))
+    ///
+    /// let report = Report::new()
+    ///     // ...
     ///     .with_label(0..4)
-    ///     .with_color(&cg.next_color());
+    ///     .with_color(&cg.next_color())
+    ///     // ...;
+    ///     # ;
     /// ```
-    #[must_use]
+    #[inline]
     pub fn with_color<C: IntoColor>(mut self, color: C) -> Self {
         color.into_color(&mut self);
         self
@@ -1691,17 +1973,19 @@ impl<'a> Report<'a> {
     /// # Example
     /// ```rust
     /// # use musubi::{Report, Level};
-    /// let mut report = Report::new()
-    ///     .with_source(("code", "test.rs"))
+    /// Report::new()
+    ///     // ...
+    ///     .with_label(0..4)
+    ///         .with_message("second")
+    ///         .with_order(1)   // Display this label later
     ///     .with_title(Level::Error, "Error")
-    ///     .with_label(0..4)
-    ///     .with_message("first")
-    ///     .with_order(-1)  // Display this label first
-    ///     .with_label(0..4)
-    ///     .with_message("second")
-    ///     .with_order(1);  // Display this label second
+    ///         .with_label(0..4)
+    ///         .with_message("first")
+    ///         .with_order(-1)  // Display this label first
+    ///     // ...
+    ///     # ;
     /// ```
-    #[must_use]
+    #[inline]
     pub fn with_order(self, order: i32) -> Self {
         // SAFETY: self.ptr is valid
         unsafe { ffi::mu_order(self.ptr, order) };
@@ -1710,27 +1994,29 @@ impl<'a> Report<'a> {
 
     /// Set the priority for the last added label.
     ///
-    /// Priority affects label clustering: labels with higher priority
-    /// are less likely to be grouped together with other labels.
+    /// Priority controls how overlapping labels are rendered when multiple
+    /// labels cover the same source location. Labels with higher priority
+    /// will be drawn on top, potentially obscuring lower-priority labels.
     ///
-    /// Higher values = higher priority = less clustering.
+    /// Higher values = higher priority = drawn on top.
     ///
     /// Default: `0`
     ///
     /// # Example
     /// ```rust
     /// # use musubi::{Report, Level};
-    /// let mut report = Report::new()
-    ///     .with_source(("code here", "test.rs"))
-    ///     .with_title(Level::Error, "Error")
-    ///     .with_label(0..4)
-    ///     .with_message("primary error")
-    ///     .with_priority(10)  // High priority, won't cluster
-    ///     .with_label(5..9)
-    ///     .with_message("related note")
-    ///     .with_priority(0);  // Low priority, may cluster
+    /// Report::new()
+    ///     // ...
+    ///     .with_label(0..10)
+    ///         .with_message("low priority")
+    ///         .with_priority(0)   // May be obscured by overlapping labels
+    ///     .with_label(5..15)
+    ///         .with_message("high priority")
+    ///         .with_priority(10)  // Will be drawn on top
+    ///     // ...
+    ///     # ;
     /// ```
-    #[must_use]
+    #[inline]
     pub fn with_priority(self, priority: i32) -> Self {
         // SAFETY: self.ptr is valid
         unsafe { ffi::mu_priority(self.ptr, priority) };
@@ -1747,14 +2033,15 @@ impl<'a> Report<'a> {
     /// # Example
     /// ```rust
     /// # use musubi::{Report, Level};
-    /// let mut report = Report::new()
-    ///     .with_source(("code", "test.rs"))
+    /// Report::new()
     ///     .with_title(Level::Error, "Type error")
     ///     .with_label(0..4)
-    ///     .with_message("expected String")
-    ///     .with_help("try converting with .to_string()");
+    ///         .with_message("expected String")
+    ///     .with_help("try converting with .to_string()")
+    ///     // ...
+    ///     # ;
     /// ```
-    #[must_use]
+    #[inline]
     pub fn with_help(self, msg: &'a str) -> Self {
         // SAFETY: self.ptr is valid, msg lifetime is bound to 'a
         unsafe { ffi::mu_help(self.ptr, msg.into()) };
@@ -1771,14 +2058,16 @@ impl<'a> Report<'a> {
     /// # Example
     /// ```rust
     /// # use musubi::{Report, Level};
-    /// let mut report = Report::new()
-    ///     .with_source(("code", "test.rs"))
+    /// Report::new()
+    ///     // ...
     ///     .with_title(Level::Warning, "Unused variable")
     ///     .with_label(0..4)
-    ///     .with_message("never used")
-    ///     .with_note("consider prefixing with an underscore: `_code`");
+    ///         .with_message("never used")
+    ///     .with_note("consider prefixing with an underscore: `_code`")
+    ///     // ...
+    ///     # ;
     /// ```
-    #[must_use]
+    #[inline]
     pub fn with_note(self, msg: &'a str) -> Self {
         // SAFETY: self.ptr is valid, msg lifetime is bound to 'a
         unsafe { ffi::mu_note(self.ptr, msg.into()) };
@@ -1787,9 +2076,29 @@ impl<'a> Report<'a> {
 
     /// Render the report to a String.
     ///
-    /// - `pos`: The byte position in the source for header location display
-    /// - `src_id`: The primary source ID (registration order)
-    pub fn render_to_string(&mut self, pos: usize, src_id: usize) -> io::Result<String> {
+    /// This is a convenience method that captures the rendered output
+    /// into a String instead of writing to stdout or a file.
+    ///
+    /// # Parameters
+    /// - `cache`: Source cache containing the code to display. Can be:
+    ///   - `&Cache` - A persistent cache with multiple sources
+    ///   - `&str` - A single source string (borrowed)
+    ///   - `(&str, &str)` - Source content and filename
+    ///   - `(&str, &str, i32)` - Source content, filename, and line offset for adjusting displayed line numbers
+    ///   - Custom types implementing `Source` trait
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::{Report, Level};
+    /// let output = Report::new()
+    ///     .with_title(Level::Error, "Syntax error")
+    ///     .with_label(0..3)
+    ///     .with_message("unexpected token")
+    ///     .render_to_string(("let x", "main.rs"))?;
+    /// println!("{}", output);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn render_to_string(&mut self, cache: impl Into<RawCache>) -> io::Result<String> {
         let mut writer = Vec::new();
         unsafe extern "C" fn string_writer_callback(
             ud: *mut c_void,
@@ -1811,14 +2120,32 @@ impl<'a> Report<'a> {
                 &mut writer as *mut Vec<u8> as *mut c_void,
             )
         };
-        self.render(pos, src_id).map(|_| {
+        self.render(cache).map(|_| {
             String::from_utf8(writer)
                 .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
         })
     }
 
-    /// Render the report to stdout.
-    pub fn render_to_stdout(&mut self, pos: usize, src_id: usize) -> io::Result<()> {
+    /// Render the report directly to stdout.
+    ///
+    /// This is the most efficient way to display diagnostics,
+    /// writing directly to the terminal without intermediate buffering.
+    ///
+    /// # Parameters
+    /// - `cache`: Source cache or source content. Can be `&Cache`, `&str`,
+    ///   `(&str, &str)`, `(&str, &str, i32)`, or custom `Source` implementations.
+    ///   The third element (if present) is a line offset for adjusting displayed line numbers.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use musubi::{Report, Level};
+    /// Report::new()
+    ///     .with_title(Level::Error, "Error message")
+    ///     .with_label(0..5)
+    ///     .render_to_stdout(("let x = 42;", "main.rs"))?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn render_to_stdout(&mut self, cache: impl Into<RawCache>) -> io::Result<()> {
         unsafe extern "C" fn stdout_writer_callback(
             _ud: *mut c_void,
             data: *const c_char,
@@ -1836,15 +2163,35 @@ impl<'a> Report<'a> {
 
         // SAFETY: self.ptr is valid, callback has correct signature
         unsafe { ffi::mu_writer(self.ptr, Some(stdout_writer_callback), ptr::null_mut()) };
-        self.render(pos, src_id)
+        self.render(cache)
     }
 
-    /// Render the report to a writer.
+    /// Render the report to any type implementing `Write`.
+    ///
+    /// This allows rendering to files, buffers, or any custom writer.
+    ///
+    /// # Parameters
+    /// - `writer`: Mutable reference to any type implementing `std::io::Write`
+    /// - `cache`: Source cache or source content. Can be `&Cache`, `&str`,
+    ///   `(&str, &str)`, `(&str, &str, i32)`, or custom `Source` implementations.
+    ///   The third element (if present) is a line offset for adjusting displayed line numbers.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::{Report, Level};
+    /// # use std::io::Write;
+    /// let mut buffer = Vec::new();
+    /// Report::new()
+    ///     .with_title(Level::Warning, "Deprecated")
+    ///     .with_label(0..3)
+    ///     .render_to_writer(&mut buffer, "let x = 1;")?;
+    /// assert!(!buffer.is_empty());
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     pub fn render_to_writer<'b, W: Write>(
         &'b mut self,
-        pos: usize,
-        src_id: usize,
         writer: &'b mut W,
+        cache: impl Into<RawCache>,
     ) -> io::Result<()> {
         struct WriterWrapper<'a, W: Write> {
             writer: &'a mut W,
@@ -1879,14 +2226,14 @@ impl<'a> Report<'a> {
             ffi::mu_writer(
                 self.ptr,
                 Some(writer_callback::<W>),
-                &mut wrapper as *mut WriterWrapper<W> as *mut c_void,
+                &mut wrapper as *mut _ as *mut c_void,
             );
         }
-        self.render(pos, src_id)
+        self.render(cache)
     }
 
-    fn render(&mut self, pos: usize, src_id: impl Into<ffi::mu_Id>) -> io::Result<()> {
-        let mut buf = [0u8; ffi::MU_COLOR_CODE_SIZE];
+    fn render(&mut self, cache: impl Into<RawCache>) -> io::Result<()> {
+        let mut buf = [0u8; ffi::sizes::COLOR_CODE];
         let cs_buf: CharSetBuf;
         let cs: ffi::mu_Charset;
         if let Some(config) = &mut self.config
@@ -1899,17 +2246,17 @@ impl<'a> Report<'a> {
         if let Some(cfg) = self.config.as_mut()
             && let Some(color_ud) = cfg.color_ud.as_mut()
         {
-            color_ud.color_buf = &mut buf as *mut [u8; ffi::MU_COLOR_CODE_SIZE];
+            color_ud.color_buf = &mut buf as *mut [u8; ffi::sizes::COLOR_CODE];
         }
         for color_ud in &mut self.color_uds {
-            color_ud.color_buf = &mut buf as *mut [u8; ffi::MU_COLOR_CODE_SIZE];
+            color_ud.color_buf = &mut buf as *mut [u8; ffi::sizes::COLOR_CODE];
         }
         if let Some(cfg) = &self.config {
             // SAFETY: self.ptr is valid, cfg.inner is a valid config with lifetime guarantees
             unsafe { ffi::mu_config(self.ptr, &cfg.inner) };
         }
         // SAFETY: self.ptr is valid, all sources and labels have been properly registered
-        match unsafe { ffi::mu_render(self.ptr, pos, src_id.into()) } {
+        match unsafe { ffi::mu_render(self.ptr, cache.into().as_ptr()) } {
             ffi::MU_OK => Ok(()),
             ffi::MU_ERR_SRCINIT => {
                 if let Some(err) = self.src_err.take() {
@@ -1944,6 +2291,7 @@ struct CharSetBuf {
 }
 
 impl From<CharSetBuf> for ffi::mu_Charset {
+    #[inline]
     fn from(value: CharSetBuf) -> Self {
         let mut chars: ffi::mu_Charset = [ptr::null(); 23];
         for (i, slice) in value.buf.iter().enumerate() {
@@ -1955,6 +2303,7 @@ impl From<CharSetBuf> for ffi::mu_Charset {
 
 impl From<CharSet> for CharSetBuf {
     fn from(char_set: CharSet) -> Self {
+        #[inline]
         fn char_to_slice(c: char) -> [u8; 8] {
             if c == '.' {
                 return [3, b'.', b'.', b'.', 0, 0, 0, 0];
@@ -1997,21 +2346,6 @@ impl From<CharSet> for CharSetBuf {
     }
 }
 
-impl Default for Report<'_> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Drop for Report<'_> {
-    fn drop(&mut self) {
-        // SAFETY: self.ptr is a valid mu_Report pointer owned by this Report
-        unsafe {
-            ffi::mu_delete(self.ptr);
-        }
-    }
-}
-
 /// Calculate the display width of a string (simple ASCII version).
 /// For full Unicode support, consider using the unicode-width crate.
 fn unicode_width(s: &str) -> i32 {
@@ -2033,14 +2367,13 @@ mod tests {
     #[test]
     fn test_basic_report() {
         let mut report = Report::new()
-            .with_source(("let x = 42;", "test.rs"))
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
             .with_title(Level::Error, "Test error")
             .with_code("E001")
             .with_label(0..3)
             .with_message("this is a test");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("let x = 42;", "test.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2064,12 +2397,11 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(config)
-            .with_source(("hello", "test.rs"))
             .with_title(Level::Warning, "Test warning")
             .with_label(0..5)
             .with_message("test");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("hello", "test.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2086,12 +2418,11 @@ mod tests {
     fn test_custom_level() {
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
-            .with_source(("code", "test.rs"))
             .with_title("Hint", "Consider this")
             .with_label(0..4)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("code", "test.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2108,17 +2439,18 @@ mod tests {
 
     #[test]
     fn test_multiple_sources() {
+        let cache = Cache::new()
+            .with_source(("import foo", "main.rs")) // src_id = 0
+            .with_source(("pub fn foo() {}".to_string(), "foo.rs")); // src_id = 1
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
-            .with_source(("import foo", "main.rs")) // src_id = 0
-            .with_source(("pub fn foo() {}", "foo.rs")) // src_id = 1
             .with_title(Level::Error, "Import error")
             .with_label((7..10, 0))
             .with_message("imported here")
             .with_label((7..10, 1))
             .with_message("defined here");
 
-        let output = report.render_to_string(7, 0).unwrap();
+        let output = report.render_to_string(&cache).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2140,15 +2472,53 @@ mod tests {
     }
 
     #[test]
+    fn test_owned_source() {
+        // Test OwnedSource with various types
+        let vec_data = vec![
+            b'h', b'e', b'l', b'l', b'o', b'\n', b'w', b'o', b'r', b'l', b'd',
+        ];
+        let cache = Cache::new()
+            .with_source((OwnedSource::new(vec_data), "vec.txt")) // Vec<u8>
+            .with_source(("static str".to_string(), "string.txt")); // String
+
+        let mut report = Report::new()
+            .with_config(Config::new().with_color_disabled())
+            .with_title(Level::Error, "Owned source test")
+            .with_label((0..5, 0))
+            .with_message("from Vec<u8>")
+            .with_label((7..12, 1))
+            .with_message("from String");
+
+        let output = report.render_to_string(&cache).unwrap();
+        assert_snapshot!(
+            remove_trailing_whitespace(&output),
+            @r##"
+            Error: Owned source test
+               ╭─[ vec.txt:1:1 ]
+               │
+             1 │ hello
+               │ ──┬──
+               │   ╰──── from Vec<u8>
+               │
+               │─[ string.txt:1:8 ]
+               │
+             1 │ static str
+               │        ─┬─
+               │         ╰─── from String
+            ───╯
+            "##
+        );
+    }
+
+    #[test]
     fn test_source_new() {
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
-            .with_source(("test code", "file.rs"))
             .with_title(Level::Error, "Error")
             .with_label((0..4, 0))
             .with_message("here");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("test code", "file.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2165,17 +2535,18 @@ mod tests {
 
     #[test]
     fn test_label_at() {
+        let cache = Cache::new()
+            .with_source(("code1", "a.rs")) // src_id = 0
+            .with_source(("code2", "b.rs")); // src_id = 1
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
-            .with_source(("code1", "a.rs"))
-            .with_source(("code2", "b.rs"))
             .with_title(Level::Error, "Error")
             .with_label((0..4, 0usize))
             .with_message("in a")
             .with_label((0..4, 1usize))
             .with_message("in b");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(&cache).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2213,12 +2584,11 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(config)
-            .with_source(("hello", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..5usize)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("hello", "test.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2248,12 +2618,11 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color(&CustomColor))
-            .with_source(("klmnop", "<unknown>"))
             .with_title(Level::Error, "test colors")
             .with_label(0..6usize)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string("klmnop").unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2275,13 +2644,12 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii())
-            .with_source(("klmnop", "<unknown>"))
             .with_title(Level::Error, "test colors")
             .with_label(0..6usize)
             .with_message("here")
             .with_color(&label1);
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string("klmnop").unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output).replace('\x1b', "ESC"),
             @r##"
@@ -2310,13 +2678,12 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("abcdef", "<unknown>"))
             .with_title(Level::Error, "test label colors")
             .with_label(0..6usize)
             .with_color(&CustomColor)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string("abcdef").unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2335,14 +2702,14 @@ mod tests {
     fn test_source_with_line_offset() {
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
-            .with_source(
-                ("some code here", "file.rs", 99), // Line numbers start at 100
-            )
             .with_title(Level::Error, "Error")
             .with_label(0..4usize)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report
+            // Line numbers start at 100
+            .render_to_string(("some code here", "file.rs", 99))
+            .unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2411,12 +2778,12 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
-            .with_source((MySource, "file.rs"))
+            .with_location(1485, 0)
             .with_title(Level::Error, "Error")
             .with_label(1485..1489usize)
             .with_message("here");
 
-        let output = report.render_to_string(1485, 0).unwrap();
+        let output = report.render_to_string((MySource, "file.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2449,12 +2816,13 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(config)
-            .with_source(("hello\tworld", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..5)
             .with_message("here");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report
+            .render_to_string(("hello\tworld", "test.rs"))
+            .unwrap();
         assert!(output.contains("hello"));
     }
 
@@ -2467,12 +2835,11 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(config)
-            .with_source(("hello", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..5)
             .with_message("bytes");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("hello", "test.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2496,12 +2863,11 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(config)
-            .with_source(("hello world", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..5)
             .with_message("start");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("hello world", "test.rs")).unwrap();
         assert!(output.contains("start"));
     }
 
@@ -2514,12 +2880,11 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(config)
-            .with_source(("hello world", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..5)
             .with_message("end");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("hello world", "test.rs")).unwrap();
         assert!(output.contains("end"));
     }
 
@@ -2527,7 +2892,6 @@ mod tests {
     fn test_with_order() {
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("code here", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..4)
             .with_message("second")
@@ -2536,7 +2900,7 @@ mod tests {
             .with_message("first")
             .with_order(-1);
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("code here", "test.rs")).unwrap();
         // Verify both labels appear
         assert!(output.contains("first"));
         assert!(output.contains("second"));
@@ -2546,7 +2910,6 @@ mod tests {
     fn test_with_priority() {
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("code here", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..4)
             .with_message("high priority")
@@ -2555,7 +2918,7 @@ mod tests {
             .with_message("low priority")
             .with_priority(0);
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("code here", "test.rs")).unwrap();
         assert!(output.contains("high priority"));
         assert!(output.contains("low priority"));
     }
@@ -2564,13 +2927,12 @@ mod tests {
     fn test_with_help() {
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("code", "test.rs"))
             .with_title(Level::Error, "Type error")
             .with_label(0..4)
             .with_message("wrong type")
             .with_help("try using .to_string()");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("code", "test.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2591,13 +2953,12 @@ mod tests {
     fn test_with_note() {
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("code", "test.rs"))
             .with_title(Level::Warning, "Unused variable")
             .with_label(0..4)
             .with_message("never used")
             .with_note("consider prefixing with `_`");
 
-        let output = report.render_to_string(0, 0).unwrap();
+        let output = report.render_to_string(("code", "test.rs")).unwrap();
         assert_snapshot!(
             remove_trailing_whitespace(&output),
             @r##"
@@ -2618,7 +2979,6 @@ mod tests {
     fn test_multiple_help_and_notes() {
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("code", "test.rs"))
             .with_title(Level::Error, "Error")
             .with_label(0..4)
             .with_message("problem")
@@ -2627,38 +2987,63 @@ mod tests {
             .with_note("first note")
             .with_note("second note");
 
-        let output = report.render_to_string(0, 0).unwrap();
-        assert!(output.contains("first help"));
-        assert!(output.contains("second help"));
-        assert!(output.contains("first note"));
-        assert!(output.contains("second note"));
+        let output = report.render_to_string(("code", "test.rs")).unwrap();
+        assert_snapshot!(
+            remove_trailing_whitespace(&output),
+            @r##"
+            Error: Error
+               ,-[ test.rs:1:1 ]
+               |
+             1 | code
+               | ^^|^
+               |   `--- problem
+               |
+               | Help 1: first help
+               |
+               | Help 2: second help
+               |
+               | Note 1: first note
+               |
+               | Note 2: second note
+            ---'
+            "##
+        );
     }
 
     #[test]
     fn test_empty_source() {
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("", "empty.rs"))
             .with_title(Level::Error, "Empty file")
             .with_label(0..0)
             .with_message("empty");
 
         // Should not panic
-        let output = report.render_to_string(0, 0).unwrap();
-        assert!(output.contains("empty.rs"));
+        let output = report.render_to_string(("", "empty.rs")).unwrap();
+        assert_snapshot!(
+            remove_trailing_whitespace(&output),
+            @r##"
+            Error: Empty file
+               ,-[ empty.rs:1:1 ]
+               |
+             1 |
+               | |
+               | `- empty
+            ---'
+            "##
+        );
     }
 
     #[test]
     fn test_render_to_stdout() {
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("code", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..4)
             .with_message("test");
 
         // Should not panic (output goes to stdout)
-        let result = report.render_to_stdout(0, 0);
+        let result = report.render_to_stdout(("code", "test.rs"));
         assert!(result.is_ok());
     }
 
@@ -2666,7 +3051,6 @@ mod tests {
     fn test_render_to_writer() {
         let mut report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("code", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..4)
             .with_message("test");
@@ -2674,21 +3058,41 @@ mod tests {
         let mut buffer = Vec::new();
         {
             let buf = &mut buffer;
-            let result = report.render_to_writer(0, 0, buf);
+            let result = report.render_to_writer(buf, ("code", "test.rs"));
             assert!(result.is_ok());
-            assert!(!buffer.is_empty());
+            assert_snapshot!(
+                remove_trailing_whitespace(&String::from_utf8_lossy(buf)),
+                @r##"
+                Error: Test
+                   ,-[ test.rs:1:1 ]
+                   |
+                 1 | code
+                   | ^^|^
+                   |   `--- test
+                ---'
+                "##
+            );
         }
 
         let output = String::from_utf8(buffer).unwrap();
-        assert!(output.contains("Error"));
-        assert!(output.contains("test"));
+        assert_snapshot!(
+            remove_trailing_whitespace(&output),
+            @r##"
+            Error: Test
+               ,-[ test.rs:1:1 ]
+               |
+             1 | code
+               | ^^|^
+               |   `--- test
+            ---'
+            "##
+        );
     }
 
     #[test]
     fn test_reset() {
         let report = Report::new()
             .with_config(Config::new().with_char_set_ascii().with_color_disabled())
-            .with_source(("code", "test.rs"))
             .with_title(Level::Error, "Test")
             .with_label(0..4)
             .with_message("test");
@@ -2696,14 +3100,23 @@ mod tests {
         // Reset and reuse
         let mut report = report
             .reset()
-            .with_source(("new code", "new.rs"))
             .with_title(Level::Warning, "New")
-            .with_label(0..3)
+            .with_label(0..4)
             .with_message("new");
 
-        let output = report.render_to_string(0, 0).unwrap();
-        assert!(output.contains("Warning"));
-        assert!(output.contains("new"));
+        let output = report.render_to_string(("code", "new.rs")).unwrap();
+        assert_snapshot!(
+            remove_trailing_whitespace(&output),
+            @r##"
+            Warning: New
+               ,-[ new.rs:1:1 ]
+               |
+             1 | code
+               | ^^|^
+               |   `--- new
+            ---'
+            "##
+        );
     }
 
     #[test]
