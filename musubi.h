@@ -94,8 +94,8 @@ typedef enum mu_Draw {
     MU_DRAW_HBAR,
     MU_DRAW_VBAR,
     MU_DRAW_XBAR,
-    MU_DRAW_VBAR_BREAK,
     MU_DRAW_VBAR_GAP,
+    MU_DRAW_LINE_MARGIN,
     MU_DRAW_UARROW,
     MU_DRAW_RARROW,
     MU_DRAW_LTOP,
@@ -1298,8 +1298,8 @@ static int muR_reference(mu_Report *R, unsigned i, mu_Source *loc_src) {
     mu_Slice  name = R->cur_group->src->name;
     mu_Slice  loc = (ctx.R = R, muG_calc_location(&ctx, loc_src));
     int       ellipsis = muG_trim_name(R, &name, loc);
-    muX(muW_draw(R, MU_DRAW_SPACE, R->line_no_width + 2));
     muX(muW_color(R, MU_COLOR_MARGIN));
+    muX(muW_draw(R, MU_DRAW_SPACE, R->line_no_width + 2));
     muX(muW_draw(R, i ? MU_DRAW_VBAR : MU_DRAW_LTOP, 1));
     muX(muW_draw(R, MU_DRAW_HBAR, 1));
     muX(muW_draw(R, MU_DRAW_LBOX, 1));
@@ -1320,9 +1320,8 @@ static int muR_reference(mu_Report *R, unsigned i, mu_Source *loc_src) {
 }
 
 static int muR_empty_line(mu_Report *R) {
-    if (R->config->compact) return MU_OK;
-    muX(muW_draw(R, MU_DRAW_SPACE, R->line_no_width + 2));
     muW_color(R, MU_COLOR_MARGIN);
+    muX(muW_draw(R, MU_DRAW_SPACE, R->line_no_width + 2));
     muX(muW_draw(R, MU_DRAW_VBAR, 1));
     muW_color(R, MU_COLOR_RESET);
     return muW_draw(R, MU_DRAW_NEWLINE, 1);
@@ -1334,15 +1333,15 @@ static int muR_lineno(mu_Report *R, unsigned line_no, int is_ellipsis) {
     if (line_no && !is_ellipsis) {
         line_no += R->cur_group->src->line_no_offset;
         ln = muD_snprintf(buf, sizeof(buf), "%u", line_no);
+        muX(muW_color(R, MU_COLOR_MARGIN));
         muX(muW_draw(R, MU_DRAW_SPACE,
                      R->line_no_width - (int)muD_bytelen(ln) + 1));
-        muX(muW_color(R, MU_COLOR_MARGIN));
         muX(muW_write(R, ln));
         muX(muW_draw(R, MU_DRAW_SPACE, 1));
-        muX(muW_draw(R, MU_DRAW_VBAR, 1));
+        muX(muW_draw(R, MU_DRAW_LINE_MARGIN, 1));
     } else {
-        muX(muW_draw(R, MU_DRAW_SPACE, R->line_no_width + 2));
         muX(muW_color(R, MU_COLOR_SKIPPED_MARGIN));
+        muX(muW_draw(R, MU_DRAW_SPACE, R->line_no_width + 2));
         muX(muW_draw(R, is_ellipsis ? MU_DRAW_VBAR_GAP : MU_DRAW_VBAR, 1));
     }
     muX(muW_color(R, MU_COLOR_RESET));
@@ -1617,10 +1616,10 @@ static int muR_report(mu_Report *R, const mu_Cache *cache) {
     muX(muR_header(R));
     for (i = 0, size = muA_size(R->groups); i < size; ++i) {
         mu_Group *g = &R->groups[i];
-        if (i > 0) muX(muR_empty_line(R));
+        if (i > 0 && !R->config->compact) muX(muR_empty_line(R));
         R->cur_group = g;
         muX(muR_reference(R, i, loc_src));
-        muX(muR_empty_line(R));
+        if (!R->config->compact) muX(muR_empty_line(R));
         muX(muR_lines(R));
     }
     muX(muR_footer(R));
@@ -1885,8 +1884,8 @@ static mu_Chunk muM_ascii_charset[MU_DRAW_COUNT] = {
     /* MU_DRAW_HBAR       */ "\x01-",
     /* MU_DRAW_VBAR       */ "\x01|",
     /* MU_DRAW_XBAR       */ "\x01+",
-    /* MU_DRAW_VBAR_BREAK */ "\x01*",
     /* MU_DRAW_VBAR_GAP   */ "\x01:",
+    /* MU_DRAW_LINE_MARGIN*/ "\x01|",
     /* MU_DRAW_UARROW     */ "\x01^",
     /* MU_DRAW_RARROW     */ "\x01>",
     /* MU_DRAW_LTOP       */ "\x01,",
@@ -1911,8 +1910,8 @@ static mu_Chunk muM_unicode_charset[MU_DRAW_COUNT] = {
     /* MU_DRAW_HBAR       */ "\x03\xE2\x94\x80", /* '─' */
     /* MU_DRAW_VBAR       */ "\x03\xE2\x94\x82", /* '│' */
     /* MU_DRAW_XBAR       */ "\x03\xE2\x94\xBC", /* '┼' */
-    /* MU_DRAW_VBAR_BREAK */ "\x03\xE2\x94\x86", /* '┆' */
     /* MU_DRAW_VBAR_GAP   */ "\x03\xE2\x94\x8A", /* '┊' */
+    /* MU_DRAW_LINE_MARGIN*/ "\x03\xE2\x94\xA4", /* '┤' */
     /* MU_DRAW_UARROW     */ "\x03\xE2\x96\xB2", /* '▲' */
     /* MU_DRAW_RARROW     */ "\x03\xE2\x96\xB6", /* '▶' */
     /* MU_DRAW_LTOP       */ "\x03\xE2\x95\xAD", /* '╭' */

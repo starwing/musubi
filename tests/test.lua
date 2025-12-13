@@ -1349,13 +1349,13 @@ Error: test default colors
     msg = ("%q"):format(msg:gsub(string.char(27), "ESC"))
     lu.assertEquals(msg, [[
 "ESC[31mError:ESC[0m test default colors\
-   ESC[38;5;246m,-[ESC[0m <unknown>:1:1 ESC[38;5;246m]ESC[0m\
-   ESC[38;5;246m|ESC[0m\
- ESC[38;5;246m1 |ESC[0m ESC[39mappleESC[0m\
-   ESC[38;5;240m|ESC[0m ESC[39m^^^|^^ESC[0m  \
-   ESC[38;5;240m|ESC[0m    ESC[39m`----ESC[0m spans multiple lines\
-   ESC[38;5;240m|ESC[0m \
-   ESC[38;5;240m|ESC[0m ESC[38;5;115mNote: note with default colorsESC[0m\
+ESC[38;5;246m   ,-[ESC[0m <unknown>:1:1 ESC[38;5;246m]ESC[0m\
+ESC[38;5;246m   |ESC[0m\
+ESC[38;5;246m 1 |ESC[0m ESC[39mappleESC[0m\
+ESC[38;5;240m   |ESC[0m ESC[39m^^^|^^ESC[0m  \
+ESC[38;5;240m   |ESC[0m    ESC[39m`----ESC[0m spans multiple lines\
+ESC[38;5;240m   |ESC[0m \
+ESC[38;5;240m   |ESC[0m ESC[38;5;115mNote: note with default colorsESC[0m\
 ESC[38;5;246m---'ESC[0m\
 "]])
 
@@ -1527,11 +1527,11 @@ Error: two multiline labels
     lu.assertEquals(msg, [[
 Error: two multiline labels
    ╭─[ <unknown>:1:1 ]
- 1 │╭─▶abcdefgh
+ 1 ┤╭─▶abcdefgh
    ││╭───╯
- 2 │├─▶ijklmnop
+ 2 ┤├─▶ijklmnop
    │╰──────────── outer
- 3 │ ├▶qrstuvwx
+ 3 ┤ ├▶qrstuvwx
    │ ╰────────── inner
 ]])
   end
