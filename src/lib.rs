@@ -515,10 +515,10 @@ pub struct CharSet {
     pub vbar: char,
     /// Cross bar (both horizontal and vertical)
     pub xbar: char,
-    /// Vertical bar with break
-    pub vbar_break: char,
     /// Vertical bar with gap
     pub vbar_gap: char,
+    /// Vertical bar for source line
+    pub line_margin: char,
     /// Upward arrow (e.g., '^' or '↑')
     pub uarrow: char,
     /// Rightward arrow (e.g., '>' or '→')
@@ -577,8 +577,8 @@ impl From<*const ffi::mu_Charset> for CharSet {
             hbar: slice_to_char(chars[5]),
             vbar: slice_to_char(chars[6]),
             xbar: slice_to_char(chars[7]),
-            vbar_break: slice_to_char(chars[8]),
-            vbar_gap: slice_to_char(chars[9]),
+            vbar_gap: slice_to_char(chars[8]),
+            line_margin: slice_to_char(chars[9]),
             uarrow: slice_to_char(chars[10]),
             rarrow: slice_to_char(chars[11]),
             ltop: slice_to_char(chars[12]),
@@ -2326,8 +2326,8 @@ impl From<CharSet> for CharSetBuf {
                 char_to_slice(char_set.hbar),
                 char_to_slice(char_set.vbar),
                 char_to_slice(char_set.xbar),
-                char_to_slice(char_set.vbar_break),
                 char_to_slice(char_set.vbar_gap),
+                char_to_slice(char_set.line_margin),
                 char_to_slice(char_set.uarrow),
                 char_to_slice(char_set.rarrow),
                 char_to_slice(char_set.ltop),
@@ -2429,7 +2429,7 @@ mod tests {
             Hint: Consider this
                ╭─[ test.rs:1:1 ]
                │
-             1 │ code
+             1 ┤ code
                │ ──┬─
                │   ╰─── here
             ───╯
@@ -2457,13 +2457,13 @@ mod tests {
             Error: Import error
                ╭─[ main.rs:1:8 ]
                │
-             1 │ import foo
+             1 ┤ import foo
                │        ─┬─
                │         ╰─── imported here
                │
                │─[ foo.rs:1:8 ]
                │
-             1 │ pub fn foo() {}
+             1 ┤ pub fn foo() {}
                │        ─┬─
                │         ╰─── defined here
             ───╯
@@ -2496,13 +2496,13 @@ mod tests {
             Error: Owned source test
                ╭─[ vec.txt:1:1 ]
                │
-             1 │ hello
+             1 ┤ hello
                │ ──┬──
                │   ╰──── from Vec<u8>
                │
                │─[ string.txt:1:8 ]
                │
-             1 │ static str
+             1 ┤ static str
                │        ─┬─
                │         ╰─── from String
             ───╯
@@ -2525,7 +2525,7 @@ mod tests {
             Error: Error
                ╭─[ file.rs:1:1 ]
                │
-             1 │ test code
+             1 ┤ test code
                │ ──┬─
                │   ╰─── here
             ───╯
@@ -2553,13 +2553,13 @@ mod tests {
             Error: Error
                ╭─[ a.rs:1:1 ]
                │
-             1 │ code1
+             1 ┤ code1
                │ ──┬─
                │   ╰─── in a
                │
                │─[ b.rs:1:1 ]
                │
-             1 │ code2
+             1 ┤ code2
                │ ──┬─
                │   ╰─── in b
             ───╯
@@ -2595,7 +2595,7 @@ mod tests {
             Error: Test
                <=[ test.rs:1:1 ]
                !
-             1 ! hello
+             1 | hello
                ! ^^|^^
                !   [==== here
             ===]
@@ -2627,11 +2627,11 @@ mod tests {
             remove_trailing_whitespace(&output),
             @r##"
             {Error:} test colors
-               {,-[} <unknown>:1:1 {]}
-               {|}
-             {1 |} {klmnop}
-               {|} {^^^|^^}
-               {|}    {`----} here
+            {   ,-[} <unknown>:1:1 {]}
+            {   |}
+            { 1 |} {klmnop}
+            {   |} {^^^|^^}
+            {   |}    {`----} here
             {---'}
             "##
         );
@@ -2654,11 +2654,11 @@ mod tests {
             remove_trailing_whitespace(&output).replace('\x1b', "ESC"),
             @r##"
             ESC[31mError:ESC[0m test colors
-               ESC[38;5;246m,-[ESC[0m <unknown>:1:1 ESC[38;5;246m]ESC[0m
-               ESC[38;5;246m|ESC[0m
-             ESC[38;5;246m1 |ESC[0m ESC[38;5;201mklmnopESC[0m
-               ESC[38;5;240m|ESC[0m ESC[38;5;201m^^^|^^ESC[0m
-               ESC[38;5;240m|ESC[0m    ESC[38;5;201m`----ESC[0m here
+            ESC[38;5;246m   ,-[ESC[0m <unknown>:1:1 ESC[38;5;246m]ESC[0m
+            ESC[38;5;246m   |ESC[0m
+            ESC[38;5;246m 1 |ESC[0m ESC[38;5;201mklmnopESC[0m
+            ESC[38;5;240m   |ESC[0m ESC[38;5;201m^^^|^^ESC[0m
+            ESC[38;5;240m   |ESC[0m    ESC[38;5;201m`----ESC[0m here
             ESC[38;5;246m---'ESC[0m
             "##
         );
@@ -2716,7 +2716,7 @@ mod tests {
             Error: Error
                  ╭─[ file.rs:100:1 ]
                  │
-             100 │ some code here
+             100 ┤ some code here
                  │ ──┬─
                  │   ╰─── here
             ─────╯
@@ -2790,7 +2790,7 @@ mod tests {
             Error: Error
                  ╭─[ file.rs:100:1 ]
                  │
-             100 │ some code here
+             100 ┤ some code here
                  │ ──┬─
                  │   ╰─── here
             ─────╯
