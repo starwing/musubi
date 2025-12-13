@@ -30,7 +30,8 @@ coverage:
 
 svg:
     lua examples/demo.lua | \
-        ansisvg --grid --colorscheme "iTerm2 Solarized Dark" \
+        ansisvg --marginsize 1x1 --fontsize 16 \
+        --colorscheme "iTerm2 Solarized Dark" \
         --fontfile ~/Library/Fonts/MapleMono-NF-Regular.ttf > misc/demo.svg
 
 bindgen:

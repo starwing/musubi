@@ -1910,7 +1910,7 @@ static mu_Chunk muM_unicode_charset[MU_DRAW_COUNT] = {
     /* MU_DRAW_HBAR       */ "\x03\xE2\x94\x80", /* '─' */
     /* MU_DRAW_VBAR       */ "\x03\xE2\x94\x82", /* '│' */
     /* MU_DRAW_XBAR       */ "\x03\xE2\x94\xBC", /* '┼' */
-    /* MU_DRAW_VBAR_GAP   */ "\x03\xE2\x94\x8A", /* '┊' */
+    /* MU_DRAW_VBAR_GAP   */ "\x03\xE2\x94\x86", /* '┊' */
     /* MU_DRAW_LINE_MARGIN*/ "\x03\xE2\x94\xA4", /* '┤' */
     /* MU_DRAW_UARROW     */ "\x03\xE2\x96\xB2", /* '▲' */
     /* MU_DRAW_RARROW     */ "\x03\xE2\x96\xB6", /* '▶' */
