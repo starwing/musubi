@@ -109,7 +109,6 @@
 //! ```rust
 //! # use musubi::Report;
 //! let report = Report::new()
-//!     // ...
 //!     .with_label(0..3)     // First label
 //!     .with_message("expected type here")
 //!     .with_label(4..5)     // Second label
@@ -139,7 +138,7 @@
 //! Report::new()
 //!     .with_config(config)
 //!     // ...
-//! # ;
+//!     ;
 //! ```
 //!
 //! ## Custom Colors
@@ -213,8 +212,6 @@ use std::io::{self, Write};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ptr;
-
-use crate::ffi::mu_Id;
 
 /// Diagnostic severity level
 ///
@@ -539,8 +536,14 @@ pub struct CharSet {
     pub lcross: char,
     /// Right cross connector (e.g., '+' or '┤')
     pub rcross: char,
-    /// Underbar character (e.g., '_' or '─')
-    pub underbar: char,
+    /// Left underbar character (e.g., '|' or '┌')
+    pub lunderbar: char,
+    /// Middle underbar character (e.g., '|' or '┬')
+    pub munderbar: char,
+    /// Right underbar character (e.g., '|' or '┐')
+    pub runderbar: char,
+    /// Single underbar character (e.g., '^' or '△')
+    pub sunderbar: char,
     /// Underline character for emphasis
     pub underline: char,
     /// Ellipsis for truncated text (e.g., '...' or '…')
@@ -589,9 +592,12 @@ impl From<*const ffi::mu_Charset> for CharSet {
             rbot: slice_to_char(chars[17]),
             lcross: slice_to_char(chars[18]),
             rcross: slice_to_char(chars[19]),
-            underbar: slice_to_char(chars[20]),
-            underline: slice_to_char(chars[21]),
-            ellipsis: slice_to_char(chars[22]),
+            lunderbar: slice_to_char(chars[20]),
+            munderbar: slice_to_char(chars[21]),
+            runderbar: slice_to_char(chars[22]),
+            sunderbar: slice_to_char(chars[23]),
+            underline: slice_to_char(chars[24]),
+            ellipsis: slice_to_char(chars[25]),
         }
     }
 }
@@ -626,7 +632,6 @@ impl CharSet {
 /// let mut cg = ColorGenerator::new();
 ///
 /// Report::new()
-///     // ...
 ///     .with_label(0..3)
 ///     .with_color(&cg.next_color())  // First color
 ///     .with_label(4..5)
@@ -834,12 +839,13 @@ pub struct Config<'a> {
 impl Debug for Config<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
-            .field("cross_gap", &self.inner.cross_gap)
             .field("compact", &self.inner.compact)
-            .field("underlines", &self.inner.underlines)
-            .field("column_order", &self.inner.column_order)
-            .field("align_messages", &self.inner.align_messages)
+            .field("cross_gap", &self.inner.cross_gap)
             .field("multiline_arrows", &self.inner.multiline_arrows)
+            .field("underlines", &self.inner.underlines)
+            .field("minimise_crossing", &self.inner.minimise_crossings)
+            .field("align_messages", &self.inner.align_messages)
+            .field("context_lines", &self.inner.context_lines)
             .field("tab_width", &self.inner.tab_width)
             .field("limit_width", &self.inner.limit_width)
             .field("ambi_width", &self.inner.ambiwidth)
@@ -886,18 +892,6 @@ impl<'a> Config<'a> {
         Self::default()
     }
 
-    /// Enable or disable cross gap rendering.
-    ///
-    /// When enabled, vertical bars between labels are drawn with gaps
-    /// for better visual clarity when labels overlap.
-    ///
-    /// Default: depends on C library default
-    #[inline]
-    pub fn with_cross_gap(mut self, enabled: bool) -> Self {
-        self.inner.cross_gap = enabled as c_int;
-        self
-    }
-
     /// Enable or disable compact mode.
     ///
     /// In compact mode, the diagnostic output is more condensed:
@@ -906,10 +900,24 @@ impl<'a> Config<'a> {
     ///
     /// Works with underlines enabled or disabled.
     ///
-    /// Default: `false`
+    /// Default: [`false`]
     #[inline]
+    #[must_use]
     pub fn with_compact(mut self, enabled: bool) -> Self {
         self.inner.compact = enabled as c_int;
+        self
+    }
+
+    /// Enable or disable cross gap rendering.
+    ///
+    /// When enabled, vertical bars between arrows are drawn with cross
+    /// for better visual clarity when line overlap.
+    ///
+    /// Default: [`false`]
+    #[inline]
+    #[must_use]
+    pub fn with_cross_gap(mut self, enabled: bool) -> Self {
+        self.inner.cross_gap = enabled as c_int;
         self
     }
 
@@ -920,14 +928,15 @@ impl<'a> Config<'a> {
     ///
     /// Works with both compact and non-compact modes.
     ///
-    /// Default: `true`
+    /// Default: [`true`]
     #[inline]
+    #[must_use]
     pub fn with_underlines(mut self, enabled: bool) -> Self {
         self.inner.underlines = enabled as c_int;
         self
     }
 
-    /// Enable or disable natural label ordering.
+    /// Enable or disable natural label ordering to avoid line crossings.
     ///
     /// When disabled (default), labels are sorted to minimize line crossings:
     /// - Inline labels appear first, ordered by reverse column position
@@ -935,16 +944,17 @@ impl<'a> Config<'a> {
     ///
     /// When enabled, labels are simply sorted by column position.
     ///
-    /// Default: `false` (natural ordering enabled)
+    /// Default: [`true`] (natural ordering enabled)
     ///
     /// # Example
     /// ```rust
     /// # use musubi::Config;
-    /// let config = Config::new().with_column_order(true);  // Simple column order
+    /// let config = Config::new().with_minimise_crossings(false);  // Simple column order
     /// ```
     #[inline]
-    pub fn with_column_order(mut self, enabled: bool) -> Self {
-        self.inner.column_order = enabled as c_int;
+    #[must_use]
+    pub fn with_minimise_crossings(mut self, enabled: bool) -> Self {
+        self.inner.minimise_crossings = enabled as c_int;
         self
     }
 
@@ -956,7 +966,7 @@ impl<'a> Config<'a> {
     /// When disabled, messages are placed immediately after their arrows,
     /// creating more compact output.
     ///
-    /// Default: `true` (aligned)
+    /// Default: [`true`] (aligned)
     ///
     /// # Example
     /// ```rust
@@ -974,10 +984,29 @@ impl<'a> Config<'a> {
     /// When enabled, labels that span multiple lines will have
     /// arrows drawn across all covered lines.
     ///
-    /// Default: `true`
+    /// Default: [`true`] (multiline arrows enabled)
     #[inline]
     pub fn with_multiline_arrows(mut self, enabled: bool) -> Self {
         self.inner.multiline_arrows = enabled as c_int;
+        self
+    }
+
+    /// Set the number of context lines to show around spans.
+    ///
+    /// Context lines provide additional source code context
+    /// before and after the highlighted spans.
+    ///
+    /// Default: `0` (no context lines)
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::Config;
+    /// let config = Config::new().with_context_lines(2);  // 2
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_context_lines(mut self, lines: i32) -> Self {
+        self.inner.context_lines = lines;
         self
     }
 
@@ -1769,7 +1798,17 @@ impl<'a> Report<'a> {
     }
 
     /// Configure the report.
+    ///
+    /// see [`Config`] for configuration options.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use musubi::{Report, Config};
+    /// let config = Config::new().with_limit_width(80);
+    /// let report = Report::new().with_config(config);
+    /// ```
     #[inline]
+    #[must_use]
     pub fn with_config(mut self, config: Config<'a>) -> Self {
         self.config = Some(config);
         self
@@ -1795,6 +1834,7 @@ impl<'a> Report<'a> {
     /// # Ok::<(), std::io::Error>(())
     /// ```
     #[inline]
+    #[must_use]
     pub fn reset(self) -> Self {
         // SAFETY: self.ptr is a valid mu_Report pointer owned by this Report
         unsafe { ffi::mu_reset(self.ptr) };
@@ -1818,6 +1858,7 @@ impl<'a> Report<'a> {
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_title<L: Into<TitleLevel<'a>>>(self, level: L, message: &'a str) -> Self {
         let tl = level.into();
         // SAFETY: self.ptr is valid, message lifetime is bound to 'a
@@ -1840,34 +1881,35 @@ impl<'a> Report<'a> {
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_code(self, code: &'a str) -> Self {
         // SAFETY: self.ptr is valid, code lifetime is bound to 'a
         unsafe { ffi::mu_code(self.ptr, code.into()) };
         self
     }
 
-    /// Set the primary location for this diagnostic.
+    /// Set the primary label for its group.
     ///
     /// This location is displayed in the diagnostic header, showing
     /// where the error occurred.
-    ///
-    /// # Parameters
-    /// - `pos`: Byte or character position in the source (depending on `IndexType`)
-    /// - `src_id`: Source ID (0 for first source, 1 for second, etc.)
     ///
     /// # Example
     /// ```rust
     /// # use musubi::{Report, Level};
     /// Report::new()
     ///     .with_title(Level::Error, "Syntax error")
-    ///     .with_location(42, 0)  // Position 42 in source 0
+    ///     .with_primary_label((0..3, 0))  // Primary label in source 0
     ///     // ...
     ///     # ;
     /// ```
     #[inline]
-    pub fn with_location(self, pos: usize, src_id: impl Into<mu_Id>) -> Self {
+    #[must_use]
+    pub fn with_primary_label<L: Into<LabelSpan>>(self, span: L) -> Self {
+        let span = span.into();
+        // SAFETY: self.ptr is valid, span values are checked by C library
+        unsafe { ffi::mu_label(self.ptr, span.start, span.end, span.src_id) };
         // SAFETY: self.ptr is valid
-        unsafe { ffi::mu_location(self.ptr, pos, src_id.into()) };
+        unsafe { ffi::mu_primary(self.ptr) };
         self
     }
 
@@ -1886,6 +1928,7 @@ impl<'a> Report<'a> {
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_label<L: Into<LabelSpan>>(self, span: L) -> Self {
         let span = span.into();
         // SAFETY: self.ptr is valid, span values are checked by C library
@@ -1910,6 +1953,7 @@ impl<'a> Report<'a> {
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_message(self, msg: &'a str) -> Self {
         let width = unicode_width(msg);
         // SAFETY: self.ptr is valid, msg lifetime is bound to 'a
@@ -1938,7 +1982,6 @@ impl<'a> Report<'a> {
     ///
     /// let color = MyColor;
     /// Report::new()
-    ///     // ...
     ///     .with_label(0..4)
     ///     .with_color(&color)
     ///     // ...
@@ -1951,13 +1994,13 @@ impl<'a> Report<'a> {
     /// let mut cg = ColorGenerator::new();
     ///
     /// let report = Report::new()
-    ///     // ...
     ///     .with_label(0..4)
     ///     .with_color(&cg.next_color())
     ///     // ...;
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_color<C: IntoColor>(mut self, color: C) -> Self {
         color.into_color(&mut self);
         self
@@ -1974,7 +2017,6 @@ impl<'a> Report<'a> {
     /// ```rust
     /// # use musubi::{Report, Level};
     /// Report::new()
-    ///     // ...
     ///     .with_label(0..4)
     ///         .with_message("second")
     ///         .with_order(1)   // Display this label later
@@ -1986,6 +2028,7 @@ impl<'a> Report<'a> {
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_order(self, order: i32) -> Self {
         // SAFETY: self.ptr is valid
         unsafe { ffi::mu_order(self.ptr, order) };
@@ -2006,7 +2049,6 @@ impl<'a> Report<'a> {
     /// ```rust
     /// # use musubi::{Report, Level};
     /// Report::new()
-    ///     // ...
     ///     .with_label(0..10)
     ///         .with_message("low priority")
     ///         .with_priority(0)   // May be obscured by overlapping labels
@@ -2017,6 +2059,7 @@ impl<'a> Report<'a> {
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_priority(self, priority: i32) -> Self {
         // SAFETY: self.ptr is valid
         unsafe { ffi::mu_priority(self.ptr, priority) };
@@ -2042,6 +2085,7 @@ impl<'a> Report<'a> {
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_help(self, msg: &'a str) -> Self {
         // SAFETY: self.ptr is valid, msg lifetime is bound to 'a
         unsafe { ffi::mu_help(self.ptr, msg.into()) };
@@ -2059,7 +2103,6 @@ impl<'a> Report<'a> {
     /// ```rust
     /// # use musubi::{Report, Level};
     /// Report::new()
-    ///     // ...
     ///     .with_title(Level::Warning, "Unused variable")
     ///     .with_label(0..4)
     ///         .with_message("never used")
@@ -2068,6 +2111,7 @@ impl<'a> Report<'a> {
     ///     # ;
     /// ```
     #[inline]
+    #[must_use]
     pub fn with_note(self, msg: &'a str) -> Self {
         // SAFETY: self.ptr is valid, msg lifetime is bound to 'a
         unsafe { ffi::mu_note(self.ptr, msg.into()) };
@@ -2287,13 +2331,13 @@ impl<'a> Report<'a> {
 /// 8 bytes (1 length byte + up to 7 UTF-8 bytes, though most characters are 1-3 bytes).
 struct CharSetBuf {
     /// 23 characters × 8 bytes each (length prefix + UTF-8 data)
-    buf: [[u8; 8]; 23],
+    buf: [[u8; 8]; 26],
 }
 
 impl From<CharSetBuf> for ffi::mu_Charset {
     #[inline]
     fn from(value: CharSetBuf) -> Self {
-        let mut chars: ffi::mu_Charset = [ptr::null(); 23];
+        let mut chars: ffi::mu_Charset = [ptr::null(); 26];
         for (i, slice) in value.buf.iter().enumerate() {
             chars[i] = slice.as_ptr() as *const c_char;
         }
@@ -2338,7 +2382,10 @@ impl From<CharSet> for CharSetBuf {
                 char_to_slice(char_set.rbot),
                 char_to_slice(char_set.lcross),
                 char_to_slice(char_set.rcross),
-                char_to_slice(char_set.underbar),
+                char_to_slice(char_set.lunderbar),
+                char_to_slice(char_set.munderbar),
+                char_to_slice(char_set.runderbar),
+                char_to_slice(char_set.sunderbar),
                 char_to_slice(char_set.underline),
                 char_to_slice(char_set.ellipsis),
             ],
@@ -2778,9 +2825,8 @@ mod tests {
 
         let mut report = Report::new()
             .with_config(Config::new().with_color_disabled())
-            .with_location(1485, 0)
             .with_title(Level::Error, "Error")
-            .with_label(1485..1489usize)
+            .with_primary_label(1485..1489usize)
             .with_message("here");
 
         let output = report.render_to_string((MySource, "file.rs")).unwrap();
@@ -3027,7 +3073,7 @@ mod tests {
                ,-[ empty.rs:1:1 ]
                |
              1 |
-               | |
+               | ^
                | `- empty
             ---'
             "##

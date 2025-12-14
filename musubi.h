@@ -1577,7 +1577,7 @@ static int muR_lines(mu_Report *R) {
         if (muC_fill_llcache(R)) {
             if (context < 0 && rendered_line + 1 < line_no) {
                 context = R->config->context_lines;
-                line_no -= mu_min(context, line_no - rendered_line) + 1;
+                line_no -= mu_min(context, (int)(line_no - rendered_line)) + 1;
                 continue; /* rollback to show leading context */
             }
             muX(muR_clusters(R, line_no));
