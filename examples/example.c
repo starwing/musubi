@@ -29,7 +29,6 @@ int main(void) {
     R = mu_new(NULL, NULL); /* NULL, NULL = use default malloc */
     mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Type mismatch"));
     mu_code(R, mu_literal("E001"));
-    mu_location(R, 14, 0); /* Position 14 in source 0 for header display */
 
     /* Add a label with message and color */
     mu_label(R, 15, 22, 0);

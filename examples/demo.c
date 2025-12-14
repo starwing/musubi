@@ -30,7 +30,6 @@ int main(void) {
 
     mu_code(R, mu_literal("3"));
     mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Incompatible types"));
-    mu_location(R, 11, 0);
     mu_label(R, 32, 33, 0);
     mu_message(R, mu_literal("This is of type Nat"), 0);
     mu_color(R, mu_fromcolorcode, &label1);
@@ -38,6 +37,7 @@ int main(void) {
     mu_message(R, mu_literal("This is of type Str"), 0);
     mu_color(R, mu_fromcolorcode, &label2);
     mu_label(R, 11, 48, 0);
+    mu_primary(R);
     mu_message(
         R, mu_literal("This values are outputs of this match expression"), 0);
     mu_color(R, mu_fromcolorcode, &label3);

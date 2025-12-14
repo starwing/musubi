@@ -113,15 +113,21 @@ static int Lmu_config_libcall(lua_State *L) {
     return Lmu_config_new(L);
 }
 
+static int Lmu_config_compact(lua_State *L) {
+    mu_Config *config = lmu_checkconfig(L, 1);
+    config->compact = lua_toboolean(L, 2);
+    return lua_settop(L, 1), 1;
+}
+
 static int Lmu_config_cross_gap(lua_State *L) {
     mu_Config *config = lmu_checkconfig(L, 1);
     config->cross_gap = lua_toboolean(L, 2);
     return lua_settop(L, 1), 1;
 }
 
-static int Lmu_config_compact(lua_State *L) {
+static int Lmu_config_multiline_arrows(lua_State *L) {
     mu_Config *config = lmu_checkconfig(L, 1);
-    config->compact = lua_toboolean(L, 2);
+    config->multiline_arrows = lua_toboolean(L, 2);
     return lua_settop(L, 1), 1;
 }
 
@@ -131,9 +137,9 @@ static int Lmu_config_underlines(lua_State *L) {
     return lua_settop(L, 1), 1;
 }
 
-static int Lmu_config_column_order(lua_State *L) {
+static int Lmu_config_minimise_crossings(lua_State *L) {
     mu_Config *config = lmu_checkconfig(L, 1);
-    config->column_order = lua_toboolean(L, 2);
+    config->minimise_crossings = lua_toboolean(L, 2);
     return lua_settop(L, 1), 1;
 }
 
@@ -143,9 +149,9 @@ static int Lmu_config_align_messages(lua_State *L) {
     return lua_settop(L, 1), 1;
 }
 
-static int Lmu_config_multiline_arrows(lua_State *L) {
+static int Lmu_config_context_lines(lua_State *L) {
     mu_Config *config = lmu_checkconfig(L, 1);
-    config->multiline_arrows = lua_toboolean(L, 2);
+    config->context_lines = (int)luaL_checkinteger(L, 2);
     return lua_settop(L, 1), 1;
 }
 
@@ -202,12 +208,13 @@ static void lmu_openconfig(lua_State *L) {
         {"__index", NULL},
 #define ENTRY(name) {#name, Lmu_config_##name}
         ENTRY(new),
-        ENTRY(cross_gap),
         ENTRY(compact),
-        ENTRY(underlines),
-        ENTRY(column_order),
-        ENTRY(align_messages),
+        ENTRY(cross_gap),
         ENTRY(multiline_arrows),
+        ENTRY(underlines),
+        ENTRY(minimise_crossings),
+        ENTRY(align_messages),
+        ENTRY(context_lines),
         ENTRY(tab_width),
         ENTRY(limit_width),
         ENTRY(ambi_width),
@@ -253,19 +260,62 @@ static void lmu_initrefs(lmu_Report *lr) {
     lr->color_ref = LUA_NOREF;
 }
 
+static void lmu_checkerror(lua_State *L, int err) {
+    switch (err) {
+    case MU_OK:       return;
+    case MU_ERRPARAM: luaL_error(L, "musubi: invalid parameter"); break;
+    case MU_ERRSRC:   luaL_error(L, "musubi: source out of range"); break;
+    case MU_ERRFILE:  luaL_error(L, "musubi: file operation failed"); break;
+
+    /* LCOV_EXCL_START */
+    default: luaL_error(L, "musubi: unknown error(%d)", err); break;
+    } /* LCOV_EXCL_STOP */
+}
+
+static void lmu_register(lua_State *L, int *ref) {
+    if (*ref != LUA_NOREF) lua_rawseti(L, -2, *ref);
+    else *ref = luaL_ref(L, -2);
+}
+
+static void lmu_report_settitle(lua_State *L, lmu_Report *lr, int count) {
+    size_t      cllen, msglen;
+    const char *custom_level, *msg;
+    if (count == 2) {
+        msg = luaL_checklstring(L, 2, &msglen);
+        lmu_checkerror(L, mu_title(lr->R, MU_ERROR, mu_literal(""),
+                                   mu_lslice(msg, msglen)));
+        lua_getuservalue(L, 1);
+        lua_pushvalue(L, 2);
+        lmu_register(L, &lr->custom_level_ref);
+    } else if (count >= 3) {
+        mu_Level level = MU_CUSTOM_LEVEL;
+        custom_level = luaL_checklstring(L, 2, &cllen);
+        msg = luaL_checklstring(L, 3, &msglen);
+        if (strcasecmp(custom_level, "error") == 0) level = MU_ERROR;
+        else if (strcasecmp(custom_level, "warning") == 0) level = MU_WARNING;
+        lmu_checkerror(L, mu_title(lr->R, level, mu_lslice(custom_level, cllen),
+                                   mu_lslice(msg, msglen)));
+        lua_getuservalue(L, 1);
+        lua_pushvalue(L, 2);
+        lmu_register(L, &lr->custom_level_ref);
+        lua_pushvalue(L, 3);
+        lmu_register(L, &lr->msg_ref);
+    }
+}
+
 static int Lmu_report_new(lua_State *L) {
-    int         ty = lua_type(L, 1);
-    size_t      pos = (size_t)luaL_optinteger(L, 1, 1);
-    mu_Id       src_id = (mu_Id)luaL_optinteger(L, 2, 1);
-    lmu_Report *lr = (lmu_Report *)lua_newuserdata(L, sizeof(lmu_Report));
+    int         top = lua_gettop(L) + 1;
+    lmu_Report *lr;
+    lr = (lmu_Report *)lua_newuserdata(L, sizeof(lmu_Report));
     memset(lr, 0, sizeof(lmu_Report));
     lua_createtable(L, 8, 0);
     lua_setuservalue(L, -2);
     lr->R = mu_new(NULL, NULL);
-    if (ty != LUA_TNONE) mu_location(lr->R, pos - 1, src_id - 1);
     lmu_initrefs(lr);
     luaL_setmetatable(L, LMU_REPORT_TYPE);
-    return 1;
+    lua_insert(L, 1);
+    lmu_report_settitle(L, lr, top);
+    return lua_settop(L, 1), 1;
 }
 
 static int Lmu_report_libcall(lua_State *L) {
@@ -286,18 +336,6 @@ static lmu_Report *lmu_checkreport(lua_State *L, int idx) {
     return lr;
 }
 
-static void lmu_checkerror(lua_State *L, int err) {
-    switch (err) {
-    case MU_OK:       return;
-    case MU_ERRPARAM: luaL_error(L, "musubi: invalid parameter"); break;
-    case MU_ERRSRC:   luaL_error(L, "musubi: source out of range"); break;
-    case MU_ERRFILE:  luaL_error(L, "musubi: file operation failed"); break;
-
-    /* LCOV_EXCL_START */
-    default: luaL_error(L, "musubi: unknown error(%d)", err); break;
-    } /* LCOV_EXCL_STOP */
-}
-
 static int Lmu_report_reset(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
     lua_createtable(L, 8, 0); /* clean the uservalue table */
@@ -306,11 +344,6 @@ static int Lmu_report_reset(lua_State *L) {
     mu_reset(lr->R);
     mu_delcache(lr->C), lr->C = NULL;
     return lua_settop(L, 1), 1;
-}
-
-static void lmu_register(lua_State *L, int *ref) {
-    if (*ref != LUA_NOREF) lua_rawseti(L, -2, *ref);
-    else *ref = luaL_ref(L, -2);
 }
 
 static int Lmu_report_config(lua_State *L) {
@@ -325,19 +358,7 @@ static int Lmu_report_config(lua_State *L) {
 
 static int Lmu_report_title(lua_State *L) {
     lmu_Report *lr = lmu_checkreport(L, 1);
-    size_t      cllen, msglen;
-    const char *custom_level = luaL_optlstring(L, 2, NULL, &cllen);
-    const char *msg = luaL_optlstring(L, 3, NULL, &msglen);
-    mu_Level    level = MU_CUSTOM_LEVEL;
-    if (strcasecmp(custom_level, "error") == 0) level = MU_ERROR;
-    else if (strcasecmp(custom_level, "warning") == 0) level = MU_WARNING;
-    lmu_checkerror(L, mu_title(lr->R, level, mu_lslice(custom_level, cllen),
-                               mu_lslice(msg, msglen)));
-    lua_getuservalue(L, 1);
-    lua_pushvalue(L, 2);
-    lmu_register(L, &lr->custom_level_ref);
-    lua_pushvalue(L, 3);
-    lmu_register(L, &lr->msg_ref);
+    lmu_report_settitle(L, lr, lua_gettop(L));
     return lua_settop(L, 1), 1;
 }
 
@@ -349,14 +370,6 @@ static int Lmu_report_code(lua_State *L) {
     lua_getuservalue(L, 1);
     lua_pushvalue(L, 2);
     lmu_register(L, &lr->code_ref);
-    return lua_settop(L, 1), 1;
-}
-
-static int Lmu_report_location(lua_State *L) {
-    mu_Report *R = lmu_checkreport(L, 1)->R;
-    size_t     pos = (size_t)luaL_checkinteger(L, 2);
-    mu_Id      src_id = (mu_Id)luaL_optinteger(L, 3, 1);
-    lmu_checkerror(L, mu_location(R, pos - 1, src_id - 1));
     return lua_settop(L, 1), 1;
 }
 
@@ -438,6 +451,12 @@ static int Lmu_report_color(lua_State *L) {
     }
     lua_pushvalue(L, 2);
     lmu_register(L, &lr->color_ref);
+    return lua_settop(L, 1), 1;
+}
+
+static int Lmu_report_primary(lua_State *L) {
+    mu_Report *R = lmu_checkreport(L, 1)->R;
+    lmu_checkerror(L, mu_primary(R));
     return lua_settop(L, 1), 1;
 }
 
@@ -572,10 +591,10 @@ static void lmu_openreport(lua_State *L) {
         ENTRY(config),
         ENTRY(title),
         ENTRY(code),
-        ENTRY(location),
         ENTRY(label),
         ENTRY(message),
         ENTRY(color),
+        ENTRY(primary),
         ENTRY(order),
         ENTRY(priority),
         ENTRY(source),

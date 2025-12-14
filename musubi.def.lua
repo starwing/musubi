@@ -71,22 +71,23 @@ local ColorGenerator = {}
 --- # Example
 --- ```lua
 --- local cfg = mu.config()
----     :compact(true)           -- More condensed output
----     :tab_width(4)            -- 4-space tabs
----     :limit_width(80)         -- Wrap at 80 columns
----     :column_order(false)     -- Natural label ordering (default)
----     :align_messages(true)    -- Align label messages (default)
+---     :compact(true)            -- More condensed output
+---     :tab_width(4)             -- 4-space tabs
+---     :limit_width(80)          -- Wrap at 80 columns
+---     :minimise_crossings(true) -- Try to avoid label crossings (default)
+---     :align_messages(true)     -- Align label messages (default)
 --- ```
 ---
 --- @class Config
 --- @overload fun(opts?: table): Config
 --- @field new fun(opts?: table): Config  # Create new config with optional table
---- @field cross_gap fun(self: Config, enable: boolean): Config  # Draw arrows across line gaps (default: true)
 --- @field compact fun(self: Config, enable: boolean): Config  # Compact mode: merge underlines and arrows (default: false)
+--- @field cross_gap fun(self: Config, enable: boolean): Config  # Draw arrows across line gaps (default: true)
 --- @field underlines fun(self: Config, enable: boolean): Config  # Draw ^^^ underlines for spans (default: true)
---- @field column_order fun(self: Config, enable: boolean): Config  # Simple column order vs natural ordering (default: false=natural)
---- @field align_messages fun(self: Config, enable: boolean): Config  # Align label messages to same column (default: true)
 --- @field multiline_arrows fun(self: Config, enable: boolean): Config  # Draw arrows for multi-line spans (default: true)
+--- @field minimise_crossings fun(self: Config, enable: boolean): Config  # Try to avoid label crossings (default: true)
+--- @field align_messages fun(self: Config, enable: boolean): Config  # Align label messages to same column (default: true)
+--- @field context_lines fun(self: Config, lines: integer): Config  # Number of context lines around labels (default: 0)
 --- @field tab_width fun(self: Config, width: integer): Config  # Tab expansion width in spaces (default: 4)
 --- @field limit_width fun(self: Config, width?: integer): Config  # Max line width, 0=unlimited (default: 0)
 --- @field ambi_width fun(self: Config, width: integer): Config  # Ambiguous character width: 1 or 2 (default: 1)
@@ -108,7 +109,7 @@ local Config = {}
 --- hold all added sources.
 ---
 --- # Lifecycle
---- 1. Create: `mu.report(pos, src_id)` where pos is error location
+--- 1. Create: `mu.report()`
 --- 2. Configure title: :title(kind, message) sets diagnostic kind and main message
 --- 3. Add labels: :label(start, end) creates a span, then :message() to annotate it
 --- 4. Render: :render(writer?) produces output string
@@ -139,17 +140,19 @@ local Config = {}
 --- are kept alive until the Report is garbage collected.
 ---
 --- @class Report
---- @overload fun(pos?: integer, id?: string|integer): Report
---- @field new fun(pos?: integer, id?: string|integer): Report  # Create report at position in source id
+--- @overload fun(): Report
+--- @overload fun(msg: string): Report
+--- @overload fun(title: string, msg: string): Report
+--- @field new fun(): Report  # Create report at position in source id
 --- @field delete fun(self: Report)  # Manually free resources (normally GC'd)
 --- @field reset fun(self: Report): Report  # Clear all labels and config, keep sources
 --- @field config fun(self: Report, config: Config): Report  # Set rendering config (optional, uses default if not called)
 --- @field code fun(self: Report, code: string): Report  # Set diagnostic code (e.g., "E0001")
 --- @field title fun(self: Report, kind: LevelKind, message: string): Report  # Set kind and main message
---- @field location fun(self: Report, pos: integer, src_id?: integer): Report  # Set primary location of diagnostic
 --- @field label fun(self: Report, start: integer, end?: integer, src_id?: integer): Report  # Add label span (subsequent calls modify this label)
 --- @field message fun(self: Report, message: string, width?: integer): Report  # Set message for current label
 --- @field color fun(self: Report, color: Color|string|function): Report  # Set color for current label (Color object, code string, or function)
+--- @field primary fun(self: Report): Report  # Mark current label as primary
 --- @field order fun(self: Report, order: integer): Report  # Set display order for current label
 --- @field priority fun(self: Report, priority: integer): Report  # Set priority for current label
 --- @field note fun(self: Report, note: string): Report  # Add footer note

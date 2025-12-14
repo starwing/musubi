@@ -7,7 +7,7 @@
 ![Language](https://img.shields.io/badge/language-Lua%20%7C%20C%20%7C%20Rust-blue)
 [![Crates.io](https://img.shields.io/crates/v/musubi-rs)](https://crates.io/crates/musubi-rs)
 [![docs.rs](https://img.shields.io/docsrs/musubi-rs)](https://docs.rs/musubi-rs)
-![Version](https://img.shields.io/badge/version-0.4.0-green)
+![Version](https://img.shields.io/badge/version-0.5.0-green)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 [![Coverage Status](https://coveralls.io/repos/github/starwing/musubi/badge.svg?branch=master)](https://coveralls.io/github/starwing/musubi?branch=master)
 
@@ -68,12 +68,11 @@ local mu = require "musubi"
 local cg = mu.colorgen()
 
 print(
-    mu.report(12)
+    mu.report("Error", "Incompatible types")
     :code "3"
-    :title("Error", "Incompatible types")
     :label(33, 33):message("This is of type Nat"):color(cg:next())
     :label(43, 45):message("This is of type Str"):color(cg:next())
-    :label(12, 48):message("This values are outputs of this match expression"):color(cg:next())
+    :label(12, 48):primary():message("This values are outputs of this match expression"):color(cg:next())
     :label(1, 48):message("The definition has a problem"):color(cg:next())
     :label(51, 76):message("Usage of definition here"):color(cg:next())
     :note "Outputs of match expressions must coerce to the same type"
@@ -123,6 +122,9 @@ gcc -O3 -Wall -shared -fPIC -o musubi.so musubi.c -llua
 
 # Or with coverage instrumentation
 gcc -shared -fPIC --coverage -o musubi.so musubi.c -llua
+
+# Or with luarocks
+luarocks install musubi
 ```
 
 **macOS:**
@@ -143,10 +145,8 @@ local mu = require "musubi"
 local cg = mu.colorgen()
 
 -- Build a report with inline source
-local report = mu.report()
-    :title("Error", "Something went wrong")
+local report = mu.report("Error", "Something went wrong")
     :code("E001")
-    :location(14)  -- Set header location
     :label(14, 20):message("This is the problem"):color(cg:next())
     :note("Try fixing this by...")
     :source("local x = 10 + 'hello'", "example.js")
@@ -167,7 +167,7 @@ local cfg = mu.config()
     :char_set "unicode"       -- Use Unicode box-drawing characters
     :index_type "char"        -- Use character offsets (vs "byte")
     :ambi_width(1)            -- Ambiguous character width (1 or 2)
-    :column_order(false)      -- Use natural label ordering (default)
+    :minimise_crossings(true) -- Try to avoid label crossings (default)
     :align_messages(true)     -- Align label messages (default)
 
 mu.report(0)
@@ -185,21 +185,17 @@ local cache = mu.cache()
     :source("fn foo() { ... }", "foo.rs")   -- Source ID 0
     :source("fn bar() { foo(); }", "bar.rs") -- Source ID 1
 
-local report = mu.report()
-    :title("Error", "Undefined reference")
-    :location(50, 1)  -- Header shows bar.rs:50
+local report = mu.report("Error", "Undefined reference")
     :label(10, 20, 0):message("Defined here")
-    :label(50, 60, 1):message("Used here")
+    :label(50, 60, 1):message("Used here"):primary()  -- Primary label for header position
 
 cache:render(report)
 print(report)
 
 -- Method 2: Inline sources (also works, auto-creates cache)
-mu.report()
-    :title("Error", "Cross-file error")
-    :location(10, 0)
+mu.report("Error", "Cross-file error")
     :label(10, 20, 0):message("Defined here")
-    :label(50, 60, 1):message("Used here")
+    :label(50, 60, 1):message("Used here"):primary()
     :source("fn foo() { ... }", "foo.rs")
     :source("fn bar() { foo(); }", "bar.rs")
     :render()
@@ -212,13 +208,51 @@ local mu = require "musubi"
 local io = require "io"
 
 local fp = io.open("large_file.txt", "r")
-mu.report(0)
+mu.report("Error", "File processing error")
     :source(fp, "large_file.txt")  -- Streams file on-demand
     :label(100, 150):message("Error in large file")
     :render()
 ```
 
 **Notice** that if you use file handle on Windows, the `musubi.so` must not be built as static linking (`/MT`).
+
+---
+
+### Primary Label Mechanism
+
+The **primary label** determines which file and position appears in the diagnostic header. This is especially important for multi-file and multi-label diagnostics.
+
+#### How It Works
+
+1. **Explicit Primary**: Call `:primary()` (Lua) or `mu_primary(R)` (C) after a label to mark it as primary
+2. **Automatic Fallback**: If no primary label is set, the header uses the earliest label position across all sources
+
+#### Examples
+
+**Lua - Cross-file diagnostic**:
+```lua
+mu.report("Error", "Type mismatch in function call")
+    :label(15, 20, 0):message("function defined here")
+    :label(42, 48, 1):message("called with wrong type"):primary()  -- Header shows file 1, line 42
+    :render()
+```
+
+**C - Primary label**:
+```c
+mu_label(R, 15, 20, 0);  /* foo.c */
+mu_message(R, mu_literal("function defined here"), 0);
+
+mu_label(R, 42, 48, 1);  /* bar.c */
+mu_message(R, mu_literal("called with wrong type"), 0);
+mu_primary(R);           /* Header shows bar.c:42 */
+```
+
+#### Benefits
+
+- **Clear error origin**: Header shows the most relevant location for the diagnostic
+- **Cross-file clarity**: Explicitly mark which file/line the error originated from
+- **Natural ordering**: Labels are grouped and ordered by source file and label order
+- **Backward compatible**: If you don't use `:primary()`, the first label determines the header
 
 ---
 
@@ -283,12 +317,12 @@ int main(void) {
     R = mu_new(NULL, NULL); /* NULL, NULL = use default malloc */
     mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Type mismatch"));
     mu_code(R, mu_literal("E001"));
-    mu_location(R, 14, 0); /* Position 14 in source 0 for header display */
 
     /* Add a label with message and color */
     mu_label(R, 15, 22, 0);
     mu_message(R, mu_literal("expected number, got string"), 0);
     mu_color(R, mu_fromcolorcode, &color1);
+    mu_primary(R);  /* Mark as primary label for reference header  */
 
     /* Render to stdout */
     mu_writer(R, stdout_writer, NULL);
@@ -341,9 +375,9 @@ mu_Source *S2 = mu_addmemory(&C, mu_lslice("fn bar() { foo(); }", 19),
 /* Cross-file diagnostic */
 mu_Report *R = mu_new(NULL, NULL);
 mu_title(R, MU_ERROR, mu_literal(""), mu_literal("Undefined reference"));
-mu_location(R, 11, 1);   /* Header shows bar.c:11 (source id 1) */
 mu_label(R, 11, 14, 1);  /* bar.c: source id 1 */
 mu_message(R, mu_literal("called here"), 0);
+mu_primary(R);           /* Primary label - reference shows bar.c:11 */
 mu_label(R, 3, 6, 0);    /* foo.c: source id 0 */
 mu_message(R, mu_literal("defined here"), 0);
 mu_writer(R, stdout_writer, NULL);  /* See Basic Example for stdout_writer */
@@ -361,7 +395,6 @@ mu_Cache *C = NULL;
 FILE *fp = fopen("large_file.c", "r");
 mu_Source *S = mu_addfile(&C, fp, mu_lslice("large_file.c", 12));
 /* musubi reads lines only when needed for rendering */
-mu_location(R, pos, 0);  /* Optional: set header location */
 mu_render(R, C);
 fclose(fp);  /* Close after rendering */
 mu_delcache(C);
@@ -452,10 +485,10 @@ If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp
 - `void mu_reset(mu_Report *R)` - Reset Report for reuse
 - `int mu_title(mu_Report *R, mu_Level level, mu_Slice custom, mu_Slice msg)` - Set kind and title
 - `int mu_code(mu_Report *R, mu_Slice code)` - Set error code
-- `int mu_location(mu_Report *R, size_t pos, mu_Id src_id)` - Set primary location for header display
 - `int mu_label(mu_Report *R, size_t start, size_t end, mu_Id src_id)` - Add label span
 - `int mu_message(mu_Report *R, mu_Slice msg, int width)` - Set message for last label
 - `int mu_color(mu_Report *R, mu_Color *color, void *ud)` - Set color function for last label
+- `int mu_primary(mu_Report *R)` - Mark last label as primary (determines header location)
 - `int mu_order(mu_Report *R, int order)` - Set order for last label
 - `int mu_priority(mu_Report *R, int priority)` - Set priority for last label
 - `int mu_note(mu_Report *R, mu_Slice note)` - Add footer note
@@ -494,13 +527,15 @@ If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp
 
 | Method                             | Description                                                        |
 | ---------------------------------- | ------------------------------------------------------------------ |
-| `mu.report(pos?, src_id?)`         | Create a new report at optional position `pos`                     |
+| `mu.report()`                      | Create a new report                                                |
+| `mu.report(message)`               | Create report with error message                                   |
+| `mu.report(level, message)`        | Create report with level and message                               |
 | `:title(level, message)`           | Set report level (`"Error"`, `"Warning"`) and title                |
 | `:code(code)`                      | Set optional error code (e.g., `"E0308"`)                          |
-| `:location(pos, src_id?)`          | Set primary location for header display                            |
 | `:label(start, end?, src_id?)`     | Add a label span (half-open interval `[start, end)`)               |
 | `:message(text, width?)`           | Attach message to the last added label                             |
 | `:color(color)`                    | Set color for the last added label                                 |
+| `:primary()`                       | Mark last label as primary (determines header location)            |
 | `:order(n)`                        | Set display order for the last label                               |
 | `:priority(n)`                     | Set priority for clustering                                        |
 | `:note(text)`                      | Add a note to the footer                                           |
@@ -510,21 +545,22 @@ If alloc fails (returns NULL), you must jumps out of current flow (e.g., longjmp
 
 ### Configuration
 
-| Option             | Type    | Default     | Description                                             |
-| ------------------ | ------- | ----------- | ------------------------------------------------------- |
-| `compact`          | boolean | `false`     | Compact mode (works with underlines)                    |
-| `cross_gap`        | boolean | `true`      | Draw arrows across skipped lines                        |
-| `underlines`       | boolean | `true`      | Draw underlines for single-line labels                  |
-| `column_order`     | boolean | `false`     | Simple column order (true) vs natural ordering (false)  |
-| `align_messages`   | boolean | `true`      | Align label messages to same column                     |
-| `multiline_arrows` | boolean | `true`      | Use arrows for multi-line spans                         |
-| `tab_width`        | integer | `4`         | Number of spaces per tab                                |
-| `limit_width`      | integer | `0`         | Max line width (0 = unlimited)                          |
-| `ambi_width`       | integer | `1`         | Width of ambiguous Unicode characters                   |
-| `label_attach`     | string  | `"middle"`  | Label attachment point (`"start"`, `"middle"`, `"end"`) |
-| `index_type`       | string  | `"char"`    | Position indexing (`"char"` or `"byte"`)                |
-| `char_set`         | string  | `"unicode"` | Glyph set (`"unicode"` or `"ascii"`)                    |
-| `color`            | boolean | `true`      | Enable ANSI color codes                                 |
+| Option               | Type    | Default     | Description                                             |
+| -------------------- | ------- | ----------- | ------------------------------------------------------- |
+| `compact`            | boolean | `false`     | Compact mode (works with underlines)                    |
+| `cross_gap`          | boolean | `true`      | Draw arrows across skipped lines                        |
+| `multiline_arrows`   | boolean | `true`      | Use arrows for multi-line spans                         |
+| `underlines`         | boolean | `true`      | Draw underlines for single-line labels                  |
+| `minimise_crossings` | boolean | `true`      | Try to avoid label crossings (default)                  |
+| `align_messages`     | boolean | `true`      | Align label messages to same column                     |
+| `context_lines`      | integer | `0`         | Number of context lines before/after labeled lines      |
+| `tab_width`          | integer | `4`         | Number of spaces per tab                                |
+| `limit_width`        | integer | `0`         | Max line width (0 = unlimited)                          |
+| `ambi_width`         | integer | `1`         | Width of ambiguous Unicode characters                   |
+| `label_attach`       | string  | `"middle"`  | Label attachment point (`"start"`, `"middle"`, `"end"`) |
+| `index_type`         | string  | `"char"`    | Position indexing (`"char"` or `"byte"`)                |
+| `char_set`           | string  | `"unicode"` | Glyph set (`"unicode"` or `"ascii"`)                    |
+| `color`              | boolean | `true`      | Enable ANSI color codes                                 |
 
 ### Cache API
 
@@ -559,10 +595,8 @@ local cache = mu.cache()
     :source("import foo", "main.py")
     :source("def foo(): pass", "lib.py")
 
-local report = mu.report()
-    :title("Error", "Import error")
-    :location(7, 0)                    -- Header shows main.py:7
-    :label(7, 10, 0):message("imported here")
+local report = mu.report("Error", "Import error")
+    :label(7, 10, 0):message("imported here"):primary()  -- Primary: header shows main.py:7
     :label(4, 7, 1):message("defined here")
 
 cache:render(report)  -- Cache provides sources to report
@@ -572,8 +606,7 @@ print(report)         -- Get rendered output
 **Method 2: Report with inline sources** (convenience for single source):
 
 ```lua
-local report = mu.report()
-    :title("Error", "Syntax error")
+local report = mu.report("Error", "Syntax error")
     :label(0, 3):message("unexpected token")
     :source("let x = 42;", "main.rs")  -- Inline source registration
     :render()                          -- Returns rendered string
@@ -688,7 +721,7 @@ genhtml lcov.info -o coverage/
 ### Test Coverage
 
 Both implementations maintain **100% test coverage**:
-- 100 test cases covering all rendering paths
+- 100+ test cases covering all rendering paths
 - Edge cases: zero-width spans, CJK characters, tab expansion, window truncation
 - Regression tests for all fixed bugs
 - Pixel-perfect output verification (2400+ lines of expected output)
@@ -746,20 +779,6 @@ Contributions are welcome! Please:
 3. **Follow existing style**: Lua uses tabs, C uses 4 spaces
 4. **Update documentation**: Keep README and .github/*.md in sync
 
-### Development Workflow
-
-```bash
-# Run tests with coverage
-lua -lluacov test.lua
-luacov ariadne.lua
-
-# Find uncovered lines
-grep '^\*\+0 ' luacov.report.out
-
-# Run specific test
-lua test.lua TestBasic.test_simple_label
-```
-
 ---
 
 ## License
@@ -782,6 +801,7 @@ MIT License - See [LICENSE](LICENSE) for details.
 - [Annotate Snippets (Rust)](https://github.com/rust-lang/annotate-snippets-rs) - Similar project
 - [Miette (Rust)](https://github.com/zkat/miette) - Fancy diagnostics library
 - [Codespan (Rust)](https://github.com/brendanzab/codespan) - Alternative approach
+- [Codesnake (Rust)](https://github.com/01mf02/codesnake) - Another diagnostics library
 
 ---
 

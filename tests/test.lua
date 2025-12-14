@@ -1,14 +1,13 @@
 package.path = "tests/?.lua;" .. package.path
 local lu = require "luaunit"
-local ariadne = require "musubi"
+local mu = require "musubi"
 
 -- print a demo
 if #arg == 0 then
-  local cg = ariadne.colorgen()
+  local cg = mu.colorgen()
   local report =
-      ariadne.report(12)
+      mu.report("Incompatible types")
       :code "3"
-      :title("Error", "Incompatible types")
       :label(33, 33):message("This is of type Nat"):color(cg:next())
       :label(43, 45):message("This is of type Str"):color(cg:next())
       :label(12, 48):message("This values are outputs of this match expression"):color(cg:next())
@@ -37,7 +36,7 @@ end
 
 ---@return Config
 local function no_color_ascii()
-  return ariadne.config()
+  return mu.config()
       :color(false)
       :char_set "ascii"
 end
@@ -45,7 +44,7 @@ end
 local TestColor = {}
 do
   function TestColor.test_colors()
-    local gen = ariadne.colorgen()
+    local gen = mu.colorgen()
     local colors = {}
     colors[#colors + 1] = gen:next()
     colors[#colors + 1] = gen:next()
@@ -60,7 +59,7 @@ local TestWrite = {}
 do
   function TestWrite.test_empty()
     local msg = remove_trailing(
-      ariadne.report(0)
+      mu.report()
       :config(no_color_ascii())
       :source(""):render()
     )
@@ -70,7 +69,7 @@ Error:
 ]=])
 
     msg = remove_trailing(
-      ariadne.report(0)
+      mu.report()
       :config(no_color_ascii())
       :label(1, 1):message("Empty source")
       :source(""):render()
@@ -78,10 +77,10 @@ Error:
 
     lu.assertEquals(msg, [=[
 Error:
-   ,-[ <unknown>:?:? ]
+   ,-[ <unknown>:1:1 ]
    |
  1 |
-   | |
+   | ^
    | `- Empty source
 ---'
 ]=])
@@ -92,13 +91,13 @@ Error:
       "invalid config field 'invalid'",
       function()
         --- @diagnostic disable-next-line
-        ariadne.config { invalid = "invalid" }
+        mu.config { invalid = "invalid" }
       end
     )
   end
 
   function TestWrite.test_error()
-    local report = ariadne.report(0)
+    local report = mu.report()
     lu.assertErrorMsgContains("at least one source must be added before render",
       function() report:render() end)
     lu.assertErrorMsgContains("invalid parameter",
@@ -112,9 +111,8 @@ Error:
 
   function TestWrite.test_one_message()
     local msg = remove_trailing(
-      ariadne.report(0)
+      mu.report("can't compare apples with oranges")
       :config(no_color_ascii())
-      :title("Error", "can't compare apples with oranges")
       :source("")
       :render()
     )
@@ -127,7 +125,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_two_labels_without_messages()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :title("Error", "can't compare apples with oranges")
       :label(1, 5)
       :label(10, 15)
@@ -148,7 +146,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_label_attach_start_with_blank_line()
     local text = "alpha\nbravo\ncharlie\n"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():label_attach "start")
       :title("Error", "can't compare apples with oranges")
       :label(1, 5):message("This is an apple")
@@ -174,7 +172,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_two_labels_with_messages_compact()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():compact(true):underlines(false))
       :title("Error", "can't compare apples with oranges")
       :label(1, 5):message("This is an apple")
@@ -194,7 +192,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_multi_byte_chars()
     local text = "äpplë == örängë;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "can't compare äpplës with örängës")
       :label(1, 5):message("This is an äpplë")
@@ -218,7 +216,7 @@ Error: can't compare äpplës with örängës
   function TestWrite.test_byte_label()
     local text = "äpplë == örängë;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():index_type "byte")
       :title("Error", "can't compare äpplës with örängës")
       :label(1, 7):message("This is an äpplë")
@@ -242,11 +240,11 @@ Error: can't compare äpplës with örängës
   function TestWrite.test_byte_column()
     local text = "äpplë == örängë;"
     local msg = remove_trailing(
-      ariadne.report(12)
+      mu.report()
       :config(no_color_ascii():index_type "byte")
       :title("Error", "can't compare äpplës with örängës")
       :label(1, 7):message("This is an äpplë")
-      :label(12, 20):message("This is an örängë")
+      :label(12, 20):message("This is an örängë"):primary()
       :source(text):render()
     )
 
@@ -266,7 +264,7 @@ Error: can't compare äpplës with örängës
   function TestWrite.test_tab_width()
     local code = "a\tbcd\te"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():tab_width(5))
       :title("Error", "tab width test")
       :label(1, 3):message("This spans a tab")
@@ -289,7 +287,7 @@ Error: tab width test
   function TestWrite.test_label_at_end_of_long_line()
     local text = string.rep("apple == ", 100) .. "orange"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():index_type "byte")
       :title("Error", "can't compare apples with oranges")
       :label(#text - 5, #text):message("This is an orange")
@@ -298,7 +296,7 @@ Error: tab width test
 
     lu.assertEquals(msg, ([=[
 Error: can't compare apples with oranges
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:901 ]
    |
  1 | apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == apple == orange
    |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ^^^|^^
@@ -310,7 +308,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_label_of_width_zero_at_end_of_line()
     local text = "apple ==\n"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():index_type "byte")
       :title("Error", "unexpected end of file")
       :label(9):message("Unexpected end of file")
@@ -319,10 +317,10 @@ Error: can't compare apples with oranges
 
     lu.assertEquals(msg, ([=[
 Error: unexpected end of file
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:9 ]
    |
  1 | apple ==
-   |         |
+   |         ^
    |         `- Unexpected end of file
 ---'
 ]=]))
@@ -331,10 +329,10 @@ Error: unexpected end of file
   function TestWrite.test_empty_input()
     local text = ""
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "unexpected end of file")
-      :label(1, 0):message("No more fruit!")
+      :label(1, 1):message("No more fruit!")
       :source(text):render()
     )
 
@@ -343,7 +341,7 @@ Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
  1 |
-   | |
+   | ^
    | `- No more fruit!
 ---'
 ]=]))
@@ -352,7 +350,7 @@ Error: unexpected end of file
   function TestWrite.test_empty_input_help()
     local text = ""
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "unexpected end of file")
       :label(1, 0):message("No more fruit!")
@@ -365,7 +363,7 @@ Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
  1 |
-   | |
+   | ^
    | `- No more fruit!
    |
    | Help: have you tried going to the farmer's market?
@@ -376,7 +374,7 @@ Error: unexpected end of file
   function TestWrite.test_empty_input_note()
     local text = ""
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "unexpected end of file")
       :label(1, 0):message("No more fruit!")
@@ -389,7 +387,7 @@ Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
  1 |
-   | |
+   | ^
    | `- No more fruit!
    |
    | Note: eat your greens!
@@ -400,7 +398,7 @@ Error: unexpected end of file
   function TestWrite.test_empty_input_help_note()
     local text = ""
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "unexpected end of file")
       :label(1, 0):message("No more fruit!")
@@ -414,7 +412,7 @@ Error: unexpected end of file
    ,-[ <unknown>:1:1 ]
    |
  1 |
-   | |
+   | ^
    | `- No more fruit!
    |
    | Help: have you tried going to the farmer's market?
@@ -430,7 +428,7 @@ Error: unexpected end of file
     for i = 1, #text do
       for j = i, #text do
         local ok, result = pcall(function()
-          return ariadne.report(1)
+          return mu.report()
               :config(no_color_ascii():index_type "byte")
               :title("Error", "Label")
               :label(i, j):message("Label")
@@ -445,7 +443,7 @@ Error: unexpected end of file
   function TestWrite.test_multiline_label()
     local text = "apple\n==\norange"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :label(1, #text):message("illegal comparison")
       :source(text):render()
@@ -468,7 +466,7 @@ Error:
     local text = "https://example.com/"
     local colon_start = assert(text:find(":", 1, true)) - 1
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :label(1, #text):message("URL")
       :label(1, colon_start):message("scheme")
@@ -491,7 +489,7 @@ Error:
   function TestWrite.test_multiple_labels_same_span()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "can't compare apples with oranges")
       :label(1, 5):message("This is an apple")
@@ -527,7 +525,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_note()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "can't compare apples with oranges")
       :label(1, 5):message("This is an apple")
@@ -554,7 +552,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_note_compact()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():compact(true))
       :title("Error", "can't compare apples with oranges")
       :label(1, 5):message("This is an apple")
@@ -577,7 +575,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_help()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "can't compare apples with oranges")
       :label(1, 5):message("This is an apple")
@@ -604,7 +602,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_help_and_note()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "can't compare apples with oranges")
       :label(1, 5):message("This is an apple")
@@ -634,7 +632,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_single_note_single_line()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "can't compare apples with oranges")
       :label(1, 15):message("This is a strange comparison")
@@ -658,7 +656,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_multi_notes_single_lines()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "can't compare apples with oranges")
       :label(1, 15):message("This is a strange comparison")
@@ -685,7 +683,7 @@ Error: can't compare apples with oranges
   function TestWrite.test_multi_notes_multi_lines()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "can't compare apples with oranges")
       :label(1, 15):message("This is a strange comparison")
@@ -713,9 +711,8 @@ Error: can't compare apples with oranges
   function TestWrite.test_multi_helps_multi_lines()
     local text = "apple == orange;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report("Advice", "can't compare apples with oranges")
       :config(no_color_ascii())
-      :title("Advice", "can't compare apples with oranges")
       :label(1, 15):message("This is a strange comparison")
       :help("No need to try, they can't be compared.")
       :help("Yeah, really, please stop.\nIt has no resemblance.")
@@ -741,7 +738,7 @@ Advice: can't compare apples with oranges
   function TestWrite.test_display_line_offset()
     local text = "first line\nsecond line\n"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "line offset demo")
       :label(12, 22):message("Second line")
@@ -750,7 +747,7 @@ Advice: can't compare apples with oranges
 
     lu.assertEquals(msg, ([=[
 Error: line offset demo
-    ,-[ <unknown>:10:1 ]
+    ,-[ <unknown>:11:1 ]
     |
  11 | second line
     | ^^^^^|^^^^^
@@ -762,7 +759,7 @@ Error: line offset demo
   function TestWrite.test_label_ordering()
     local text = "abcdef"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "ordered labels")
       :label(1, 3):message("Left")
@@ -786,7 +783,7 @@ Error: ordered labels
   function TestWrite.test_split_labels()
     local text = "alpha\nbravo\ncharlie\n"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():label_attach "start")
       :title("Error", "gaps between labels")
       :label(1, 5):message("first")
@@ -812,7 +809,7 @@ Error: gaps between labels
   function TestWrite.test_zero_length_span()
     local text = "delta"
     local msg = remove_trailing(
-      ariadne.report(3)
+      mu.report()
       :config(no_color_ascii():label_attach "end")
       :title("Error", "zero length span")
       :label(3):message("point")
@@ -824,7 +821,7 @@ Error: zero length span
    ,-[ <unknown>:1:3 ]
    |
  1 | delta
-   |   |
+   |   ^
    |   `- point
 ---'
 ]=]))
@@ -833,7 +830,7 @@ Error: zero length span
   function TestWrite.test_priority_highlight_and_color()
     local text = "klmnop"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "overlap priorities")
       :label(1, 4):message("weak")
@@ -861,7 +858,7 @@ Error: overlap priorities
   function TestWrite.test_multiple_arrow_connectors()
     local text = "qrstuvwx"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "stacked arrows")
       :label(1, 3):message("left")
@@ -884,7 +881,7 @@ Error: stacked arrows
 
   function TestWrite.test_custom_report_with_code()
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :code("E100")
       :title("Notice", "custom kind")
@@ -898,13 +895,13 @@ Error: stacked arrows
 
   function TestWrite.test_warning_and_advice()
     local warning = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Warning", "careful")
       :source("w"):render()
     )
     local advice = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Advice", "consider")
       :source("a"):render()
@@ -920,7 +917,7 @@ Advice: consider
 
   function TestWrite.test_byte_index_out_of_bounds()
     local msg = remove_trailing(
-      ariadne.report(100)
+      mu.report()
       :config(no_color_ascii():index_type "byte")
       :title("Error", "unknown position")
       :source("hi"):render()
@@ -933,7 +930,7 @@ Error: unknown position
 
   function TestWrite.test_invalid_label()
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "invalid label")
       :label(999, 1000):message("ignored")
@@ -942,33 +939,11 @@ Error: unknown position
 
     lu.assertEquals(msg, ([=[
 Error: invalid label
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:6 ]
    |
  1 | short
-   |      |
+   |      ^
    |      `- ignored
----'
-]=]))
-  end
-
-  -- Additional coverage-focused tests (expected outputs intentionally left blank)
-  function TestWrite.test_oob_location_with_label_byte()
-    local text = "hi"
-    local msg = remove_trailing(
-      ariadne.report(100)
-      :config(no_color_ascii():index_type "byte")
-      :title("Error", "oob location with label")
-      :label(1, 1):message("label")
-      :source(text):render()
-    )
-
-    lu.assertEquals(msg, ([=[
-Error: oob location with label
-   ,-[ <unknown>:?:? ]
-   |
- 1 | hi
-   | |
-   | `-- label
 ---'
 ]=]))
   end
@@ -976,7 +951,7 @@ Error: oob location with label
   function TestWrite.test_multi_label_orders()
     local text = "apple, orange, banana;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "multiple label orders")
       :label(1, 5):message("first")
@@ -999,10 +974,48 @@ Error: multiple label orders
 ]=]))
   end
 
+  function TestWrite.test_ordered_labels()
+    local msg = remove_trailing(
+      mu.report()
+      :config(no_color_ascii())
+      :title("Error", "ordered labels")
+      :label(8, 12, 2):order(0):message("1")
+      :label(1, 6, 1):order(1):message("2")
+      :label(8, 12, 1):order(1):message("3")
+      :label(1, 6, 2):order(1):message("4")
+      :source("second\nthird", "a")
+      :source("fourth\nfirst", "b"):render()
+    )
+    lu.assertEquals(msg, ([=[
+Error: ordered labels
+   ,-[ b:2:1 ]
+   |
+ 2 | first
+   | ^^|^^
+   |   `---- 1
+   |
+   |-[ a:1:1 ]
+   |
+ 1 | second
+   | ^^^|^^
+   |    `---- 2
+ 2 | third
+   | ^^|^^
+   |   `---- 3
+   |
+   |-[ b:1:1 ]
+   |
+ 1 | fourth
+   | ^^^|^^
+   |    `---- 4
+---'
+]=]))
+  end
+
   function TestWrite.test_multi_label_no_align()
     local text = "apple, orange, banana;"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():align_messages(false))
       :title("Error", "multiple label orders")
       :label(1, 5):message("first")
@@ -1028,7 +1041,7 @@ Error: multiple label orders
   function TestWrite.test_natural_order()
     local code = "first line\nsecond line\nthird line\n"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():compact(true))
       :title("Error", "natural label order")
       :label(1, 22):message("last outer")
@@ -1044,20 +1057,20 @@ Error: multiple label orders
 Error: natural label order
    ,-[ <unknown>:1:1 ]
  1 |  ,-->first line
-   |,-----'
-   ||,----'
+   |,-|---'
+   ||,|---'
  2 ||||-->second line
    ||||       ^|^|^|^
-   ||||       |||||`--- last inline
-   ||||       |||`----- middle inline
-   ||||       |`------- first inline
-   |||`---------------- margin
-   ||`----------^------ first outer
-   |`---------------^-- last outer
+   ||||       |||||`|-- last inline
+   ||||       |||`|-|-- middle inline
+   ||||       |`|-|-|-- first inline
+   |||`-------|-|-|-|-- margin
+   ||`--------|-^-|-|-- first outer
+   |`---------|---|-^-- last outer
    |   ,------'   |
    |   |,---------'
  3 |   ||>third line
-   |   |`------------- first next
+   |   |`--|---------- first next
    |   `---^---------- second next
 ]=]))
   end
@@ -1065,7 +1078,7 @@ Error: natural label order
   function TestWrite.test_multiline_without_msg()
     local text = "line1\nline2"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "multiline label without message")
       :label(1, #text)
@@ -1085,7 +1098,7 @@ Error: multiline label without message
   function TestWrite.test_two_multiline_without_msg()
     local text = "first second\nline2"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "two multiline label without message")
       :label(1, #text)
@@ -1110,7 +1123,7 @@ Error: two multiline label without message
   function TestWrite.test_mix_multiline_without_msg()
     local text = "first second\nline2"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "mix multiline label without message")
       :label(1, #text)
@@ -1127,8 +1140,8 @@ Error: mix multiline label without message
    | |           ^
    | | ,---------'
  2 | | `-> line2
-   | |     ^^|^|
-   | |       `---- inline
+   | |     ^^|^^
+   | |       `-|-- inline
    | |         |
    | `---------'
 ---'
@@ -1140,7 +1153,7 @@ Error: mix multiline label without message
     -- multiline labels with messages ensure sorting comparators run.
     local text = "abc   \nmid\nxyz"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "multiline sort & padding")
       :label(5, 13):message("outer") -- from trailing spaces into last line
@@ -1150,7 +1163,7 @@ Error: mix multiline label without message
 
     lu.assertEquals(msg, ([=[
 Error: multiline sort & padding
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:5 ]
    |
  1 | ,---> abc
  2 | | ,-> mid
@@ -1168,17 +1181,17 @@ Error: multiline sort & padding
     -- messages, which drives connector rows and vbar cells.
     local text = "abcde\nfghij\n"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "pointer and connectors")
-      :label(2, 8):message("multi") -- multi spanning line1->line2
+      :label(2, 8):message("multi"):primary() -- multi spanning line1->line2
       :label(9, 10):message("inline")
       :source(text):render()
     )
 
     lu.assertEquals(msg, ([=[
 Error: pointer and connectors
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:2 ]
    |
  1 | ,-> abcde
  2 | |-> fghij
@@ -1203,13 +1216,13 @@ def six =
 ]]
 
     local msg = remove_trailing(
-      ariadne.report(12)
+      mu.report()
       :config(no_color_ascii())
       :code "3"
       :title("Error", "Incompatible types")
       :label(33, 33):message("This is of type Nat")
       :label(43, 45):message("This is of type Str")
-      :label(12, 48):message("This values are outputs of this match expression")
+      :label(12, 48):primary():message("This values are outputs of this match expression")
       :label(1, 48):message("The definition has a problem")
       :label(51, 76):message("Usage of definition here")
       :note("Outputs of match expressions must coerce to the same type")
@@ -1248,7 +1261,7 @@ def six =
 
   function TestWrite.test_multi_source_groups()
     local msg = remove_trailing(
-      ariadne.report(1, 1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "cross-file error")
       :source("apple", "file1.lua")
@@ -1273,11 +1286,11 @@ Error: cross-file error
   end
 
   function TestWrite.test_multi_source_with_cache()
-    local cache = ariadne.cache()
+    local cache = mu.cache()
         :source("apple", "file1.lua")
         :source("orange", "file2.lua")
     lu.assertEquals(#cache, 2)
-    local report = ariadne.report(1, 1)
+    local report = mu.report()
         :config(no_color_ascii())
         :title("Error", "cross-file error")
         :label(1, 5, 1)
@@ -1302,25 +1315,68 @@ Error: cross-file error
     lu.assertEquals(msg2, msg)
   end
 
-  function TestWrite.test_compact_multiline_arrows()
+  function TestWrite.test_without_multiline_arrows()
     local src = "apple\norange\nbanana"
-    local msg = ariadne.report(1)
-        :config(no_color_ascii():compact(true):multiline_arrows(true))
+    local msg = remove_trailing(mu.report()
+      :config(no_color_ascii():multiline_arrows(false))
+      :title("Error", "test_without_multiline_arrows")
+      :label(1, 12):message("outer")
+      :label(1, 7):message("inner")
+      :source(src):render())
+    lu.assertEquals(msg, [=[
+Error: test_without_multiline_arrows
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 |   ,-- apple
+   |   |   |
+   | ,-|---'
+ 2 | | |-- orange
+   | | |        |
+   | | `--------|--- inner
+   | |          |
+   | `----------^--- outer
+---'
+]=])
+  end
+
+  function TestWrite.test_compact_without_multiline_arrows()
+    local src = "apple\norange\nbanana"
+    local msg = mu.report()
+        :config(no_color_ascii():compact(true):multiline_arrows(false))
         :title("Error", "multiline span")
         :label(1, 12):message("crosses lines")
         :source(src):render()
     lu.assertEquals(msg, [=[
 Error: multiline span
    ,-[ <unknown>:1:1 ]
- 1 |,>apple
- 2 ||>orange
+ 1 |,-apple
+ 2 ||-orange
    |`--------- crosses lines
 ]=])
   end
 
+  function TestWrite.test_compact_multiline_arrows()
+    local cfg = no_color_ascii()
+    local src = "apple\norange\nbanana"
+    local msg = remove_trailing(
+      mu.report()
+      :config(no_color_ascii():compact(true):multiline_arrows(true))
+      :title("Error", "compact uarrow")
+      :label(1, 12):message("multiline")
+      :source(src):render()
+    )
+    lu.assertEquals(msg, [[
+Error: compact uarrow
+   ,-[ <unknown>:1:1 ]
+ 1 |,>apple
+ 2 ||>orange
+   |`--------- multiline
+]])
+  end
+
   function TestWrite.test_label_end_is_newline()
     local src = "apple\n\n\norange"
-    local msg = remove_trailing(ariadne.report(1)
+    local msg = remove_trailing(mu.report()
       :config(no_color_ascii())
       :title("Error", "test default colors")
       :label(1, 6):message("spans multiple lines")
@@ -1336,10 +1392,28 @@ Error: test default colors
 ]])
   end
 
+  function TestWrite.test_label_end_is_unicode()
+    local src = "apple苹果\n\n\norange"
+    local msg = remove_trailing(mu.report()
+      :config(no_color_ascii():index_type "byte")
+      :title("Error", "test default colors")
+      :label(6, 11):message("spans multiple lines")
+      :source(src):render())
+    lu.assertEquals(msg, [[
+Error: test default colors
+   ,-[ <unknown>:1:6 ]
+   |
+ 1 | apple苹果
+   |      ^^|^
+   |        `--- spans multiple lines
+---'
+]])
+  end
+
   function TestWrite.test_default_color_categories()
-    local cfg = ariadne.config { char_set = "ascii" }
+    local cfg = mu.config { char_set = "ascii" }
     local src = "apple\n\n\norange"
-    local msg = ariadne.report(1)
+    local msg = mu.report()
         :config(cfg)
         :title("Error", "test default colors")
         :label(1, 6):message("spans multiple lines")
@@ -1360,7 +1434,7 @@ ESC[38;5;246m---'ESC[0m\
 "]])
 
     msg = ("%q"):format(remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(cfg)
       :title("Advice", "test default colors")
       :source(src):render()
@@ -1370,7 +1444,7 @@ ESC[38;5;246m---'ESC[0m\
 "]])
 
     msg = ("%q"):format(remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(cfg)
       :title("Warning", "test default colors")
       :source(src):render()
@@ -1382,7 +1456,7 @@ ESC[38;5;246m---'ESC[0m\
 
   function TestWrite.test_cross_gap_disabled()
     local src = "apple\norange\nbanana\ngrape"
-    local msg = remove_trailing(ariadne.report(1)
+    local msg = remove_trailing(mu.report()
       :config(no_color_ascii():cross_gap(false))
       :title("Error", "test cross_gap")
       :label(1, 19):message("span 1")
@@ -1407,7 +1481,7 @@ Error: test cross_gap
 
   function TestWrite.test_underlines_disabled()
     local src = "apple orange"
-    local msg = remove_trailing(ariadne.report(1)
+    local msg = remove_trailing(mu.report()
       :config(no_color_ascii():underlines(false))
       :title("Error", "no underlines")
       :label(1, 5):message("label")
@@ -1426,12 +1500,12 @@ Error: no underlines
 
   function TestWrite.test_underline_shorter_label_priority()
     local src = "apple orange banana"
-    local msg = remove_trailing(ariadne.report(1)
+    local msg = remove_trailing(mu.report()
       :config(no_color_ascii():underlines(true))
       :title("Error", "overlapping same priority")
       :label(3, 7):message("short"):priority(1)
       :label(4, 7):message("shortest"):priority(1)
-      :label(1, 10):message("long"):priority(1)
+      :label(1, 10):message("long"):priority(1):primary()
       :source(src):render()
     )
     -- The shorter label should win when priority is the same
@@ -1450,31 +1524,12 @@ Error: overlapping same priority
 ]])
   end
 
-  function TestWrite.test_compact_multiline_uarrow()
-    local cfg = no_color_ascii()
-    local src = "apple\norange\nbanana"
-    local msg = remove_trailing(
-      ariadne.report(1)
-      :config(no_color_ascii():compact(true):multiline_arrows(true))
-      :title("Error", "compact uarrow")
-      :label(1, 12):message("multiline")
-      :source(src):render()
-    )
-    lu.assertEquals(msg, [[
-Error: compact uarrow
-   ,-[ <unknown>:1:1 ]
- 1 |,>apple
- 2 ||>orange
-   |`--------- multiline
-]])
-  end
-
   function TestWrite.test_cross_gap_vbar_hbar()
     -- Based on test_pointer_and_connectors but with cross_gap disabled
     local text = "abcdef\n"
     local msg = remove_trailing(
-      ariadne.report(1)
-      :config(no_color_ascii():cross_gap(false):column_order(true))
+      mu.report()
+      :config(no_color_ascii():cross_gap(false):minimise_crossings(false))
       :title("Error", "xbar test")
       :label(1, 3):message("label1")
       :label(4, 6):message("label2")
@@ -1499,7 +1554,7 @@ Error: xbar test
     -- This should trigger the uarrow condition at line 1343
     local src = "abcdefgh\nijklmnop\nqrstuvwx"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():compact(true))
       :title("Error", "two multiline labels")
       :label(1, 18):message("outer")
@@ -1511,13 +1566,13 @@ Error: two multiline labels
    ,-[ <unknown>:1:1 ]
  1 |,->abcdefgh
    ||,---'
- 2 ||->ijklmnop
-   |`------------ outer
+ 2 |||>ijklmnop
+   |`|----------- outer
  3 | |>qrstuvwx
    | `---------- inner
 ]])
     msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():compact(true):char_set "unicode")
       :title("Error", "two multiline labels")
       :label(1, 18):message("outer")
@@ -1529,8 +1584,8 @@ Error: two multiline labels
    ╭─[ <unknown>:1:1 ]
  1 ┤╭─▶abcdefgh
    ││╭───╯
- 2 ┤├─▶ijklmnop
-   │╰──────────── outer
+ 2 ┤├│▶ijklmnop
+   │╰│─────────── outer
  3 ┤ ├▶qrstuvwx
    │ ╰────────── inner
 ]])
@@ -1543,7 +1598,7 @@ Error: two multiline labels
     -- labelB: char 2-6 (line 1 col 2 to line 2 col 1)
     local src = "abcd\nefgh\nijkl\n"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():compact(true))
       :title("Error", "test two multiline labels ending at same col")
       :label(1, 6):message("labelA spans 1-6")
@@ -1564,7 +1619,7 @@ Error: test two multiline labels ending at same col
   function TestWrite.test_uarrow()
     local src = "apple\norange\nbanana"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():compact(true))
       :title("Error", "uarrow test")
       :label(1, 7):message("inner"):order(1)
@@ -1577,9 +1632,9 @@ Error: uarrow test
    ,-[ <unknown>:1:1 ]
  1 | ,->apple
    | |,-'^
-   |,----'
- 2 |||->orange
-   ||`---------- outer outer
+   |,||--'
+ 2 ||||>orange
+   ||`|-|------- outer outer
    || `-^------- inner
  3 ||-->banana
    |`---------- outer
@@ -1589,7 +1644,7 @@ Error: uarrow test
   function TestWrite.test_margin_xbar()
     local src = "apple\norange\nbanana\nstrawberry"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():cross_gap(false))
       :title("Error", "margin xbar test")
       :label(1, 14):message("outer"):order(0)
@@ -1615,7 +1670,7 @@ Error: margin xbar test
   function TestWrite.test_emoji()
     local src = "apple 🍎 orange 🍊 banana 🍌"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "emoji test")
       :label(7, 7):message("first emoji")
@@ -1625,7 +1680,7 @@ Error: margin xbar test
     )
     lu.assertEquals(msg, [[
 Error: emoji test
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:7 ]
    |
  1 | apple 🍎 orange 🍊 banana 🍌
    |       |^        |^        |^
@@ -1641,14 +1696,134 @@ Error: emoji test
   function TestWrite.test_unimportant_color()
     local text = "this is a color test"
     local msg = remove_trailing(
-      ariadne.report(1)
-      :config(ariadne.config())
+      mu.report()
+      :config(mu.config())
       :title("Error", "unimportant color test")
       :label(11, 15):message("color is here")
       :source(text):render()
     )
     msg = ("%q"):format(msg:gsub(string.char(27), "ESC"))
     lu.assertNotNil(msg:find("ESC%[38;5;249m"))
+  end
+
+  function TestWrite.test_context_lines()
+    local code = "single line"
+    local msg = remove_trailing(
+      mu.report()
+      :config(no_color_ascii():context_lines(2))
+      :title("Error", "context lines test")
+      :label(1, 6):message("label")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: context lines test
+   ,-[ <unknown>:1:1 ]
+   |
+ 1 | single line
+   | ^^^|^^
+   |    `---- label
+---'
+]])
+
+    code = "first line\nsecond line\nthird line\n"
+    msg = remove_trailing(
+      mu.report()
+      :config(no_color_ascii():context_lines(2))
+      :title("Error", "context lines test")
+      :label(12, 17):message("label")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: context lines test
+   ,-[ <unknown>:2:1 ]
+   |
+ 1 | first line
+ 2 | second line
+   | ^^^|^^
+   |    `---- label
+ 3 | third line
+ 4 |
+---'
+]])
+
+    code = "first line\nsecond line\nthird line\nfourth line\nfifth line\n"
+    msg = remove_trailing(
+      mu.report()
+      :config(no_color_ascii():context_lines(2))
+      :title("Error", "context lines test")
+      :label(24, 28):message("label")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: context lines test
+   ,-[ <unknown>:3:1 ]
+   |
+ 1 | first line
+ 2 | second line
+ 3 | third line
+   | ^^|^^
+   |   `---- label
+ 4 | fourth line
+ 5 | fifth line
+---'
+]])
+
+    code = "first line\nsecond line\nthird line\nfourth line\nfifth line\n" ..
+        "sixth line\nseventh line\neighth line\nninth line\n"
+    msg = remove_trailing(
+      mu.report()
+      :config(no_color_ascii():context_lines(2))
+      :title("Error", "context lines test")
+      :label(12, 17):message("label on line 2")
+      :label(35, 40):message("label on line 4")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: context lines test
+   ,-[ <unknown>:2:1 ]
+   |
+ 1 | first line
+ 2 | second line
+   | ^^^|^^
+   |    `---- label on line 2
+ 3 | third line
+ 4 | fourth line
+   | ^^^|^^
+   |    `---- label on line 4
+ 5 | fifth line
+ 6 | sixth line
+---'
+]])
+
+    code = "first line\nsecond line\nthird line\nfourth line\nfifth line\n" ..
+        "sixth line\nseventh line\neighth line\nninth line"
+    msg = remove_trailing(
+      mu.report()
+      :config(no_color_ascii():context_lines(2))
+      :title("Error", "context lines test")
+      :label(12, 17):message("label on line 2")
+      :label(82, 87):message("label on line 8")
+      :source(code):render()
+    )
+    lu.assertEquals(msg, [[
+Error: context lines test
+   ,-[ <unknown>:2:1 ]
+   |
+ 1 | first line
+ 2 | second line
+   | ^^^|^^
+   |    `---- label on line 2
+ 3 | third line
+ 4 | fourth line
+   |
+ 6 | sixth line
+ 7 | seventh line
+ 8 | eighth line
+   | ^^^|^^
+   |    `---- label on line 8
+ 9 | ninth line
+---'
+]])
   end
 end
 
@@ -1665,7 +1840,7 @@ do
     -- Path is short, no truncation needed
     local src = "apple"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(60))
       :title("Error", "test_header_no_truncation_short_path")
       :label(1, 1):message("label")
@@ -1688,7 +1863,7 @@ Error: test_header_no_truncation_short_path
     local src = "apple"
     local long_path = ("dir/"):rep(20) .. "file.lua"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(40))
       :title("Error", "test_header_truncation_long_path")
       :label(1, 1):message("label")
@@ -1713,7 +1888,7 @@ Error: test_header_truncation_long_path
 
     -- Line 201 is the "target" line, char position = 200*5 + 1 = 1001
     local msg = remove_trailing(
-      ariadne.report(1001)
+      mu.report()
       :config(no_color_ascii():limit_width(45))
       :title("Error", "test_header_truncation_large_line_number")
       :label(1001, 1001):message("label")
@@ -1738,7 +1913,7 @@ Error: test_header_truncation_large_line_number
     local text = "apple"
     local utf8_path = ("目录/"):rep(20) .. "文件.lua"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(40))
       :title("Error", "test_header_truncation_utf8_path")
       :label(1, 1):message("label")
@@ -1766,7 +1941,7 @@ Error: test_header_truncation_utf8_path
     -- avail = 40 - 13 - 3(ellipsis) = 24
     -- Expected: "..." + 24 chars suffix = "...dir dir dir dir file.lua"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(40))
       :title("Error", "test_header_truncation_tab_in_path")
       :label(1, 1):message("label")
@@ -1790,7 +1965,7 @@ Error: test_header_truncation_tab_in_path
     local text = "apple"
     local long_path = ("dir/"):rep(20) .. "source.lua"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(25))
       :title("Error", "test_header_truncation_very_narrow")
       :label(1, 1):message("label")
@@ -1814,7 +1989,7 @@ Error: test_header_truncation_very_narrow
     local text = "apple"
     local long_path = ("dir/"):rep(20) .. "file.lua"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(nil))
       :title("Error", "test_header_no_truncation_when_nil")
       :label(1, 1):message("label")
@@ -1841,7 +2016,7 @@ Error: test_header_no_truncation_when_nil
     -- fixed_width = 1 + 9 + 3 = 13
     -- id="short/path.lua" = 14 chars, total = 13 + 14 + 3 = 30, exactly fits
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(30))
       :title("Error", "test_header_truncation_exact_boundary")
       :label(1, 1):message("label")
@@ -1864,7 +2039,7 @@ Error: test_header_truncation_exact_boundary
     local text = "apple"
     local long_name = ("x"):rep(15) .. ".lua"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(30))
       :title("Error", "test_header_truncation_one_over_boundary")
       :label(1, 1):message("label")
@@ -1891,7 +2066,7 @@ do
     -- Total length: 100*9 + 6 = 906 chars
     -- Label is at chars 901-906 ("orange")
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_single_label_at_end_of_long_line")
       :label(901, 906):message("This is an orange")
@@ -1900,7 +2075,7 @@ do
 
     lu.assertEquals(msg, [[
 Error: test_single_label_at_end_of_long_line
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:901 ]
    |
  1 | ... apple == apple == apple == apple == apple == orange
    |                                                  ^^^|^^
@@ -1912,7 +2087,7 @@ Error: test_single_label_at_end_of_long_line
   function TestLineLimit.test_tab_width()
     local code = ("\t"):rep(20) .. "error"
     local msg = remove_trailing(
-      ariadne.report(21)
+      mu.report()
       :config(no_color_ascii():limit_width(40):tab_width(4))
       :title("Error", "test_tab_width")
       :label(21, 25):message("here")
@@ -1938,7 +2113,7 @@ Error: test_tab_width
     local text = prefix .. target .. suffix
     -- Total: 805 chars, label at 401-405
     local msg = remove_trailing(
-      ariadne.report(401)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_single_label_in_middle_of_long_line")
       :label(401, 405):message("found here")
@@ -1959,7 +2134,7 @@ Error: test_single_label_in_middle_of_long_line
   function TestLineLimit.test_small_msg()
     local text = ("a"):rep(400) .. "error" .. ("b"):rep(400)
     local msg = remove_trailing(
-      ariadne.report(401)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_small_msg")
       :label(401, 405):message("1")
@@ -1983,7 +2158,7 @@ Error: test_small_msg
     local text = ("a"):rep(400) .. "error" .. ("b"):rep(400)
     local label = "a very long message that exceeds the line width significantly"
     local msg = remove_trailing(
-      ariadne.report(401)
+      mu.report()
       :config(no_color_ascii():limit_width(20))
       :title("Error", "test_minimum_line_width")
       :label(401, 405):message(label)
@@ -2008,7 +2183,7 @@ Error: test_minimum_line_width
     -- Should NOT show ellipsis, just truncate the end
     local text = ("a"):rep(55) .. "error" .. ("b"):rep(16)
     local msg = remove_trailing(
-      ariadne.report(401)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_fit_line_width")
       :label(56, 60):message("at start")
@@ -2019,7 +2194,7 @@ Error: test_minimum_line_width
     -- Just show first 75 chars (no ellipsis needed)
     lu.assertEquals(msg, [[
 Error: test_fit_line_width
-   ,-[ <unknown>:?:? ]
+   ,-[ <unknown>:1:56 ]
    |
  1 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaerrorbbbbbbbbbbbb...
    |                                                        ^^|^^
@@ -2034,7 +2209,7 @@ Error: test_fit_line_width
     local text = "error" .. string.rep("x", 900)
     -- Label at 1-5
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_single_label_at_start_of_long_line")
       :label(1, 5):message("at start")
@@ -2059,7 +2234,7 @@ Error: test_single_label_at_start_of_long_line
     -- Should NOT apply windowing
     local text = "short line with error"
     local msg = remove_trailing(
-      ariadne.report(17)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_no_windowing_when_line_fits")
       :label(17, 21):message("here")
@@ -2083,7 +2258,7 @@ Error: test_no_windowing_when_line_fits
     -- line_width = nil, should display full line
     local text = string.rep("a", 200)
     local msg = remove_trailing(
-      ariadne.report(195)
+      mu.report()
       :config(no_color_ascii():limit_width(nil))
       :title("Error", "test_no_windowing_when_line_width_nil")
       :label(195, 200):message("end")
@@ -2107,7 +2282,7 @@ Error: test_no_windowing_when_line_fits
     -- Total: 609 chars
     -- label1: 101-105, label2: 306-309
     local msg = remove_trailing(
-      ariadne.report(101)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_multiple_labels_on_long_line")
       :label(101, 105):message("first error")
@@ -2136,7 +2311,7 @@ Error: test_multiple_labels_on_long_line
     -- Total: 102 CJK chars = 204 display width
     -- Label "错误" at position 51-52 (2 chars, 4 display width)
     local msg = remove_trailing(
-      ariadne.report(51)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_cjk_characters_in_line")
       :label(51, 52):message("这是错误")
@@ -2162,7 +2337,7 @@ Error: test_cjk_characters_in_line
     -- Label on "error错误" (5 ASCII + 2 CJK = 7 chars)
     -- Position: 201-207 (char positions)
     local msg = remove_trailing(
-      ariadne.report(201)
+      mu.report()
       :config(no_color_ascii():limit_width(80))
       :title("Error", "test_mixed_ascii_cjk_characters")
       :label(206, 212):message("mixed error")
@@ -2171,7 +2346,7 @@ Error: test_cjk_characters_in_line
 
     lu.assertEquals(msg, [[
 Error: test_mixed_ascii_cjk_characters
-   ,-[ <unknown>:1:201 ]
+   ,-[ <unknown>:1:206 ]
    |
  1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaahello世界error错误test
    |                                                   ^^^^^|^^^
@@ -2183,7 +2358,7 @@ Error: test_mixed_ascii_cjk_characters
   function TestLineLimit.test_order_disrupts_spatial_clustering()
     local text = ("a"):rep(100)
     local msg = remove_trailing(
-      ariadne.report(10)
+      mu.report()
       :config(no_color_ascii():limit_width(60))
       :title("Error", "test_order_disrupts_spatial_clustering")
       :label(10):message("label2"):order(1)
@@ -2195,7 +2370,7 @@ Error: test_order_disrupts_spatial_clustering
    ,-[ <unknown>:1:10 ]
    |
  1 | ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
-   |    |                                       |
+   |    ^                                       ^
    |    |                                       `- label1
    |    |
    |    `----------------------------------------- label2
@@ -2206,7 +2381,7 @@ Error: test_order_disrupts_spatial_clustering
   function TestLineLimit.test_cluster_width_calculation()
     local text = ("a"):rep(200)
     local msg = remove_trailing(
-      ariadne.report(100)
+      mu.report()
       :config(no_color_ascii():limit_width(60))
       :title("Error", "test_cluster_width_calculation")
       :label(10, 10):message("labelA")
@@ -2215,7 +2390,7 @@ Error: test_order_disrupts_spatial_clustering
     )
     lu.assertEquals(msg, [[
 Error: test_cluster_width_calculation
-   ,-[ <unknown>:1:100 ]
+   ,-[ <unknown>:1:10 ]
    |
  1 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
    |          |
@@ -2230,25 +2405,25 @@ Error: test_cluster_width_calculation
   function TestLineLimit.test_margin_per_cluster()
     local src = ("a"):rep(200) .. "\nbbbbb"
     local msg = remove_trailing(
-      ariadne.report(100)
+      mu.report()
       :config(no_color_ascii():limit_width(50))
       :title("Error", "test_margin_per_cluster")
       :label(10, 204):message("labelA")
-      :label(150, 205):message("labelB")
+      :label(150, 205):message("labelB"):primary()
       :label(160, 206):message("labelC")
       :source(src):render()
     )
     lu.assertEquals(msg, [[
 Error: test_margin_per_cluster
-   ,-[ <unknown>:1:100 ]
+   ,-[ <unknown>:1:150 ]
    |
  1 | ,-----> aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
  1 | | ,---> ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
    | | |                        ^
    | | | ,----------------------'
- 2 | |-----> bbbbb
+ 2 | |-|-|-> bbbbb
    | | | |      ^^
-   | | | `-------^-- labelC
+   | | | `------|^-- labelC
    | | |        |
    | | `--------^--- labelB
    | |
@@ -2260,7 +2435,7 @@ Error: test_margin_per_cluster
   function TestLineLimit.test_multiline()
     local src = ("first line\n") .. ("a"):rep(200)
     local msg = remove_trailing(
-      ariadne.report(15)
+      mu.report()
       :config(no_color_ascii():limit_width(50))
       :title("Error", "test_multiline")
       :label(7, #src):message("multiline label")
@@ -2268,12 +2443,35 @@ Error: test_margin_per_cluster
     )
     lu.assertEquals(msg, [[
 Error: test_multiline
-   ,-[ <unknown>:2:4 ]
+   ,-[ <unknown>:1:7 ]
    |
  1 | ,-> first line
  2 | |-> ...aaaaaaaaaaaaaaaaaaaa
    | |
    | `---------------------------- multiline label
+---'
+]])
+  end
+
+  function TestLineLimit.test_context_limit()
+    local line = ("a"):rep(200)
+    local src = line .. "\n" .. line .. "\n" .. line .. "\n"
+    local msg = remove_trailing(
+      mu.report()
+      :config(no_color_ascii():limit_width(50):context_lines(1))
+      :title("Error", "test_context_limit")
+      :label(205, 210):message("label on line 2")
+      :source(src):render()
+    )
+    lu.assertEquals(msg, [[
+Error: test_context_limit
+   ,-[ <unknown>:2:4 ]
+   |
+ 1 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+ 2 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
+   |    ^^^|^^
+   |       `---- label on line 2
+ 3 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...
 ---'
 ]])
   end
@@ -2288,7 +2486,7 @@ do
     file:write("line one\nline two with error\nline three\n")
 
     local msg =
-        ariadne.report(12)
+        mu.report()
         :config(no_color_ascii())
         :title("Error", "test_file_error")
         :label(12, 16):message("found here")
@@ -2315,7 +2513,7 @@ do
 
     local file = assert(io.open(tmpname, "r"))
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "test_file_empty")
       :label(1, 1):message("label")
@@ -2328,7 +2526,7 @@ Error: test_file_empty
    ,-[ <unknown>:1:1 ]
    |
  1 |
-   | |
+   | ^
    | `- label
 ---'
 ]])
@@ -2340,10 +2538,10 @@ Error: test_file_empty
 
     local file = assert(io.open(tmpname, "r"))
     local msg = remove_trailing(
-      ariadne.report(14)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "test_file_multiline")
-      :label(29, 33):message("found here")
+      :label(29, 33):message("found here"):primary()
       :label(1, #code):message("whole file")
       :source(file):render()
     )
@@ -2352,7 +2550,7 @@ Error: test_file_empty
 
     lu.assertEquals(msg, [[
 Error: test_file_multiline
-   ,-[ <unknown>:2:3 ]
+   ,-[ <unknown>:2:18 ]
    |
  1 | ,-> first line
  2 | |   second line with error
@@ -2371,7 +2569,7 @@ Error: test_file_multiline
 
     local file = assert(io.open(tmpname, "r"))
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "test_file_end")
       :label(1, #code):message("label")
@@ -2393,7 +2591,7 @@ Error: test_file_end
     tmpname = write_temp_file(code)
     file = assert(io.open(tmpname, "r"))
     msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "test_file_emoji")
       :label(1, #code):message("label")
@@ -2415,7 +2613,7 @@ Error: test_file_emoji
     tmpname = write_temp_file(code)
     file = assert(io.open(tmpname, "r"))
     msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "test_file_invalid_utf8")
       :label(1, #code):message("label")
@@ -2439,7 +2637,7 @@ Error: test_file_invalid_utf8
     local code = "test content"
     local tmpname = write_temp_file(code)
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "test_file_name")
       :label(1, 4):message("label")
@@ -2462,12 +2660,12 @@ Error: test_file_name
     local file2 = write_temp_file("orange")
 
     local fh1 = assert(io.open(file1, "r"))
-    local cache = ariadne.cache()
+    local cache = mu.cache()
         :source(fh1, file1)
         :file(file2)
     local msg = remove_trailing(
       cache:render(
-        ariadne.report(1)
+        mu.report()
         :config(no_color_ascii())
         :title("Error", "test_file_with_cache")
         :label(1, 5, 1):message("label1")
@@ -2511,7 +2709,7 @@ do
   function TestUnicode.test_width()
     local code = test_case()
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii())
       :title("Error", "test_unicode_width")
       :label(28, 30):message("end is here")
@@ -2519,7 +2717,7 @@ do
     )
     lu.assertEquals(msg, [[
 Error: test_unicode_width
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:28 ]
    |
  1 | Test:café̄👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
    |                    ^|^
@@ -2531,7 +2729,7 @@ Error: test_unicode_width
   function TestUnicode.test_break_normal()
     local code = test_case()
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(29))
       :title("Error", "test_unicode_break")
       :label(28, 30):message("1")
@@ -2539,7 +2737,7 @@ Error: test_unicode_width
     )
     lu.assertEquals(msg, [[
 Error: test_unicode_break
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:28 ]
    |
  1 | ...café̄👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
    |                  ^|^
@@ -2551,7 +2749,7 @@ Error: test_unicode_break
   function TestUnicode.test_break_1()
     local code = test_case()
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(26))
       :title("Error", "test_unicode_break")
       :label(28, 30):message("1")
@@ -2559,7 +2757,7 @@ Error: test_unicode_break
     )
     lu.assertEquals(msg, [[
 Error: test_unicode_break
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:28 ]
    |
  1 | ...é̄👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
    |               ^|^
@@ -2571,7 +2769,7 @@ Error: test_unicode_break
   function TestUnicode.test_break_2()
     local code = test_case()
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(25))
       :title("Error", "test_unicode_break")
       :label(28, 30):message("1")
@@ -2579,7 +2777,7 @@ Error: test_unicode_break
     )
     lu.assertEquals(msg, [[
 Error: test_unicode_break
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:28 ]
    |
  1 | ...👋🏾🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
    |              ^|^
@@ -2591,7 +2789,7 @@ Error: test_unicode_break
   function TestUnicode.test_break_3()
     local code = test_case()
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():limit_width(24))
       :title("Error", "test_unicode_break")
       :label(28, 30):message("1")
@@ -2599,7 +2797,7 @@ Error: test_unicode_break
     )
     lu.assertEquals(msg, [[
 Error: test_unicode_break
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:28 ]
    |
  1 | ...🇺🇸🇨🇳👨‍🔧👨🏽‍❤️‍👨🏻end
    |            ^|^
@@ -2611,7 +2809,7 @@ Error: test_unicode_break
   function TestUnicode.test_ambiwidth()
     local code = "ambi code:" .. utf8.char(0xA1) .. "end"
     local msg = remove_trailing(
-      ariadne.report(1)
+      mu.report()
       :config(no_color_ascii():ambi_width(5))
       :title("Error", "test_ambiwidth")
       :label(11, 12):message("here")
@@ -2619,7 +2817,7 @@ Error: test_unicode_break
     )
     lu.assertEquals(msg, [[
 Error: test_ambiwidth
-   ,-[ <unknown>:1:1 ]
+   ,-[ <unknown>:1:11 ]
    |
  1 | ambi code:¡end
    |           ^^^^^|
@@ -2631,7 +2829,7 @@ end
 
 function _G.test_writer()
   local code = "line one\nline two with error\nline three\n"
-  local report = ariadne.report(12)
+  local report = mu.report()
   local msg = remove_trailing(
     report
     :config(no_color_ascii())
@@ -2641,7 +2839,7 @@ function _G.test_writer()
   )
   lu.assertEquals(msg, [[
 Error: test_writer
-   ,-[ <unknown>:2:3 ]
+   ,-[ <unknown>:2:15 ]
    |
  2 | line two with error
    |               ^^|^^
@@ -2659,13 +2857,13 @@ Error: test_writer
     function() report:reset():render() end)
   lu.assertEquals("Error:\n", report:reset():source "":render())
   local msg3 = remove_trailing(
-    report:reset():location(6, 2)
+    report:reset()
     :source("apple", "file1.lua"):label(1, 5, 1)
-    :source("orange", "file2.lua"):label(1, 6, 2):render()
+    :source("orange", "file2.lua"):label(1, 6, 2):order(-1):render()
   )
   lu.assertEquals(msg3, [[
 Error:
-   ,-[ file2.lua:1:6 ]
+   ,-[ file2.lua:1:1 ]
    |
  1 | orange
    | ^^^^^^

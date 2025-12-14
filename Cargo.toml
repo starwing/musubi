@@ -13,8 +13,9 @@ categories = ["development-tools", "command-line-interface"]
 exclude = [
     ".github/",
     ".vscode/",
-    "examples/demo.lua", # Lua example not relevant for Rust crate
-    "examples/demo.c",   # C example not relevant for Rust crate
+    "examples/demo.lua",  # Lua demo not relevant for Rust crate
+    "examples/demo.c",    # C demo not relevant for Rust crate
+    "examples/example.c", # C example not relevant for Rust crate
     "misc/",
     "tests/*.lua",
     "musubi.c",
@@ -22,7 +23,7 @@ exclude = [
     ".luarc.json",
     ".clang-format",
     "justfile",
-    "clippy.toml",       # Development tool config
+    "clippy.toml",        # Development tool config
 ]
 
 [lib]
