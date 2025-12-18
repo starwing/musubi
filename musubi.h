@@ -686,14 +686,17 @@ static int muM_line_in_labels(mu_CL line, mu_CLI li) {
 }
 
 static void muM_calc_linenowidth(mu_Report *R) {
-    unsigned i, size, max, line_no;
+    const unsigned limits[] = {10U,       100U,       1000U,
+                               10000U,    100000U,    1000000U,
+                               10000000U, 100000000U, 1000000000U};
+
+    unsigned i, size, line_no;
     mu_Width w, max_width = 0;
     for (i = 0, size = muA_size(R->groups); i < size; ++i) {
         mu_Group *g = &R->groups[i];
         line_no = g->last_line + g->src->line_no_offset + 1;
-        for (w = 0, max = 1; line_no >= max; ++w, max *= 10)
-            if (max * 10 < max) break; /* overflow */
-        max_width = mu_max(max_width, w);
+        for (w = 0; line_no >= limits[w]; ++w) {}
+        max_width = mu_max(max_width, w + 1);
     }
     R->line_no_width = max_width;
 }
